@@ -107,6 +107,7 @@ export const MessageSchema = z.object({
   mediaMimetype: z.string().nullish(),
   image_digest: z.string().nullish(),
   image_reading: ImageReadingSchema.optional(),
+  browser_source: z.object({ url: z.url(), title: z.string(), capturedAt: z.number() }).optional(),
   entity_link: z.object({ plant: z.string(), basis: z.string() }).optional(),
 });
 export const TaskChangeSchema = z

@@ -15,3 +15,5 @@ work/
 *.log
 *.backup*
 .DS_Store
+test-results/
+playwright-report/

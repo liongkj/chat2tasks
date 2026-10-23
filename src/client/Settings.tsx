@@ -29,6 +29,7 @@ import {
 } from '../shared/schema.js';
 import { api, OkSchema } from './api.js';
 import { errorMessage } from './App.js';
+import { CompanionSettings } from './CompanionSettings.js';
 
 type Props = {
   tab: 'chats' | 'models';
@@ -610,6 +611,7 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
           )}
         </>
       )}
+      <CompanionSettings notify={notify} />
       <div className="settings-save-bottom">
         <button className="button primary" disabled={saving} onClick={() => void save()}>
           <Check size={14} />

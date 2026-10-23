@@ -11,6 +11,7 @@ import { SettingsUpdateSchema, TaskSchema } from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
+import { Companion, CompanionError, registerCompanion } from './companion.js';
 
 const port = z.coerce
   .number()
@@ -63,6 +64,7 @@ server.addHook('onRequest', async (request, reply) => {
       .code(403)
       .send({ error: 'Host is not allowed. Set PUBLIC_ORIGIN for your reverse proxy.' });
   if (request.url === '/api/health') return;
+  if (request.url.startsWith('/api/companion/')) return;
   const password = process.env.APP_PASSWORD;
   if (password) {
     const expected = Buffer.from(`Basic ${Buffer.from(`admin:${password}`).toString('base64')}`),
@@ -82,6 +84,8 @@ server.addHook('onRequest', async (request, reply) => {
     return reply.code(403).send({ error: 'Invalid request origin or content type' });
 });
 server.setErrorHandler((error, request, reply) => {
+  if (error instanceof CompanionError)
+    return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof z.ZodError)
     return reply.code(400).send({ error: error.issues.map((x) => x.message).join('. ') });
   // Provider response bodies and supplied credentials never enter logs or API errors.
@@ -97,6 +101,7 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+await registerCompanion(server, new Companion(store, sync, syncEnabled));
 await server.register(async (receiver) => {
   receiver.removeContentTypeParser('application/json');
   receiver.addContentTypeParser(

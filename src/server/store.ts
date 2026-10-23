@@ -36,6 +36,7 @@ export const fingerprint = (message: Message) => {
     mediaMimetype: message.mediaMimetype ?? null,
     image_digest: message.image_digest ?? null,
     entity_link: message.entity_link ?? null,
+    ...(message.browser_source ? { browser_source: message.browser_source } : {}),
   });
 };
 const PayloadRow = z.object({ payload: z.string() });

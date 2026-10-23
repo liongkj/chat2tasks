@@ -966,6 +966,11 @@ function MessageCard({
         </blockquote>
       )}
       <p>{m.body || '[Attachment without a caption]'}</p>
+      {m.browser_source && (
+        <p className="browser-source-label">
+          Captured selection · {m.browser_source.title} · WhatsApp Web
+        </p>
+      )}
       {m.type === 'image' &&
         (failed ? (
           <div className="image-unavailable">
