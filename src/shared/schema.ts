@@ -23,6 +23,12 @@ export const ProfileSchema = z.discriminatedUnion('kind', [
   z.object({ ...profileBase, kind: z.literal('compatible'), baseUrl: endpoint }),
   z.object({
     ...profileBase,
+    kind: z.literal('decision'),
+    provider: z.enum(['openai', 'jev']),
+    baseUrl: endpoint,
+  }),
+  z.object({
+    ...profileBase,
     kind: z.literal('cloudflare'),
     accountId: z
       .string()
@@ -37,8 +43,14 @@ export const SettingsSchema = z
     chats: z.array(ChatSchema).max(100),
     profiles: z.array(ProfileSchema).min(1).max(30),
     activeProfileId: text,
-    pollSeconds: z.number().int().min(10).max(3600),
+    webhookUrl: z.union([z.literal(''), endpoint]).default(''),
     quietSeconds: z.number().int().min(0).max(300),
+    trigger: z
+      .discriminatedUnion('mode', [
+        z.object({ mode: z.literal('manual') }),
+        z.object({ mode: z.literal('automatic'), decisionProfileId: z.string().nullable() }),
+      ])
+      .default({ mode: 'automatic', decisionProfileId: null }),
   })
   .superRefine((settings, ctx) => {
     for (const [name, list] of [
@@ -53,8 +65,12 @@ export const SettingsSchema = z
       settings.chats.length
     )
       ctx.addIssue({ code: 'custom', message: 'Each conversation can only be added once' });
-    if (!settings.profiles.some((p) => p.id === settings.activeProfileId))
+    if (!settings.profiles.some((p) => p.id === settings.activeProfileId && p.kind !== 'decision'))
       ctx.addIssue({ code: 'custom', message: 'Choose an existing model connection' });
+    const gateId =
+      settings.trigger.mode === 'automatic' ? settings.trigger.decisionProfileId : null;
+    if (gateId && !settings.profiles.some((p) => p.id === gateId))
+      ctx.addIssue({ code: 'custom', message: 'Choose an existing decision connection' });
   });
 export const SettingsUpdateSchema = z.object({
   settings: SettingsSchema,
@@ -147,6 +163,15 @@ export const StatusSchema = z.object({
   retry_at: z.number().optional(),
   pending: z.number().default(0),
   debouncing: z.boolean().default(false),
+  last_webhook: z.number().optional(),
+  last_decision: z
+    .object({
+      choice: z.enum(['run', 'wait', 'skip']),
+      reason: z.string(),
+      connection: z.string(),
+      confidence: z.number().nullable(),
+    })
+    .optional(),
 });
 export const SnapshotSchema = z.object({
   demo: z.boolean().default(false),
@@ -159,6 +184,9 @@ export const SnapshotSchema = z.object({
 export const PublicSettingsSchema = z.object({
   settings: SettingsSchema,
   configuredSecrets: z.array(z.string()),
+  webhook: z
+    .object({ registeredSessions: z.number(), lastReceivedAt: z.number().nullable() })
+    .default({ registeredSessions: 0, lastReceivedAt: null }),
 });
 export type Chat = z.infer<typeof ChatSchema>;
 export type Profile = z.infer<typeof ProfileSchema>;

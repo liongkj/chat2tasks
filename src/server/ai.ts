@@ -17,7 +17,7 @@ const ReplySchema = z.object({
 });
 
 export function connectionRequest(
-  profile: Exclude<Profile, { kind: 'codex' }>,
+  profile: Extract<Profile, { kind: 'compatible' | 'cloudflare' }>,
   getSecret: (id: string) => string,
 ) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -106,6 +106,8 @@ export async function callModel(
   purpose: string,
   images: Image[] = [],
 ): Promise<unknown> {
+  if (profile.kind === 'decision')
+    throw new Error('A decision connection cannot generate tasks or handoffs');
   const started = now();
   let tokens: number | null = null,
     outcome = 'failed';

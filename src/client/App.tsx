@@ -170,7 +170,7 @@ export function App() {
   async function sync() {
     try {
       await api('sync', OkSchema, {});
-      setNotice('Checking for new messages…');
+      setNotice('Running task analysis now…');
       await refresh();
     } catch (e) {
       setNotice(errorMessage(e));
@@ -308,11 +308,13 @@ export function App() {
                 value={settings?.activeProfileId ?? ''}
                 onChange={(e) => void changeModel(e.target.value)}
               >
-                {settings?.profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {p.model}
-                  </option>
-                ))}
+                {settings?.profiles
+                  .filter((p) => p.kind !== 'decision')
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} · {p.model}
+                    </option>
+                  ))}
               </select>
               <ChevronDown size={12} />
             </div>
@@ -393,7 +395,7 @@ export function App() {
                 <span className={data.status.syncing ? 'spin icon-wrap' : 'icon-wrap'}>
                   <Zap size={14} />
                 </span>{' '}
-                Sync messages
+                Run now
               </button>
             </section>
             <div className="task-layout">
@@ -1010,10 +1012,10 @@ function ActivityView({ data, onSync }: { data: Snapshot; onSync: () => void }) 
           <h2>{data.status.phase}</h2>
           <p>
             {data.status.error ??
-              'New conversations are checked automatically. Task generation never sends messages to WhatsApp.'}
+              'Messages arrive through signed webhooks. Your trigger settings decide when task analysis runs.'}
           </p>
           <button className="button secondary" onClick={onSync}>
-            Check now <ArrowUpRight size={14} />
+            Run now <ArrowUpRight size={14} />
           </button>
         </section>
         <section className="settings-card">
@@ -1028,6 +1030,13 @@ function ActivityView({ data, onSync }: { data: Snapshot; onSync: () => void }) 
           <span className="label">{data.usage.model}</span>
         </section>
       </div>
+      {data.status.last_decision && (
+        <section className="settings-card">
+          <h2>Last trigger decision · {data.status.last_decision.choice}</h2>
+          <p>{data.status.last_decision.reason}</p>
+          <span className="label">{data.status.last_decision.connection}</span>
+        </section>
+      )}
       <section className="settings-card">
         <h2>Recent conversation</h2>
         {[...data.messages]

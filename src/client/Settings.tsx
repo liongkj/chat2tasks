@@ -192,7 +192,7 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                 <h2>OpenWA connection</h2>
                 <p>Your WhatsApp session, connected to your own server.</p>
               </div>
-              <span className="label">Read only</span>
+              <span className="label">No chat replies</span>
             </div>
             <div className="form-grid">
               <div className="field">
@@ -365,6 +365,60 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
               </div>
             )}
           </section>
+          <section className="settings-card">
+            <div className="card-title">
+              <span className="card-icon">
+                <Radio size={20} />
+              </span>
+              <div>
+                <h2>Live message delivery</h2>
+                <p>OpenWA sends signed events when a message arrives, changes, or is sent.</p>
+              </div>
+              <span className="label">
+                {config.webhook.registeredSessions ? 'Registered' : 'Not connected'}
+              </span>
+            </div>
+            <div className="field">
+              <label htmlFor="webhook-url">Webhook callback URL</label>
+              <input
+                id="webhook-url"
+                value={draft.webhookUrl}
+                placeholder="http://chat2tasks:2786/api/webhooks/openwa"
+                onChange={(e) => setDraft({ ...draft, webhookUrl: e.target.value })}
+              />
+              <small>
+                Use the address reachable from OpenWA. Private hosts must be explicitly allowed in
+                OpenWA’s SSRF host allowlist.
+              </small>
+            </div>
+            <div className="card-footer">
+              <span>
+                {config.webhook.lastReceivedAt
+                  ? 'Last signed event: ' +
+                    new Date(config.webhook.lastReceivedAt * 1000).toLocaleString()
+                  : 'No signed event received yet'}
+              </span>
+              <button
+                className="button secondary"
+                disabled={saving || !draft.webhookUrl || !draft.chats.length}
+                onClick={async () => {
+                  if (!(await save())) return;
+                  setSaving(true);
+                  try {
+                    const next = await api('webhooks/connect', PublicSettingsSchema, {});
+                    onSave(next);
+                    notify('Webhooks connected. OpenWA delivered a signed test successfully.');
+                  } catch (e) {
+                    notify(errorMessage(e));
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              >
+                <Radio size={14} /> Connect & test webhooks
+              </button>
+            </div>
+          </section>
           <div className="privacy-strip">
             <ShieldCheck size={18} />
             <p>
@@ -403,7 +457,10 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
               key={profile.id}
               profile={profile}
               active={draft.activeProfileId === profile.id}
-              onActivate={() => setDraft({ ...draft, activeProfileId: profile.id })}
+              onActivate={() => {
+                if (profile.kind !== 'decision')
+                  setDraft({ ...draft, activeProfileId: profile.id });
+              }}
               onChange={(updated) =>
                 setDraft({
                   ...draft,
@@ -413,16 +470,24 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
               onRemove={() => {
                 if (draft.profiles.length === 1) return;
                 const profiles = draft.profiles.filter((p) => p.id !== profile.id);
-                const first = profiles[0];
+                const first = profiles.find((p) => p.kind !== 'decision');
                 if (first)
                   setDraft({
                     ...draft,
                     profiles,
+                    trigger:
+                      draft.trigger.mode === 'automatic' &&
+                      draft.trigger.decisionProfileId === profile.id
+                        ? { mode: 'automatic', decisionProfileId: null }
+                        : draft.trigger,
                     activeProfileId:
                       draft.activeProfileId === profile.id ? first.id : draft.activeProfileId,
                   });
               }}
-              canRemove={draft.profiles.length > 1}
+              canRemove={
+                profile.kind === 'decision' ||
+                draft.profiles.filter((p) => p.kind !== 'decision').length > 1
+              }
               credential={credential}
               onTest={async () => {
                 if (await save()) {
@@ -454,19 +519,60 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
               </div>
             </div>
             <div className="form-grid">
-              <div className="field">
-                <label htmlFor="poll">Check for messages every</label>
+              <div className="field full-width">
+                <label htmlFor="trigger-mode">When to run task analysis</label>
                 <select
-                  id="poll"
-                  value={draft.pollSeconds}
-                  onChange={(e) => setDraft({ ...draft, pollSeconds: Number(e.target.value) })}
+                  id="trigger-mode"
+                  value={draft.trigger.mode}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      trigger:
+                        e.target.value === 'manual'
+                          ? { mode: 'manual' }
+                          : { mode: 'automatic', decisionProfileId: draft.activeProfileId },
+                    })
+                  }
                 >
-                  {[10, 30, 60, 300].map((v) => (
-                    <option key={v} value={v}>
-                      {v < 60 ? `${v} seconds` : `${v / 60} minute${v > 60 ? 's' : ''}`}
-                    </option>
-                  ))}
+                  <option value="automatic">Automatically · debounce, then decide</option>
+                  <option value="manual">Only when I choose Run now</option>
                 </select>
+              </div>
+              {draft.trigger.mode === 'automatic' && (
+                <div className="field full-width">
+                  <label htmlFor="decision-connection">Decision connection</label>
+                  <select
+                    id="decision-connection"
+                    value={draft.trigger.decisionProfileId ?? ''}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        trigger: { mode: 'automatic', decisionProfileId: e.target.value || null },
+                      })
+                    }
+                  >
+                    <option value="">No decision call · run after the quiet period</option>
+                    {draft.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} · {p.model}
+                      </option>
+                    ))}
+                  </select>
+                  <small>
+                    OpenAI Decisions, Jev, Codex, or another configured connection. Low confidence
+                    and decision errors run the task model so evidence is retained.
+                  </small>
+                </div>
+              )}
+              <div className="field">
+                <label>Message delivery</label>
+                <div className="codex-hint">
+                  <Radio size={16} />
+                  <p>
+                    OpenWA webhooks. Messages trigger work as they arrive; no periodic message
+                    polling.
+                  </p>
+                </div>
               </div>
               <div className="field">
                 <label htmlFor="quiet">Wait for a quiet period of</label>
@@ -560,11 +666,17 @@ function ProfileCard({
               ? 'Your existing Codex subscription'
               : profile.kind === 'cloudflare'
                 ? 'Cloudflare AI Gateway'
-                : 'Any OpenAI-compatible endpoint'}
+                : profile.kind === 'decision'
+                  ? profile.provider === 'jev'
+                    ? 'TypeSafe Jev · native decision API'
+                    : 'OpenAI · native Decisions API'
+                  : 'Any OpenAI-compatible endpoint'}
           </p>
         </div>
         <button className={`label label-button ${active ? 'purple' : ''}`} onClick={onActivate}>
-          {active ? (
+          {profile.kind === 'decision' ? (
+            'Decision only'
+          ) : active ? (
             <>
               <Check size={11} /> In use
             </>
@@ -611,7 +723,7 @@ function ProfileCard({
               : 'Enter the exact model ID your connection supports.'}
           </small>
         </div>
-        {profile.kind === 'compatible' && (
+        {(profile.kind === 'compatible' || profile.kind === 'decision') && (
           <>
             <div className="field">
               <label htmlFor={`url-${profile.id}`}>API base URL</label>
@@ -865,6 +977,44 @@ function ModelDialog({
         <h2 id="model-dialog-title">Your choice of intelligence.</h2>
         <p>Choose how this workspace connects to AI.</p>
         <div className="connection-options">
+          <button
+            onClick={() =>
+              onAdd({
+                id: crypto.randomUUID(),
+                name: 'OpenAI Decisions',
+                kind: 'decision',
+                provider: 'openai',
+                model: 'gpt-6-luna',
+                baseUrl: 'https://api.openai.com/v1',
+              })
+            }
+          >
+            <Zap size={22} />
+            <span>
+              <strong>OpenAI Decisions API</strong>
+              <small>Native typed decisions · API key required</small>
+            </span>
+            <ChevronRight size={16} />
+          </button>
+          <button
+            onClick={() =>
+              onAdd({
+                id: crypto.randomUUID(),
+                name: 'Jev decision model',
+                kind: 'decision',
+                provider: 'jev',
+                model: 'jev-latest',
+                baseUrl: 'https://api.typesafe.ai/v1',
+              })
+            }
+          >
+            <Radio size={22} />
+            <span>
+              <strong>TypeSafe Jev</strong>
+              <small>Native System One decision API</small>
+            </span>
+            <ChevronRight size={16} />
+          </button>
           <button
             onClick={() =>
               onAdd({

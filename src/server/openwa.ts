@@ -26,13 +26,18 @@ const RawSchema = z.object({
 });
 export class OpenWA {
   constructor(readonly store: Store) {}
-  async request(path: string) {
+  async request(path: string, method = 'GET', body?: unknown) {
     const settings = this.store.settings(),
       key = this.store.secret('openwa');
     if (!settings.openwaUrl || !key)
       throw new Error('Connect OpenWA in Settings → Chats to start syncing.');
     const response = await fetch(settings.openwaUrl.replace(/\/$/, '') + path, {
-      headers: { 'X-API-Key': key },
+      method,
+      headers: {
+        'X-API-Key': key,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: 'error',
       signal: AbortSignal.timeout(30000),
     });

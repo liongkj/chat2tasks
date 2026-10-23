@@ -68,7 +68,16 @@ export class Store {
       CREATE TABLE IF NOT EXISTS completion_events(id INTEGER PRIMARY KEY,task_id TEXT NOT NULL,message_id TEXT,kind TEXT NOT NULL,reason TEXT,created REAL NOT NULL);
       CREATE TABLE IF NOT EXISTS ai_usage(id INTEGER PRIMARY KEY,started REAL NOT NULL,finished REAL NOT NULL,model TEXT NOT NULL,purpose TEXT NOT NULL,input_tokens INTEGER,cached_input_tokens INTEGER,output_tokens INTEGER,reasoning_output_tokens INTEGER,total_tokens INTEGER,outcome TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS app_settings(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS app_secrets(id TEXT PRIMARY KEY,value TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS app_secrets(id TEXT PRIMARY KEY,value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS webhook_events(id TEXT PRIMARY KEY,received REAL NOT NULL);
+      CREATE TABLE IF NOT EXISTS chat_jobs(chat_id TEXT PRIMARY KEY,due REAL NOT NULL,first REAL NOT NULL,generation INTEGER NOT NULL,reconcile INTEGER NOT NULL,manual INTEGER NOT NULL DEFAULT 0);`);
+    if (
+      !this.db
+        .prepare('PRAGMA table_info(chat_jobs)')
+        .all()
+        .some((row) => row.name === 'manual')
+    )
+      this.db.exec('ALTER TABLE chat_jobs ADD COLUMN manual INTEGER NOT NULL DEFAULT 0');
     if (!this.db.prepare('SELECT id FROM app_settings WHERE id=1').get()) {
       const legacy = existsSync(legacyConfig)
         ? legacySchema.parse(JSON.parse(readFileSync(legacyConfig, 'utf8')))
@@ -92,8 +101,9 @@ export class Store {
             { id: 'codex', name: 'Codex', kind: 'codex', model: legacy.model ?? 'gpt-6-luna' },
           ],
           activeProfileId: 'codex',
-          pollSeconds: 10,
+          webhookUrl: '',
           quietSeconds: 45,
+          trigger: { mode: 'automatic', decisionProfileId: 'codex' },
         },
         secrets: {},
         removeSecrets: [],
@@ -160,7 +170,17 @@ export class Store {
       configuredSecrets: this.db
         .prepare('SELECT id FROM app_secrets')
         .all()
-        .map((r) => IdRow.parse(r).id),
+        .map((r) => IdRow.parse(r).id)
+        .filter((id) => id !== 'webhook-signing'),
+      webhook: {
+        registeredSessions:
+          this.settings().webhookUrl === this.metaValue('registered_webhook_url')
+            ? Object.keys(
+                z.record(z.string(), z.string()).parse(this.metaValue('managed_webhooks') ?? {}),
+              ).length
+            : 0,
+        lastReceivedAt: this.status().last_webhook ?? null,
+      },
     };
   }
   secret(id: string) {
@@ -183,6 +203,38 @@ export class Store {
       .prepare('INSERT OR REPLACE INTO app_secrets VALUES(?,?)')
       .run(id, [iv, cipher.getAuthTag(), content].map((b) => b.toString('base64')).join('.'));
   }
+  webhookSecret() {
+    const existing = this.secret('webhook-signing');
+    if (existing) return existing;
+    const value = randomBytes(32).toString('hex');
+    this.putSecret('webhook-signing', value);
+    return value;
+  }
+  queueChat(id: string, delay: number, reconcile = true, manual = false) {
+    const timestamp = now();
+    this.db
+      .prepare(
+        `INSERT INTO chat_jobs VALUES(?,?,?,1,?,?) ON CONFLICT(chat_id) DO UPDATE SET due=min(excluded.due,chat_jobs.first+180),generation=chat_jobs.generation+1,reconcile=max(chat_jobs.reconcile,excluded.reconcile),manual=excluded.manual`,
+      )
+      .run(id, timestamp + delay, timestamp, Number(reconcile), Number(manual));
+  }
+  jobs() {
+    return this.db
+      .prepare('SELECT * FROM chat_jobs ORDER BY due')
+      .all()
+      .map((row) =>
+        z
+          .object({
+            chat_id: z.string(),
+            due: z.number(),
+            first: z.number(),
+            generation: z.number(),
+            reconcile: z.number(),
+            manual: z.number(),
+          })
+          .parse(row),
+      );
+  }
   saveSettings(update: SettingsUpdate) {
     const allowed = new Set([
       'openwa',
@@ -200,7 +252,8 @@ export class Store {
         this.db.prepare('DELETE FROM app_secrets WHERE id=?').run(id);
       for (const r of this.db.prepare('SELECT id FROM app_secrets').all()) {
         const { id } = IdRow.parse(r);
-        if (!allowed.has(id)) this.db.prepare('DELETE FROM app_secrets WHERE id=?').run(id);
+        if (!allowed.has(id) && id !== 'webhook-signing')
+          this.db.prepare('DELETE FROM app_secrets WHERE id=?').run(id);
       }
     });
   }

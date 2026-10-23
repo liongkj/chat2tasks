@@ -1,0 +1,1 @@
+{"type":"object","properties":{"choice":{"type":"string","enum":["run","wait","skip"]},"confidence":{"type":"number","minimum":0,"maximum":1},"reason":{"type":"string"}},"required":["choice","confidence","reason"],"additionalProperties":false}

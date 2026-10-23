@@ -9,6 +9,8 @@ import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
 import { SettingsUpdateSchema, TaskSchema } from '../shared/schema.js';
 import { seedDemo } from './demo.js';
+import { Webhooks } from './webhooks.js';
+import { decideTrigger } from './decisions.js';
 
 const port = z.coerce
   .number()
@@ -22,6 +24,7 @@ const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
 const openwa = new OpenWA(store),
   sync = new Sync(store, openwa);
+const webhooks = new Webhooks(store, openwa, sync);
 const server = Fastify({
   logger: { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie'] },
   bodyLimit: 2_000_000,
@@ -54,6 +57,7 @@ server.addHook('onRequest', async (request, reply) => {
     'Content-Security-Policy':
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   });
+  if (request.url === '/api/webhooks/openwa') return;
   if (!allowedHosts.has(request.headers.host ?? ''))
     return reply
       .code(403)
@@ -83,20 +87,44 @@ server.setErrorHandler((error, request, reply) => {
   // Provider response bodies and supplied credentials never enter logs or API errors.
   const safe =
     error instanceof Error &&
-    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task)/.test(
+    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|The callback|Add a conversation|OpenWA could not|OpenWA returned)/.test(
       error.message,
     );
   if (safe) return reply.code(400).send({ error: error.message });
   request.log.error({ event: 'request_failed', route: request.routeOptions.url }, 'Request failed');
-  return reply
-    .code(503)
-    .send({
-      error: 'The request could not be completed. Check your connection settings and retry.',
-    });
+  return reply.code(503).send({
+    error: 'The request could not be completed. Check your connection settings and retry.',
+  });
 });
 server.get('/api/health', () => ({ ok: true }));
+await server.register(async (receiver) => {
+  receiver.removeContentTypeParser('application/json');
+  receiver.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer', bodyLimit: 20_000_000 },
+    (_request, body, done) => done(null, body),
+  );
+  receiver.post('/api/webhooks/openwa', { bodyLimit: 20_000_000 }, async (request, reply) => {
+    if (!syncEnabled) return reply.code(503).send({ error: 'Webhook processing is disabled' });
+    if (!Buffer.isBuffer(request.body))
+      return reply.code(400).send({ error: 'Expected a JSON webhook body' });
+    try {
+      return webhooks.receive(
+        request.body,
+        z.string().parse(request.headers['x-openwa-signature']),
+        z.string().optional().parse(request.headers['x-openwa-event']),
+        z.string().optional().parse(request.headers['x-openwa-idempotency-key']),
+      );
+    } catch (error) {
+      return reply
+        .code(error instanceof z.ZodError || error instanceof SyntaxError ? 400 : 401)
+        .send({ error: 'Invalid webhook signature or payload' });
+    }
+  });
+});
 server.get('/api/state', () => store.snapshot());
 server.get('/api/settings', () => store.publicSettings());
+server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);
   store.saveSettings(update);
@@ -189,6 +217,10 @@ server.post('/api/test-model', async (request) => {
   const { profileId } = z.object({ profileId: z.string() }).parse(request.body),
     profile = store.settings().profiles.find((p) => p.id === profileId);
   if (!profile) throw new Error('Unknown model connection');
+  if (profile.kind === 'decision') {
+    await decideTrigger(store, profile, [], [], 0);
+    return { ok: true };
+  }
   const result = z
     .object({ handoff: z.string() })
     .parse(

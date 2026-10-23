@@ -78,6 +78,7 @@ test('active chats alone reach OpenWA and the selected model; paused chats do no
       },
     ],
     activeProfileId: 'api',
+    trigger: { mode: 'automatic', decisionProfileId: null },
     chats: [
       { id: 'a', name: 'Active', sessionId: 'session', chatId: 'active', enabled: true },
       { id: 'b', name: 'Paused', sessionId: 'session', chatId: 'paused', enabled: false },
@@ -90,7 +91,7 @@ test('active chats alone reach OpenWA and the selected model; paused chats do no
   });
   const sync = new Sync(store, new OpenWA(store));
   sync.stop();
-  sync.force = true;
+
   try {
     await sync.run();
     assert.equal(store.snapshot().status.error, null);
@@ -237,13 +238,14 @@ test('pausing during inference discards its result and prevents the next AI call
         },
       ],
       activeProfileId: 'p',
+      trigger: { mode: 'automatic', decisionProfileId: null },
     },
     secrets: { openwa: 'fixture' },
     removeSecrets: [],
   });
   const sync = new Sync(store, new OpenWA(store));
   sync.stop();
-  sync.force = true;
+
   try {
     await sync.run();
     assert.equal(calls, 1);

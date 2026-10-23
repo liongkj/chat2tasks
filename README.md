@@ -15,7 +15,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open **http://127.0.0.1:2786**. In **Conversations**, enter your OpenWA server URL and API key. Find a session and its chats, or add a chat by ID. New chats start paused; activate only the conversations you want to process.
+Open **http://127.0.0.1:2786**. In **Conversations**, enter your OpenWA server URL and API key. Find a session and its chats, or add a chat by ID. New chats start paused; activate only the conversations you want to follow. Enter a callback URL reachable from OpenWA, ending in `/api/webhooks/openwa`, then choose **Connect & test webhooks**. The app registers signed message and session events and verifies a delivery. For a private Docker hostname, add only that exact receiver hostname to OpenWA’s `SSRF_ALLOWED_HOSTS`; keep SSRF protection enabled.
 
 OpenWA is a separate prerequisite. Point Chat2Tasks at an existing compatible OpenWA installation. If it is another Compose stack, attach Chat2Tasks to that stack’s network with a Compose override. `localhost` inside the container refers to Chat2Tasks, not your host; on Docker Desktop use `host.docker.internal` for a host service. On Linux configure `host-gateway` or a shared Docker network.
 
@@ -23,7 +23,7 @@ The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGI
 
 ## Model connections
 
-Use **Settings & connections** to add, name, test, and select connections. The sidebar selector switches the active connection for subsequent AI calls. In-flight requests finish on the connection they started with. Model IDs are editable; there is no fixed provider catalog.
+Use **Settings & connections** to add, name, test, and select connections. The sidebar selector chooses the task-generation connection. The separate **Decision connection** setting chooses the trigger judge. Native decision connections do not appear in the task-generation selector. In-flight requests finish on the connection they started with. Model IDs are editable; there is no fixed provider catalog.
 
 * **Codex subscription.** Sign in once inside the running container:
 
@@ -38,14 +38,25 @@ Use **Settings & connections** to add, name, test, and select connections. The s
 
 **Test connection** makes one small, billable model request. Saving a connection does not run a test; normal active-chat processing continues in the background. Selected models must return valid schema JSON. Invalid task output is rejected without marking its source messages processed.
 
-## How it works
+## Message receipt and model triggers
 
-1. Only activated conversations are fetched and processed. Pausing retains existing tasks and cached sources. If you pause during an AI request, its task/completion results are discarded.
-2. New messages wait for a quiet period, up to three minutes, to keep bursts together.
-3. Screenshots are cached against their source message, read as evidence, and reread when their bytes change. Original images are shown beside their source messages. Older unavailable images are retried in bounded batches; deleted or expired media may remain unavailable.
-4. Task generation and an evidence review produce next steps, completion criteria, priorities, and exact source links. Chat contents and images are treated as untrusted evidence. The app never sends WhatsApp replies or executes task instructions.
-5. Only a clear outgoing completion report can automatically tick one task. Ambiguous matches ask in the workspace. Manual completion changes win, including changes made during inference. Task generation cannot change ticks or personal notes.
-6. Notes, task completion and usage persist in SQLite. Export includes tasks and cached source messages; import changes only matching task ticks. Task handoffs download as Markdown.
+Receiving a message does not run Luna. The stages are independent:
+
+1. OpenWA sends `message.received`, `message.sent`, `message.edited`, `message.revoked`, and `session.status` webhooks. Chat2Tasks verifies the HMAC over the exact raw bytes and deduplicates delivery retries. Messages in activated conversations are saved immediately, even in manual mode. Events for other chats are ignored.
+2. In automatic mode, a durable per-chat debounce waits for the chosen quiet period, capped at three minutes for a continuous burst. It survives a restart. There is no recurring OpenWA message poll. A source-history reconciliation runs at startup, on session-status changes, configuration changes, and explicit recovery.
+3. An optional decision connection chooses **run**, **wait**, or **skip** before task analysis. Codex or an ordinary API connection can return schema-validated decisions. **OpenAI Decisions** calls [`POST /v1/decisions`](https://developers.openai.com/api/docs/guides/decisions) with `gpt-6-luna`; **Jev** calls TypeSafe’s native [`POST /v1/systemone`](https://docs.typesafe.ai/introduction/quickstart) with typed choice criteria. Add either under model connections and select it as the decision connection. They require their respective API keys; a Codex subscription is a separate connection.
+4. Low confidence, decision-service failures, attachment evidence, and outgoing completion evidence conservatively run the task model. A **wait** cannot extend a burst beyond three minutes. A **skip** marks only the evaluated batch processed; source messages remain saved. Skipped chatter does not generate task work. These are application policies, not claims that provider confidence is calibrated for your chats.
+5. In **manual** mode, webhook receipt continues, but neither the decision model nor Luna runs until you choose **Run now**. **Run now** also bypasses the debounce and decision gate in automatic mode.
+
+The default connection is Codex. A fresh workspace selects Codex for the decision gate too; all trigger choices are configurable in Settings. The browser refreshes displayed state periodically; that does not poll OpenWA or invoke any model.
+
+## Task analysis and persistence
+
+Screenshots are cached against their source message, read as evidence, and reread when their bytes change. Original images appear with source messages. Older unavailable images are retried in bounded batches during triggered work; deleted or expired media can remain unavailable.
+
+Task generation and an evidence review produce next steps, completion criteria, priorities, and exact source links. Source messages and images are untrusted evidence. The app never sends WhatsApp replies or executes task instructions. Only a clear outgoing completion report can automatically tick one task. Ambiguous matches ask locally. Manual changes win, including changes during inference. Task generation cannot change ticks or personal notes.
+
+Notes, task completion, trigger decisions, and usage persist in SQLite. Export includes tasks and cached source messages; import changes only matching task ticks. Task handoffs download as Markdown. Rate-limit retries are bounded jobs, not periodic message polling.
 
 ## Privacy and network access
 
@@ -53,7 +64,7 @@ The Docker service binds to host loopback by default. It is a single-owner works
 
 API keys are encrypted with AES-256-GCM in SQLite. The encryption key is `data/vault.key`, permission 0600, in the same persistent volume. This protects copied database files, **not a compromised host or complete volume**. Keep the database and key backed up together, protect the Docker host, and use disk encryption where appropriate. Credentials are write-only in the UI: a blank field keeps the existing key, a new value replaces it, and **Remove saved key** removes it on save. No keys enter browser storage or workspace exports.
 
-Activated chat messages and screenshots go to your selected model provider, and through Cloudflare when configured. Cloudflare request logging is disabled on requests from this app. Provider retention policies still apply. Self-hosted fonts and assets make no external browser requests. Do not commit `.env`, `config.json`, `data/`, Codex sessions, chat exports, or private images. These are excluded from both Git and Docker build context.
+Activated chat messages go to your separately selected decision provider when the decision gate is enabled. Task messages and screenshots go to your task-generation provider, and through Cloudflare when configured. Cloudflare request logging is disabled on requests from this app. Provider retention policies still apply. Self-hosted fonts and assets make no external browser requests. Do not commit `.env`, `config.json`, `data/`, Codex sessions, chat exports, or private images. These are excluded from both Git and Docker build context.
 
 ## Existing Python app migration
 
@@ -61,7 +72,7 @@ Chat2Tasks uses the original SQLite tables for tasks, ticks, remarks, source lin
 
 Use a copy first. Additional tables are created without dropping original tables. If rolling back, stop Chat2Tasks before restarting the original service. Never run both processors against one live database.
 
-Set `SYNC_DISABLED=true` for a migration check against a copied data directory; it disables background polling and the Sync button. It does not make the workspace read-only: manual edits and explicit connection tests still work.
+Set `SYNC_DISABLED=true` for a migration check against a copied data directory; it disables background work and the Run now button. It does not make the workspace read-only: manual edits and explicit connection tests still work.
 
 ## Local development
 
