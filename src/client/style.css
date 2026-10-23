@@ -1164,6 +1164,43 @@ code {
 .modal .field {
   margin-bottom: 18px;
 }
+.chat-add-method {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 20px;
+  border-radius: 9px;
+  background: var(--sidebar);
+}
+.chat-add-method button {
+  flex: 1;
+  min-width: 0;
+  padding: 9px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.chat-add-method button.selected {
+  background: white;
+  box-shadow: 0 1px 4px #0002;
+  font-weight: 600;
+}
+.chat-picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.chat-picker-row select {
+  flex: 1;
+  min-width: 0;
+}
+.chat-picker-row .button {
+  flex: none;
+}
+.chat-discovery-error {
+  color: var(--danger);
+  font-size: 14px;
+  margin-bottom: 18px;
+}
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1435,6 +1472,18 @@ code {
   }
   .modal {
     padding: 24px;
+  }
+  .chat-picker-row {
+    flex-wrap: wrap;
+  }
+  .chat-picker-row select {
+    flex-basis: 100%;
+  }
+  .chat-dialog .modal-actions {
+    flex-direction: column-reverse;
+  }
+  .chat-dialog .modal-actions .button {
+    width: 100%;
   }
 }
 

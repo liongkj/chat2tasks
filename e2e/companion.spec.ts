@@ -481,3 +481,75 @@ test('narrow touch workspace keeps long conversation names and note controls usa
     await browser.close();
   }
 });
+
+test('add conversation dialog selects a discovered chat from the chosen session', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1080, height: 900 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.route('**/api/discover', async (route) => {
+      const { sessionId } = route.request().postDataJSON() as { sessionId?: string };
+      const rows =
+        sessionId === 'work'
+          ? [{ id: 'work@g.us', name: 'Work group' }]
+          : sessionId === 'family'
+            ? [{ id: 'family@g.us', name: 'Family group' }]
+            : [
+                { id: 'work', name: 'Work' },
+                { id: 'family', name: 'Family' },
+              ];
+      await route.fulfill({ json: rows });
+    });
+    await page.goto(base);
+    await page.getByRole('button', { name: /^Conversations/ }).click();
+    await page.getByLabel('OpenWA API URL').fill('http://127.0.0.1:9999');
+    await page.getByRole('button', { name: 'Add chat' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('button', { name: 'Choose from list' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await dialog.getByRole('button', { name: 'Find sessions' }).click();
+    await dialog.getByLabel('OpenWA session').selectOption('work');
+    await dialog.getByRole('button', { name: 'Find chats' }).click();
+    await dialog.getByLabel('WhatsApp chat').selectOption('work@g.us');
+    await expect(dialog.getByLabel('Conversation name')).toHaveValue('Work group');
+
+    await dialog.getByLabel('OpenWA session').selectOption('family');
+    await expect(dialog.getByLabel('WhatsApp chat')).toBeDisabled();
+    await expect(
+      dialog.getByRole('button', { name: 'Add conversation', exact: true }),
+    ).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Find chats' }).click();
+    await dialog.getByLabel('WhatsApp chat').selectOption('family@g.us');
+    await dialog.getByLabel('Conversation name').fill('Family follow-ups');
+    await page.setViewportSize({ width: 320, height: 740 });
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await dialog.getByRole('button', { name: 'Add conversation', exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect
+      .poll(async () => {
+        const settings = PublicSettingsSchema.parse(await (await owner('settings')).json());
+        return settings.settings.chats.find((chat) => chat.chatId === 'family@g.us');
+      })
+      .toMatchObject({ sessionId: 'family', name: 'Family follow-ups', enabled: false });
+
+    await page.getByRole('button', { name: 'Add chat' }).click();
+    await dialog.getByLabel('WhatsApp chat').selectOption('family@g.us');
+    await expect(dialog.getByText('This chat is already added.')).toBeVisible();
+    await expect(
+      dialog.getByRole('button', { name: 'Add conversation', exact: true }),
+    ).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Enter IDs manually' }).click();
+    await expect(dialog.getByLabel('OpenWA session ID')).toBeVisible();
+    await expect(dialog.getByLabel('WhatsApp chat ID')).toBeVisible();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});

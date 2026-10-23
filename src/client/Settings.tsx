@@ -38,6 +38,7 @@ type Props = {
   onSave: (config: PublicSettings) => void;
   notify: (text: string) => void;
 };
+type DiscoveredEntry = { id: string; name: string };
 export function SettingsPanel({ tab, config, onSave, notify }: Props) {
   const [draft, setDraft] = useState(config.settings),
     [secrets, setSecrets] = useState<Record<string, string>>({}),
@@ -47,8 +48,11 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
     [addingModel, setAddingModel] = useState(false);
   const [discovering, setDiscovering] = useState(false),
     [sessionId, setSessionId] = useState(''),
-    [sessions, setSessions] = useState<{ id: string; name: string }[]>([]),
-    [discovered, setDiscovered] = useState<{ id: string; name: string }[]>([]);
+    [sessions, setSessions] = useState<DiscoveredEntry[]>([]),
+    [discovered, setDiscovered] = useState<{ sessionId: string; chats: DiscoveredEntry[] } | null>(
+      null,
+    ),
+    [discoveryError, setDiscoveryError] = useState('');
   async function save(settings: Settings = draft, credentialChanges = secrets, removed = remove) {
     setSaving(true);
     try {
@@ -116,35 +120,32 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
   }
   async function discover(session?: string) {
     setDiscovering(true);
+    setDiscoveryError('');
     try {
       if (!(await save())) return;
-      const payload = await api('discover', z.unknown(), session ? { sessionId: session } : {});
-      const response = z
-        .union([
-          z.array(z.unknown()),
-          z.object({
-            sessions: z.array(z.unknown()).optional(),
-            chats: z.array(z.unknown()).optional(),
-          }),
-        ])
-        .parse(payload);
-      const rows = Array.isArray(response)
-        ? response
-        : session
-          ? (response.chats ?? [])
-          : (response.sessions ?? []);
-      const entries = rows
-        .map((row) => z.object({ id: z.string(), name: z.string().optional() }).parse(row))
-        .map((row) => ({ id: row.id, name: row.name ?? row.id }));
-      if (session) setDiscovered(entries);
+      const entries = await api(
+        'discover',
+        z.array(z.object({ id: z.string(), name: z.string() })),
+        session ? { sessionId: session } : {},
+      );
+      if (session) setDiscovered({ sessionId: session, chats: entries });
       else {
         setSessions(entries);
-        if (entries.length === 1 && entries[0]) setSessionId(entries[0].id);
+        setDiscovered(null);
+        setSessionId((current) =>
+          entries.some((entry) => entry.id === current)
+            ? current
+            : entries.length === 1
+              ? entries[0]!.id
+              : '',
+        );
       }
       if (!entries.length)
         notify('No conversations found. You can add one by session and chat ID.');
     } catch (e) {
-      notify(errorMessage(e));
+      const message = errorMessage(e);
+      setDiscoveryError(message);
+      notify(message);
     } finally {
       setDiscovering(false);
     }
@@ -259,9 +260,9 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                 </button>
               </div>
             )}
-            {discovered.length > 0 && (
+            {discovered?.sessionId === sessionId && discovered.chats.length > 0 && (
               <div className="discovered-list">
-                {discovered.map((c) => (
+                {discovered.chats.map((c) => (
                   <div className="discovered-row" key={c.id}>
                     <MessageSquare size={15} />
                     <span>{c.name}</span>
@@ -421,7 +422,20 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
           </div>
           <ChatDialog
             open={addingChat}
-            onClose={() => setAddingChat(false)}
+            onClose={() => {
+              setAddingChat(false);
+              setDiscoveryError('');
+            }}
+            sessions={sessions}
+            sessionId={sessionId}
+            onSessionChange={setSessionId}
+            discovered={discovered?.sessionId === sessionId ? discovered.chats : null}
+            discovering={discovering}
+            discoveryError={discoveryError}
+            canDiscover={Boolean(draft.openwaUrl)}
+            onDiscoverSessions={() => discover()}
+            onDiscoverChats={() => discover(sessionId)}
+            existingChats={draft.chats}
             onAdd={async (chat) => {
               const next = { ...draft, chats: [...draft.chats, chat] };
               if (await save(next)) setAddingChat(false);
@@ -848,15 +862,42 @@ function ChatDialog({
   open,
   onClose,
   onAdd,
+  sessions,
+  sessionId,
+  onSessionChange,
+  discovered,
+  discovering,
+  discoveryError,
+  canDiscover,
+  onDiscoverSessions,
+  onDiscoverChats,
+  existingChats,
 }: {
   open: boolean;
   onClose: () => void;
   onAdd: (chat: Chat) => Promise<void>;
+  sessions: DiscoveredEntry[];
+  sessionId: string;
+  onSessionChange: (id: string) => void;
+  discovered: DiscoveredEntry[] | null;
+  discovering: boolean;
+  discoveryError: string;
+  canDiscover: boolean;
+  onDiscoverSessions: () => Promise<void>;
+  onDiscoverChats: () => Promise<void>;
+  existingChats: Chat[];
 }) {
   const [name, setName] = useState(''),
     [session, setSession] = useState(''),
     [id, setId] = useState(''),
+    [selectedChat, setSelectedChat] = useState(''),
+    [method, setMethod] = useState<'list' | 'manual'>('list'),
     [saving, setSaving] = useState(false);
+  const selected = discovered?.find((chat) => chat.id === selectedChat);
+  const duplicate =
+    method === 'list' &&
+    Boolean(selected) &&
+    existingChats.some((chat) => chat.sessionId === sessionId && chat.chatId === selectedChat);
   return (
     <Dialog.Root
       open={open}
@@ -865,6 +906,8 @@ function ChatDialog({
           setName('');
           setSession('');
           setId('');
+          setSelectedChat('');
+          setMethod('list');
         }
       }}
       onOpenChange={(next) => {
@@ -874,7 +917,7 @@ function ChatDialog({
       <Dialog.Portal>
         <Dialog.Backdrop className="modal-backdrop" />
         <Dialog.Viewport className="modal-viewport">
-          <Dialog.Popup className="modal">
+          <Dialog.Popup className="modal chat-dialog">
             <button
               className="icon-btn modal-close"
               onClick={onClose}
@@ -890,13 +933,14 @@ function ChatDialog({
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (method === 'list' && (!selected || duplicate || !sessionId)) return;
                 setSaving(true);
                 try {
                   await onAdd({
                     id: crypto.randomUUID(),
                     name: name.trim(),
-                    sessionId: session.trim(),
-                    chatId: id.trim(),
+                    sessionId: method === 'list' ? sessionId : session.trim(),
+                    chatId: method === 'list' ? selectedChat : id.trim(),
                     enabled: false,
                   });
                 } finally {
@@ -904,10 +948,141 @@ function ChatDialog({
                 }
               }}
             >
+              <div
+                className="chat-add-method"
+                role="group"
+                aria-label="Choose a conversation source"
+              >
+                <button
+                  type="button"
+                  className={method === 'list' ? 'selected' : ''}
+                  aria-pressed={method === 'list'}
+                  onClick={() => setMethod('list')}
+                >
+                  Choose from list
+                </button>
+                <button
+                  type="button"
+                  className={method === 'manual' ? 'selected' : ''}
+                  aria-pressed={method === 'manual'}
+                  onClick={() => setMethod('manual')}
+                >
+                  Enter IDs manually
+                </button>
+              </div>
+              {method === 'list' ? (
+                <>
+                  <div className="field">
+                    <label htmlFor="chat-pick-session">OpenWA session</label>
+                    <div className="chat-picker-row">
+                      <select
+                        id="chat-pick-session"
+                        value={sessionId}
+                        required
+                        onChange={(e) => {
+                          onSessionChange(e.target.value);
+                          setSelectedChat('');
+                          setName('');
+                        }}
+                      >
+                        <option value="">Choose a session…</option>
+                        {sessions.map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {entry.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => void onDiscoverSessions()}
+                        disabled={discovering || !canDiscover}
+                      >
+                        {discovering ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <RefreshCw size={14} />
+                        )}
+                        Find sessions
+                      </button>
+                    </div>
+                    {!canDiscover && (
+                      <small>Enter your OpenWA API URL above to find sessions.</small>
+                    )}
+                  </div>
+                  <div className="field">
+                    <label htmlFor="chat-pick-chat">WhatsApp chat</label>
+                    <div className="chat-picker-row">
+                      <select
+                        id="chat-pick-chat"
+                        value={selected ? selectedChat : ''}
+                        required
+                        disabled={!sessionId || discovered === null}
+                        onChange={(e) => {
+                          const choice = discovered?.find((chat) => chat.id === e.target.value);
+                          setSelectedChat(e.target.value);
+                          setName(choice?.name ?? '');
+                        }}
+                      >
+                        <option value="">Choose a chat…</option>
+                        {discovered?.map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {entry.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => void onDiscoverChats()}
+                        disabled={!sessionId || discovering || !canDiscover}
+                      >
+                        {discovering ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <RefreshCw size={14} />
+                        )}
+                        Find chats
+                      </button>
+                    </div>
+                    {discovered?.length === 0 && <small>No chats found in this session.</small>}
+                    {duplicate && (
+                      <small className="danger-text">This chat is already added.</small>
+                    )}
+                  </div>
+                  {discoveryError && (
+                    <p className="chat-discovery-error" role="alert">
+                      {discoveryError}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="field">
+                    <label htmlFor="chat-session">OpenWA session ID</label>
+                    <input
+                      id="chat-session"
+                      value={session}
+                      required
+                      onChange={(e) => setSession(e.target.value)}
+                      placeholder="Your connected session ID"
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="chat-id">WhatsApp chat ID</label>
+                    <input
+                      id="chat-id"
+                      value={id}
+                      required
+                      onChange={(e) => setId(e.target.value)}
+                      placeholder="…@c.us, …@g.us, or …@lid"
+                    />
+                  </div>
+                </>
+              )}
               <div className="field">
                 <label htmlFor="chat-name">Conversation name</label>
                 <input
-                  autoFocus
                   id="chat-name"
                   value={name}
                   required
@@ -915,31 +1090,14 @@ function ChatDialog({
                   placeholder="Design team"
                 />
               </div>
-              <div className="field">
-                <label htmlFor="chat-session">OpenWA session ID</label>
-                <input
-                  id="chat-session"
-                  value={session}
-                  required
-                  onChange={(e) => setSession(e.target.value)}
-                  placeholder="Your connected session ID"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="chat-id">WhatsApp chat ID</label>
-                <input
-                  id="chat-id"
-                  value={id}
-                  required
-                  onChange={(e) => setId(e.target.value)}
-                  placeholder="…@c.us, …@g.us, or …@lid"
-                />
-              </div>
               <div className="modal-actions">
                 <button type="button" className="button secondary" onClick={onClose}>
                   Cancel
                 </button>
-                <button className="button primary" disabled={saving}>
+                <button
+                  className="button primary"
+                  disabled={saving || duplicate || (method === 'list' && (!sessionId || !selected))}
+                >
                   {saving ? 'Adding…' : 'Add conversation'}
                   <Plus size={14} />
                 </button>
