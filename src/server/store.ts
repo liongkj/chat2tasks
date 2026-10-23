@@ -21,8 +21,22 @@ export const now = () => Date.now() / 1000;
 export const hash = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const fingerprint = (message: Message) => {
-  const { image_reading: _reading, ...source } = message;
-  return hash(source);
+  return hash({
+    id: message.id,
+    sessionId: message.sessionId,
+    chatId: message.chatId,
+    waMessageId: message.waMessageId ?? null,
+    body: message.body,
+    type: message.type,
+    direction: message.direction,
+    timestamp: message.timestamp,
+    reply_to_wa_id: message.reply_to_wa_id ?? null,
+    reply_to_id: message.reply_to_id ?? null,
+    reply_quote: message.reply_quote ?? null,
+    mediaMimetype: message.mediaMimetype ?? null,
+    image_digest: message.image_digest ?? null,
+    entity_link: message.entity_link ?? null,
+  });
 };
 const PayloadRow = z.object({ payload: z.string() });
 const ValueRow = z.object({ value: z.string() });
@@ -116,15 +130,25 @@ export class Store {
       if (cursor && legacy.session_id && legacy.chat_id)
         this.setMeta('cursor:' + hash([legacy.session_id, legacy.chat_id]), cursor);
     }
-    if (!this.metaValue('typescript_migrated'))
+    if (this.metaValue('source_fingerprint_version') !== 2)
       this.transaction(() => {
+        const legacy = !this.metaValue('typescript_migrated');
         for (const m of this.messages()) {
-          this.db.prepare('UPDATE processed SET digest=? WHERE id=?').run(fingerprint(m), m.id);
-          this.db
-            .prepare('UPDATE completion_seen SET digest=? WHERE message_id=?')
-            .run(fingerprint(m), m.id);
+          const { image_reading: _reading, ...source } = m;
+          for (const [table, key] of [
+            ['processed', 'id'],
+            ['completion_seen', 'message_id'],
+          ]) {
+            const row = this.db.prepare(`SELECT digest FROM ${table} WHERE ${key}=?`).get(m.id);
+            // Preserve pending edits when upgrading an already-running TypeScript workspace.
+            if (row && (legacy || row.digest === hash(source)))
+              this.db
+                .prepare(`UPDATE ${table} SET digest=? WHERE ${key}=?`)
+                .run(fingerprint(m), m.id);
+          }
         }
         this.setMeta('typescript_migrated', true);
+        this.setMeta('source_fingerprint_version', 2);
       });
     if (!this.metaValue('auto_completion_since')) this.setMeta('auto_completion_since', now());
   }

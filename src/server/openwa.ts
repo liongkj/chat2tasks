@@ -130,6 +130,7 @@ export class OpenWA {
         reply_quote: row.metadata?.quotedMessage?.body,
         mediaMimetype: row.metadata?.media?.mimetype ?? previous?.mediaMimetype,
         image_digest: previous?.image_digest,
+        entity_link: previous?.entity_link,
       });
       if (m.type === 'image' && (row.metadata?.media?.data || !previous)) {
         const encoded = row.metadata?.media?.data;

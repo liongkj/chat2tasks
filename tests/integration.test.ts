@@ -318,7 +318,9 @@ test('legacy migration preserves ticks, notes, sources, and incremental cursors 
   initial.setMeta('source_cursor', 'source-id');
   initial.close();
   const database = new DatabaseSync(join(dir, 'tasks.sqlite'));
-  database.exec("DELETE FROM app_settings;DELETE FROM meta WHERE key='typescript_migrated'");
+  database.exec(
+    "DELETE FROM app_settings;DELETE FROM meta WHERE key IN ('typescript_migrated','source_fingerprint_version')",
+  );
   database.close();
   writeFileSync(
     config,

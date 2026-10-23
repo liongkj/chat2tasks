@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store } from '../src/server/store.js';
+import { Store, hash } from '../src/server/store.js';
 import { MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
 
 function fixture() {
@@ -199,6 +199,47 @@ test('API keys are encrypted at rest, never returned, and can be replaced and re
     assert.equal(f.store.secret('openwa'), 'replacement');
     f.store.saveSettings({ settings, secrets: {}, removeSecrets: ['openwa'] });
     assert.equal(f.store.secret('openwa'), '');
+  } finally {
+    f.close();
+  }
+});
+
+test('webhook and history transport differences do not resend unchanged evidence to the model', () => {
+  const f = fixture();
+  try {
+    f.store.apply([], [f.message]);
+    const recovered = {
+      ...f.message,
+      openwaId: 'rest-row-id',
+      reply_to_wa_id: null,
+      reply_quote: null,
+    };
+    f.store.cache([recovered]);
+    assert.equal(f.store.pending(f.store.messages()).length, 0);
+    f.store.cache([{ ...recovered, body: 'A real change to the task request' }]);
+    assert.equal(f.store.pending(f.store.messages()).length, 1);
+  } finally {
+    f.close();
+  }
+});
+test('upgrading fingerprints preserves a pending edit while recognizing unchanged prior evidence', () => {
+  const f = fixture();
+  try {
+    const other = { ...f.message, id: 'm2', waMessageId: 'w2' };
+    f.store.cache([other]);
+    for (const m of [f.message, other])
+      f.store.db.prepare('INSERT OR REPLACE INTO processed VALUES(?,?)').run(m.id, hash(m));
+    f.store.cache([{ ...other, body: 'An edit still waiting for analysis' }]);
+    f.store.setMeta('source_fingerprint_version', 1);
+    const reopened = new Store(f.dir);
+    try {
+      assert.deepEqual(
+        reopened.pending(reopened.messages()).map((m) => m.id),
+        ['m2'],
+      );
+    } finally {
+      reopened.close();
+    }
   } finally {
     f.close();
   }
