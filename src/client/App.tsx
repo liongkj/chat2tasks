@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   Check,
   CheckCheck,
-  ChevronDown,
   ChevronRight,
   Circle,
   CircleCheck,
@@ -62,13 +61,16 @@ export function App() {
     [filter, setFilter] = useState<'open' | 'all' | 'done'>('open');
   const [query, setQuery] = useState(''),
     [chat, setChat] = useState<string | null>(null),
-    [selected, setSelected] = useState<string | null>(null);
+    [selected, setSelected] = useState<string | null>(() =>
+      new URLSearchParams(window.location.search).get('task'),
+    );
   const [notice, setNotice] = useState(''),
     [online, setOnline] = useState(true),
     [mobileMenu, setMobileMenu] = useState(false),
     [showMenu, setShowMenu] = useState(false);
   const search = useRef<HTMLInputElement>(null),
     file = useRef<HTMLInputElement>(null);
+  const initialSelection = useRef(false);
   const refresh = useCallback(async () => {
     try {
       setData(await api('state', SnapshotSchema));
@@ -117,8 +119,7 @@ export function App() {
     setShowMenu(false);
   };
   const settings = config?.settings;
-  const enabled = settings?.chats.filter((c) => c.enabled) ?? [],
-    currentChat = settings?.chats.find((c) => c.id === chat);
+  const currentChat = settings?.chats.find((c) => c.id === chat);
   const sourceIds = new Set(
     data.messages
       .filter(
@@ -144,25 +145,20 @@ export function App() {
         b.updated - a.updated,
     );
   const selectedTask = data.tasks.find((t) => t.id === selected);
-  const done = scoped.filter((t) => t.done).length;
+  useEffect(() => {
+    if (initialSelection.current || !visible.length) return;
+    initialSelection.current = true;
+    if (
+      !data.tasks.some((task) => task.id === selected) &&
+      window.matchMedia('(min-width: 1024px)').matches
+    )
+      setSelected(visible[0]?.id ?? null);
+  }, [visible, selected, data.tasks]);
   async function tick(task: Task) {
     try {
       await api('tick', OkSchema, { id: task.id, done: !task.done });
       await refresh();
       setNotice(task.done ? 'Moved back to your tasks' : 'One less thing. Task completed.');
-    } catch (e) {
-      setNotice(errorMessage(e));
-    }
-  }
-  async function changeModel(id: string) {
-    if (!settings) return;
-    try {
-      setConfig(
-        await api('settings', PublicSettingsSchema, {
-          settings: { ...settings, activeProfileId: id },
-        }),
-      );
-      setNotice('Model connection updated');
     } catch (e) {
       setNotice(errorMessage(e));
     }
@@ -178,7 +174,7 @@ export function App() {
   }
   const title =
     view === 'tasks'
-      ? (currentChat?.name ?? 'My tasks')
+      ? (currentChat?.name ?? (filter === 'done' ? 'Completed' : 'My Tasks'))
       : view === 'chats'
         ? 'Conversations'
         : view === 'models'
@@ -201,37 +197,36 @@ export function App() {
             navigate('tasks');
           }}
         >
-          <span className="brand-mark">
-            <MessageSquare size={18} />
-            <Check size={10} />
-          </span>
-          <span>
-            chat2tasks<small>{data.demo ? 'Sample workspace' : 'Personal workspace'}</small>
-          </span>
-          <ChevronDown size={13} />
+          <span>chat2tasks</span>
         </button>
-        <button
-          className="search-shortcut"
-          onClick={() => {
-            navigate('tasks');
-            search.current?.focus();
-          }}
-        >
+        <div className="search-shortcut">
           <Search size={15} />
-          <span>Find anything</span>
+          <input
+            ref={search}
+            aria-label="Search tasks"
+            placeholder="Search tasks…"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              navigate('tasks');
+            }}
+          />
           <kbd>⌘ K</kbd>
-        </button>
-        <div className="nav-label">Workspace</div>
+        </div>
         <nav aria-label="Workspace">
           <button
-            className={view === 'tasks' && !chat ? 'nav-item active' : 'nav-item'}
+            className={
+              view === 'tasks' && !chat && filter !== 'done' ? 'nav-item active' : 'nav-item'
+            }
             onClick={() => {
               setChat(null);
+              setFilter('open');
+              setSelected(null);
               navigate('tasks');
             }}
           >
             <Inbox size={17} />
-            <span>My tasks</span>
+            <span>My Tasks</span>
             <span className="nav-count">{data.tasks.filter((t) => !t.done).length}</span>
           </button>
           <button
@@ -243,89 +238,35 @@ export function App() {
             <span className="nav-count">{settings?.chats.length ?? 0}</span>
           </button>
           <button
+            className={view === 'tasks' && filter === 'done' ? 'nav-item active' : 'nav-item'}
+            onClick={() => {
+              setChat(null);
+              setFilter('done');
+              setSelected(null);
+              navigate('tasks');
+            }}
+          >
+            <CircleCheck size={19} />
+            <span>Completed</span>
+            <span className="nav-count">{data.tasks.filter((t) => t.done).length}</span>
+          </button>
+        </nav>
+        <div className="sidebar-bottom">
+          <button
             className={view === 'activity' ? 'nav-item active' : 'nav-item'}
             onClick={() => navigate('activity')}
           >
-            <Activity size={17} />
+            <Activity size={18} />
             <span>Activity</span>
             {data.status.syncing && <span className="live-dot" />}
           </button>
-        </nav>
-        <div className="nav-label conversation-label">
-          Following{' '}
-          <button
-            className="icon-btn"
-            aria-label="Add a conversation"
-            onClick={() => navigate('chats')}
-          >
-            <Plus size={14} />
-          </button>
-        </div>
-        <nav aria-label="Followed chats" className="chat-nav">
-          {enabled.map((c) => (
-            <button
-              key={c.id}
-              className={chat === c.id && view === 'tasks' ? 'nav-item active' : 'nav-item'}
-              onClick={() => {
-                setChat(c.id);
-                navigate('tasks');
-                setSelected(null);
-              }}
-            >
-              <span className="tiny-avatar">{c.name.slice(0, 1)}</span>
-              <span>{c.name}</span>
-              <span className="live-dot" />
-            </button>
-          ))}
-          {!enabled.length && (
-            <p className="sidebar-hint">
-              Your active conversations
-              <br />
-              will appear here.
-            </p>
-          )}
-        </nav>
-        <button className="add-chat" onClick={() => navigate('chats')}>
-          <Plus size={14} /> Add a conversation
-        </button>
-        <div className="sidebar-bottom">
           <button
             className={view === 'models' ? 'nav-item active' : 'nav-item'}
             onClick={() => navigate('models')}
           >
             <Settings2 size={17} />
-            <span>Settings & connections</span>
+            <span>Settings</span>
           </button>
-          <div className="model-card">
-            <div className="model-label">
-              <Sparkles size={14} />
-              <span>Intelligence</span>
-              <span className={`live-dot ${online ? '' : 'offline'}`} />
-            </div>
-            <div className="model-select">
-              <select
-                aria-label="Active model connection"
-                value={settings?.activeProfileId ?? ''}
-                onChange={(e) => void changeModel(e.target.value)}
-              >
-                {settings?.profiles
-                  .filter((p) => p.kind !== 'decision')
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} · {p.model}
-                    </option>
-                  ))}
-              </select>
-              <ChevronDown size={12} />
-            </div>
-            <button className="text-button" onClick={() => navigate('models')}>
-              Manage models <ArrowUpRight size={12} />
-            </button>
-          </div>
-          <div className="local-note">
-            <ShieldCheck size={12} />
-            <span>Your workspace. Your data.</span>
-          </div>
         </div>
       </aside>
       <main className="workspace">
@@ -351,7 +292,9 @@ export function App() {
                   ? 'Working quietly…'
                   : data.status.error
                     ? 'Needs attention'
-                    : 'Workspace connected'}
+                    : data.demo
+                      ? 'Sample workspace'
+                      : 'Connected'}
             </span>
             <button
               className="avatar"
@@ -379,33 +322,23 @@ export function App() {
           <ActivityView data={data} onSync={() => void sync()} />
         ) : (
           <>
-            <section className="page-heading">
-              <div>
-                <div className="eyebrow">
-                  <span className="eyebrow-line" /> FROM CONVERSATION TO CLARITY
-                </div>
-                <h1>{currentChat ? currentChat.name : 'A little less to keep in mind.'}</h1>
-                <p>Your conversations, distilled into what comes next.</p>
-              </div>
-              <button
-                className="button secondary"
-                onClick={() => void sync()}
-                disabled={data.status.syncing}
-              >
-                <span className={data.status.syncing ? 'spin icon-wrap' : 'icon-wrap'}>
-                  <Zap size={14} />
-                </span>{' '}
-                Run now
-              </button>
-            </section>
             <div className="task-layout">
               <section className="task-column">
+                <div className="page-heading">
+                  <h1>{currentChat?.name ?? (filter === 'done' ? 'Completed' : 'My Tasks')}</h1>
+                  <p>
+                    {new Intl.DateTimeFormat(undefined, {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                    }).format(new Date())}
+                  </p>
+                </div>
                 <div className="task-toolbar">
                   <div className="tabs" role="tablist" aria-label="Task status">
                     {(
                       [
                         ['open', 'To do'],
-                        ['all', 'All tasks'],
                         ['done', 'Completed'],
                       ] satisfies [typeof filter, string][]
                     ).map(([value, label]) => (
@@ -414,39 +347,31 @@ export function App() {
                         role="tab"
                         aria-selected={filter === value}
                         className={filter === value ? 'selected' : ''}
-                        onClick={() => setFilter(value)}
+                        onClick={() => {
+                          setFilter(value);
+                          setSelected(null);
+                        }}
                       >
                         {label}
-                        <span>
-                          {value === 'open'
-                            ? scoped.length - done
-                            : value === 'done'
-                              ? done
-                              : scoped.length}
-                        </span>
                       </button>
                     ))}
                   </div>
                   <div className="task-toolbar-end">
-                    <div className="search-field">
-                      <Search size={14} />
-                      <input
-                        ref={search}
-                        aria-label="Search tasks"
-                        placeholder="Search tasks…"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                      />
-                      {query && (
-                        <button
-                          className="icon-btn"
-                          aria-label="Clear search"
-                          onClick={() => setQuery('')}
-                        >
-                          <X size={12} />
-                        </button>
-                      )}
-                    </div>
+                    <select
+                      aria-label="Filter by conversation"
+                      value={chat ?? ''}
+                      onChange={(event) => {
+                        setChat(event.target.value || null);
+                        setSelected(null);
+                      }}
+                    >
+                      <option value="">All conversations</option>
+                      {settings?.chats.map((conversation) => (
+                        <option key={conversation.id} value={conversation.id}>
+                          {conversation.name}
+                        </option>
+                      ))}
+                    </select>
                     <div className="menu-anchor">
                       <button
                         className="icon-btn"
@@ -458,6 +383,23 @@ export function App() {
                       </button>
                       {showMenu && (
                         <div className="popover">
+                          <button
+                            disabled={data.status.syncing}
+                            onClick={() => {
+                              void sync();
+                              setShowMenu(false);
+                            }}
+                          >
+                            <Zap size={16} /> Find tasks now
+                          </button>
+                          <button
+                            onClick={() => {
+                              setFilter('all');
+                              setShowMenu(false);
+                            }}
+                          >
+                            Show all tasks
+                          </button>
                           <button
                             onClick={() => {
                               download('chat2tasks-export.json', JSON.stringify(data, null, 2));
@@ -578,7 +520,7 @@ export function App() {
                   ) : !visible.length ? (
                     <div className="empty-state">
                       <CheckCheck size={30} />
-                      <h3>{query ? 'No matching tasks' : 'A clear head looks good on you.'}</h3>
+                      <h3>{query ? 'No matching tasks' : 'You’re all caught up'}</h3>
                       <p>
                         {query
                           ? 'Try a different word or another conversation.'
@@ -629,17 +571,9 @@ export function App() {
                               >
                                 <span className="task-title">{t.title}</span>
                                 <span className="task-row-sub">
-                                  <span>{t.scope}</span>
-                                  <span>·</span>
-                                  <MessageSquare size={11} />
-                                  <span>{t.source_ids.length} sources</span>
+                                  <span>{conversationName(t, data.messages, config)}</span>
                                 </span>
                               </button>
-                              {t.priority === 'high' && (
-                                <span className="priority-mark" title="High priority">
-                                  ↑
-                                </span>
-                              )}
                               <ChevronRight className="row-chevron" size={14} />
                             </div>
                           ))}
@@ -650,8 +584,16 @@ export function App() {
                 </div>
                 <div className="list-footer">
                   <div>
-                    <span className="live-dot" />
-                    {enabled.length} active conversation{enabled.length !== 1 ? 's' : ''}
+                    <span className={`live-dot ${!online || data.status.error ? 'warning' : ''}`} />
+                    {!online
+                      ? 'Reconnecting…'
+                      : data.status.error
+                        ? 'Needs attention'
+                        : data.status.syncing || data.status.pending
+                          ? 'Updating tasks…'
+                          : data.demo
+                            ? 'Sample workspace'
+                            : 'Up to date'}
                   </div>
                   <span>
                     {data.status.last_poll
@@ -662,7 +604,11 @@ export function App() {
               </section>
               <aside className={`inspector ${selectedTask ? 'has-selection' : ''}`}>
                 <div className="inspector-heading">
-                  <span>{selectedTask ? 'TASK DETAILS' : 'A LITTLE CONTEXT'}</span>
+                  <span>
+                    {selectedTask
+                      ? conversationName(selectedTask, data.messages, config)
+                      : 'Task details'}
+                  </span>
                   {selectedTask ? (
                     <button
                       className="icon-btn"
@@ -709,9 +655,6 @@ export function App() {
                     </div>
                   </div>
                 )}
-                <div className="inspector-foot">
-                  <ShieldCheck size={13} /> Original context, always close.
-                </div>
               </aside>
             </div>
           </>
@@ -749,16 +692,18 @@ export function App() {
             </button>
           </div>
         )}
-        <footer className="workspace-footer">
-          <span>
-            <span className="footer-logo">c2t</span> A quieter kind of productivity.
-          </span>
-          <a href="https://github.com/liongkj/chat2tasks" target="_blank" rel="noreferrer">
-            Open source <ArrowUpRight size={12} />
-          </a>
-        </footer>
       </main>
     </div>
+  );
+}
+
+function conversationName(task: Task, messages: Message[], config: PublicSettings | null) {
+  const source = messages.find((message) => task.source_ids.includes(message.id));
+  return (
+    config?.settings.chats.find(
+      (conversation) =>
+        conversation.chatId === source?.chatId && conversation.sessionId === source?.sessionId,
+    )?.name ?? task.scope
   );
 }
 
@@ -777,7 +722,12 @@ function TaskDetail({
   onSaved: () => void;
   notify: (text: string) => void;
 }) {
-  const [tab, setTab] = useState<'overview' | 'sources'>('overview'),
+  const [tab, setTab] = useState<'overview' | 'sources'>(() => {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('task') === task.id && params.get('context') === 'conversation'
+        ? 'sources'
+        : 'overview';
+    }),
     [remark, setRemark] = useState(task.own_remark),
     [saving, setSaving] = useState(false),
     [handoff, setHandoff] = useState(false);
@@ -814,130 +764,143 @@ function TaskDetail({
   }
   return (
     <div className="detail-body">
-      <div className="detail-meta">
-        <span className="label">{task.scope}</span>
-        {task.priority === 'high' && <span className="label amber">High priority</span>}
-      </div>
-      <h2 className={task.done ? 'task-done-title' : ''}>{task.title}</h2>
-      <div className="detail-status">
-        <span className={`group-dot ${task.triage_state}`} />
-        {task.done ? 'Completed' : stateLabel[task.triage_state]}
-      </div>
-      <div className="detail-tabs">
-        <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>
-          Overview
-        </button>
-        <button className={tab === 'sources' ? 'active' : ''} onClick={() => setTab('sources')}>
-          Conversation <span>{sources.length}</span>
-        </button>
-      </div>
-      {tab === 'overview' ? (
-        <>
-          <p className="task-note">{task.note}</p>
-          {task.action_steps.length > 0 && (
-            <section className="detail-section">
-              <h3>
-                <ArrowUpRight size={14} /> Next steps
-              </h3>
-              <ol className="steps">
-                {task.action_steps.map((s, i) => (
-                  <li key={i}>
-                    <span>{i + 1}</span>
-                    <p>{s}</p>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )}
-          {task.done_when.length > 0 && (
-            <section className="detail-section">
-              <h3>
-                <CircleCheck size={14} /> You’re done when
-              </h3>
-              <ul className="criteria">
-                {task.done_when.map((s, i) => (
-                  <li key={i}>
-                    <Check size={13} />
-                    <span>{s}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-          {task.blocking_question && (
-            <div className="blocker">
-              <CircleDot size={15} />
-              <p>{task.blocking_question}</p>
-            </div>
-          )}
-          <section className="detail-section note-section">
-            <h3>
-              <FileText size={14} /> Your note <span>Only in your workspace</span>
-            </h3>
-            <textarea
-              aria-label="Your note"
-              placeholder="A thought, a link, something to remember…"
-              maxLength={4000}
-              value={remark}
-              onChange={(e) => setRemark(e.target.value)}
-              rows={3}
-            />
-            <button
-              className="text-button"
-              disabled={saving || remark === task.own_remark}
-              onClick={() => void save()}
-            >
-              {saving ? 'Saving…' : 'Save note'}
-              <Check size={12} />
-            </button>
-          </section>
-          <div className="detail-actions">
-            <button className={`button ${task.done ? 'secondary' : 'primary'}`} onClick={onTick}>
-              <Check size={15} />
-              {task.done ? 'Reopen task' : 'Mark complete'}
-            </button>
-            <button className="button secondary" disabled={handoff} onClick={() => void prepare()}>
-              {handoff ? <LoaderCircle size={14} className="spin" /> : <ArrowUpRight size={14} />}
-              Handoff
-            </button>
-            <button
-              className="icon-btn"
-              aria-label="Copy raw task context"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(
-                    JSON.stringify({ task, source_messages: sources }, null, 2),
-                  );
-                  notify('Task context copied');
-                } catch {
-                  notify('Clipboard unavailable. Use Export workspace from the task menu.');
-                }
-              }}
-            >
-              <Copy size={15} />
-            </button>
+      <div className="detail-scroll">
+        <h2 className={task.done ? 'task-done-title' : ''}>{task.title}</h2>
+        {task.triage_state !== 'ready' && (
+          <div className="detail-status">
+            <span className={`group-dot ${task.triage_state}`} />
+            {task.done ? 'Completed' : stateLabel[task.triage_state]}
           </div>
-          <p className="updated-note">Updated {time(task.updated)}</p>
-        </>
-      ) : (
-        <div className="source-list">
-          <p className="source-intro">
-            The messages behind this task. Dates use your local timezone.
-          </p>
-          {sources.map((m) => (
-            <MessageCard
-              key={m.id}
-              message={m}
-              name={
-                config?.settings.chats.find(
-                  (c) => c.chatId === m.chatId && c.sessionId === m.sessionId,
-                )?.name ?? 'Contact'
-              }
-              allMessages={messages}
-            />
-          ))}
-        </div>
-      )}
+        )}
+        {tab === 'overview' ? (
+          <>
+            <p className="task-note">{task.note}</p>
+            {task.action_steps.length > 0 && (
+              <section className="detail-section">
+                <h3>Next steps</h3>
+                <ol className="steps">
+                  {task.action_steps.map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ol>
+              </section>
+            )}
+            {task.blocking_question && (
+              <div className="blocker">
+                <CircleDot size={15} />
+                <p>{task.blocking_question}</p>
+              </div>
+            )}
+            <section className="detail-section source-preview">
+              <h3>From the conversation</h3>
+              {sources[0] && (
+                <blockquote>
+                  <p>{sources[0].body || 'Image attachment'}</p>
+                  <cite>
+                    {conversationName(task, messages, config)} · {time(sources[0].timestamp)}
+                  </cite>
+                </blockquote>
+              )}
+              <button className="text-button" onClick={() => setTab('sources')}>
+                <ArrowUpRight size={16} /> View conversation
+                {sources.length > 1 ? ` (${sources.length})` : ''}
+              </button>
+            </section>
+            <details className="detail-section note-section detail-options">
+              <summary>Notes &amp; details</summary>
+              <h3 className="note-label">Your note</h3>
+              <textarea
+                aria-label="Your note"
+                placeholder="A thought, a link, something to remember…"
+                maxLength={4000}
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+                rows={3}
+              />
+              <button
+                className="text-button"
+                disabled={saving || remark === task.own_remark}
+                onClick={() => void save()}
+              >
+                {saving ? 'Saving…' : 'Save note'}
+                <Check size={12} />
+              </button>
+
+              <p className="detail-scope">
+                {task.scope}
+                {task.priority === 'high' ? ' · High priority' : ''}
+              </p>
+              {task.done_when.length > 0 && (
+                <>
+                  <h3>You’re done when</h3>
+                  <ul className="criteria">
+                    {task.done_when.map((criterion) => (
+                      <li key={criterion}>{criterion}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <div className="secondary-actions">
+                <button
+                  className="button secondary"
+                  disabled={handoff}
+                  onClick={() => void prepare()}
+                >
+                  {handoff ? (
+                    <LoaderCircle size={14} className="spin" />
+                  ) : (
+                    <ArrowUpRight size={14} />
+                  )}
+                  Handoff
+                </button>
+                <button
+                  className="icon-btn"
+                  aria-label="Copy raw task context"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(
+                        JSON.stringify({ task, source_messages: sources }, null, 2),
+                      );
+                      notify('Task context copied');
+                    } catch {
+                      notify('Clipboard unavailable. Use Export workspace from the task menu.');
+                    }
+                  }}
+                >
+                  <Copy size={15} />
+                </button>
+              </div>
+              <p className="updated-note">Updated {time(task.updated)}</p>
+            </details>
+          </>
+        ) : (
+          <div className="source-list">
+            <button className="text-button" onClick={() => setTab('overview')}>
+              Back to task
+            </button>
+            <p className="source-intro">
+              The messages behind this task. Dates use your local timezone.
+            </p>
+            {sources.map((m) => (
+              <MessageCard
+                key={m.id}
+                message={m}
+                name={
+                  config?.settings.chats.find(
+                    (c) => c.chatId === m.chatId && c.sessionId === m.sessionId,
+                  )?.name ?? 'Contact'
+                }
+                allMessages={messages}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="detail-actions">
+        <button className={`button ${task.done ? 'secondary' : 'primary'}`} onClick={onTick}>
+          {task.done ? 'Reopen task' : 'Mark Complete'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -162,20 +162,11 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
     <div className="settings-page">
       <div className="settings-page-heading">
         <div>
-          <div className="eyebrow">
-            {tab === 'chats'
-              ? 'ONLY THE CONVERSATIONS YOU CHOOSE'
-              : 'A LITTLE INTELLIGENCE, ON YOUR TERMS'}
-          </div>
-          <h1>
-            {tab === 'chats'
-              ? 'Keep the right conversations close.'
-              : 'Bring your own intelligence.'}
-          </h1>
+          <h1>{tab === 'chats' ? 'Conversations' : 'Settings'}</h1>
           <p className="page-description">
             {tab === 'chats'
               ? 'Activate a chat to turn its follow-ups into clear next steps.'
-              : 'Choose a model, connect your keys, and make this workspace yours.'}
+              : 'Manage your models, API keys, and Chrome companion.'}
           </p>
         </div>
         <button className="button primary" onClick={() => void save()} disabled={saving}>

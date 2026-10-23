@@ -11,7 +11,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:2786`. The default stack publishes only on loopback. Its named volumes persist tasks and Codex sessions across container replacement. Download the companion under **Settings & connections → Chrome companion**; the extension runs in Chrome, while the backend runs in Docker.
+Open `http://127.0.0.1:2786`. The default stack publishes only on loopback. Its named volumes persist tasks and Codex sessions across container replacement. Download the companion under **Settings → Chrome companion**; the extension runs in Chrome, while the backend runs in Docker.
 
 For an existing OpenWA Docker stack, attach Chat2Tasks to the same external network using your Compose override. Set its OpenWA URL to the API service’s Docker hostname. Register the signed callback at `http://CHAT2TASKS_SERVICE:2786/api/webhooks/openwa`, and allow that exact callback hostname in OpenWA’s `SSRF_ALLOWED_HOSTS`.
 

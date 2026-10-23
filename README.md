@@ -23,11 +23,11 @@ The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGI
 
 ## Chrome companion
 
-The optional Manifest V3 extension keeps your tasks beside WhatsApp Web using the same server, model connections, and processing queue. It can search and complete tasks, save notes, activate or pause followed conversations, and request **Run now**. To capture text, select it in WhatsApp Web, right-click **Capture selection in Chat2Tasks**, then review the text and choose its destination conversation before saving. It does not scrape conversation history or send WhatsApp replies.
+The optional Manifest V3 extension keeps your tasks beside WhatsApp Web using the same server, model connections, and processing queue. It can search and complete tasks, save notes, activate or pause followed conversations, and request **Find tasks now** from its options menu. Expand a task to see its steps and source; **View conversation in workspace** opens that specific task's original messages. Use **Notes & details** for notes and completion criteria, and **Filter tasks** for search and conversation filters. To capture text, select it in WhatsApp Web, right-click **Capture selection in Chat2Tasks**, then review the text and choose its destination conversation before saving. It does not scrape conversation history or send WhatsApp replies.
 
 [Preview with fictional sample data](docs/companion.png).
 
-1. Open **Settings & connections → Chrome companion** in your full workspace. Download the extension ZIP and unzip it.
+1. Open **Settings → Chrome companion** in your full workspace. Download the extension ZIP and unzip it.
 2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`. Pin Chat2Tasks from Chrome’s Extensions menu, then click it to open the side panel.
 3. In your full workspace, create a pairing code. Enter your server address and that code in the companion, then approve Chrome’s access prompt for that server. Codes are single use and expire after five minutes. Use HTTPS for remote servers; HTTP localhost is supported for local Docker use.
 4. Each browser has its own revocable token, valid for 90 days. Revoke it under **Chrome companion**, or choose **Disconnect** in the panel. Model provider keys never leave the server. Only token hashes are stored in the server database; the browser stores its own device token in Chrome’s local extension storage, restricted to trusted extension contexts. Selection drafts stay in session storage until saved or discarded.
@@ -40,7 +40,7 @@ For a reverse proxy, set the exact external `PUBLIC_ORIGIN` and preserve the ori
 
 ## Model connections
 
-Use **Settings & connections** to add, name, test, and select connections. The sidebar selector chooses the task-generation connection. The separate **Decision connection** setting chooses the trigger judge. Native decision connections do not appear in the task-generation selector. In-flight requests finish on the connection they started with. Model IDs are editable; there is no fixed provider catalog.
+Use **Settings** to add, name, test, and select connections. Choose **Use connection** on a model to select it for task generation. The separate **Decision connection** setting chooses the trigger judge. Native decision connections cannot be selected for task generation. In-flight requests finish on the connection they started with. Model IDs are editable; there is no fixed provider catalog. Manual processing is available under the task list's **More task actions → Find tasks now**; it is secondary to completing tasks.
 
 * **Codex subscription.** Sign in once inside the running container:
 

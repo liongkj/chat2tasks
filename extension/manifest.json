@@ -1,14 +1,24 @@
 {
   "manifest_version": 3,
   "name": "Chat2Tasks Companion",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Your tasks alongside WhatsApp Web. Connect to your own Chat2Tasks server and review selected text before saving it.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage", "contextMenus"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "index.html" },
-  "action": { "default_title": "Open Chat2Tasks", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
-  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';" }
+  "action": {
+    "default_title": "Open Chat2Tasks",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png" }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
+  }
 }
