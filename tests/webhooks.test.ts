@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -140,6 +141,86 @@ test('manual mode still receives and saves messages immediately without scheduli
     assert.equal(f.store.snapshot().usage.calls, 0);
     assert.equal(f.store.pending(f.store.messages()).length, 1);
   } finally {
+    f.close();
+  }
+});
+
+test('a saved webhook batch reaches the decision API first; skip avoids Luna and Run now bypasses the judge', async () => {
+  const f = fixture();
+  const calls: string[] = [];
+  const upstream = createServer((request, response) => {
+    if (request.url?.startsWith('/api/sessions/')) {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ messages: [] }));
+      return;
+    }
+    calls.push(request.url ?? '');
+    response.setHeader('Content-Type', 'application/json');
+    response.end(
+      JSON.stringify(
+        request.url === '/v1/systemone'
+          ? {
+              answers: { trigger: { type: 'choice', choice: 'skip', confidence: 0.99 } },
+              usage: { input_tokens: 10, output_tokens: 2 },
+            }
+          : {
+              choices: [{ message: { content: JSON.stringify({ changes: [] }) } }],
+              usage: { total_tokens: 10 },
+            },
+      ),
+    );
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = upstream.address();
+    assert.ok(address && typeof address !== 'string');
+    const baseUrl = `http://127.0.0.1:${address.port}/v1`;
+    f.store.saveSettings({
+      settings: {
+        ...f.store.settings(),
+        openwaUrl: `http://127.0.0.1:${address.port}`,
+        profiles: [
+          {
+            id: 'judge',
+            name: 'Jev',
+            kind: 'decision',
+            provider: 'jev',
+            model: 'jev-latest',
+            baseUrl,
+          },
+          { id: 'tasks', name: 'Task model', kind: 'compatible', model: 'fixture', baseUrl },
+        ],
+        activeProfileId: 'tasks',
+        trigger: { mode: 'automatic', decisionProfileId: 'judge' },
+      },
+      secrets: { 'judge:key': 'fixture-key', openwa: 'fixture-openwa-key' },
+      removeSecrets: [],
+    });
+    f.hooks.receive(f.raw, f.sign(f.raw));
+    assert.equal(f.store.messages().length, 1);
+    assert.deepEqual(calls, []);
+    await f.sync.run(['active']);
+    assert.deepEqual(calls, ['/v1/systemone']);
+    assert.equal(f.store.pending(f.store.messages()).length, 0);
+    assert.equal(f.store.jobs().length, 0);
+    assert.equal(f.store.snapshot().status.last_decision?.choice, 'skip');
+    const raw = Buffer.from(
+      JSON.stringify({
+        ...f.event,
+        idempotencyKey: 'new-message',
+        data: { ...f.event.data, id: 'new-wa' },
+      }),
+    );
+    f.hooks.receive(raw, f.sign(raw));
+    f.sync.wake();
+    await f.sync.run(['active']);
+    assert.equal(f.store.snapshot().status.error, null);
+    assert.deepEqual(calls, ['/v1/systemone', '/v1/chat/completions']);
+    assert.equal(f.store.pending(f.store.messages()).length, 0);
+    assert.equal(f.store.snapshot().status.pending, 0);
+  } finally {
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
     f.close();
   }
 });
