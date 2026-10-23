@@ -1,3 +1,5 @@
+import { useInputModality } from '../../src/shared/useInputModality.js';
+import { Menu } from '@base-ui/react/menu';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -47,6 +49,7 @@ const message = (error: unknown) =>
       ? error.message
       : 'Something went wrong. Try again.';
 function App() {
+  useInputModality();
   const [session, setSession] = useState<Session>({ kind: 'loading' });
   const [serverUrl, setServerUrl] = useState('http://127.0.0.1:2786'),
     [code, setCode] = useState(''),
@@ -650,71 +653,72 @@ function App() {
             </main>
           )}
           <footer>
-            <div className="status">
-              <span className={state?.status.error ? 'dot warning' : 'dot green'} />
-              <span>
-                {state?.status.error
-                  ? 'Needs attention'
-                  : state?.status.syncing
-                    ? 'Updating tasks…'
-                    : state
-                      ? 'Connected to workspace'
-                      : 'Connecting…'}
-              </span>
-              <button
-                className="icon"
-                aria-label="More options"
-                aria-expanded={showOptions}
-                onClick={() => setShowOptions(!showOptions)}
-              >
-                <MoreHorizontal size={21} />
-              </button>
-            </div>
-            {showOptions && (
-              <div className="options-menu">
-                <button
-                  onClick={() => {
-                    setShowDone(!showDone);
-                    setTab('tasks');
-                    setDetail(null);
-                    setShowOptions(false);
-                  }}
-                >
-                  <CheckCheck size={16} /> {showDone ? 'Show to do' : 'Show completed'}
-                </button>
-                <button
-                  aria-label="Refresh tasks"
-                  onClick={() => {
-                    void refresh();
-                    setShowOptions(false);
-                  }}
-                >
-                  <RefreshCw size={16} /> Refresh tasks
-                </button>
-                {state?.status.error && <p role="alert">{state.status.error}</p>}
-                <button
-                  disabled={busy || !state?.chats.some((c) => c.enabled) || state.status.syncing}
-                  onClick={() =>
-                    void action(async () => {
-                      if (connection) {
-                        await request(connection, 'run', OkSchema, {});
-                        await refresh();
-                        setNotice('Task analysis requested.');
-                        setShowOptions(false);
-                      }
-                    })
-                  }
-                >
-                  <Zap size={16} /> Find tasks now
-                </button>
-                <button onClick={openWorkspace}>
-                  <ArrowUpRight size={16} /> Open workspace
-                </button>
-                <button onClick={() => void action(disconnect)}>
-                  <Unplug size={16} /> Disconnect
-                </button>
+            <Menu.Root open={showOptions} onOpenChange={setShowOptions}>
+              <div className="status">
+                <span className={state?.status.error ? 'dot warning' : 'dot green'} />
+                <span>
+                  {state?.status.error
+                    ? 'Needs attention'
+                    : state?.status.syncing
+                      ? 'Updating tasks…'
+                      : state
+                        ? 'Connected to workspace'
+                        : 'Connecting…'}
+                </span>
+                <Menu.Trigger className="icon" aria-label="More options">
+                  <MoreHorizontal size={21} />
+                </Menu.Trigger>
               </div>
-            )}
+              <Menu.Portal>
+                <Menu.Positioner className="menu-positioner" side="top" align="end" sideOffset={8}>
+                  <Menu.Popup className="options-menu">
+                    <Menu.Item
+                      onClick={() => {
+                        setShowDone(!showDone);
+                        setTab('tasks');
+                        setDetail(null);
+                        setShowOptions(false);
+                      }}
+                    >
+                      <CheckCheck size={16} /> {showDone ? 'Show to do' : 'Show completed'}
+                    </Menu.Item>
+                    <Menu.Item
+                      aria-label="Refresh tasks"
+                      onClick={() => {
+                        void refresh();
+                        setShowOptions(false);
+                      }}
+                    >
+                      <RefreshCw size={16} /> Refresh tasks
+                    </Menu.Item>
+                    {state?.status.error && <p role="alert">{state.status.error}</p>}
+                    <Menu.Item
+                      disabled={
+                        busy || !state?.chats.some((c) => c.enabled) || state.status.syncing
+                      }
+                      onClick={() =>
+                        void action(async () => {
+                          if (connection) {
+                            await request(connection, 'run', OkSchema, {});
+                            await refresh();
+                            setNotice('Task analysis requested.');
+                            setShowOptions(false);
+                          }
+                        })
+                      }
+                    >
+                      <Zap size={16} /> Find tasks now
+                    </Menu.Item>
+                    <Menu.Item onClick={openWorkspace}>
+                      <ArrowUpRight size={16} /> Open workspace
+                    </Menu.Item>
+                    <Menu.Item onClick={() => void action(disconnect)}>
+                      <Unplug size={16} /> Disconnect
+                    </Menu.Item>
+                  </Menu.Popup>
+                </Menu.Positioner>
+              </Menu.Portal>
+            </Menu.Root>
           </footer>
         </>
       )}

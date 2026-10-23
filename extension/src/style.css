@@ -525,9 +525,6 @@ footer {
   min-width: 0;
 }
 .options-menu {
-  position: absolute;
-  bottom: 62px;
-  right: 14px;
   width: 230px;
   max-width: calc(100vw - 28px);
   border: 1px solid var(--line);
@@ -536,7 +533,7 @@ footer {
   background: white;
   box-shadow: 0 8px 30px #0002;
 }
-.options-menu button {
+.options-menu [role='menuitem'] {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -545,11 +542,6 @@ footer {
   width: 100%;
   border-radius: 6px;
   text-align: left;
-}
-@media (hover: hover) and (pointer: fine) {
-  .options-menu button:hover {
-    background: var(--sidebar);
-  }
 }
 .options-menu p {
   font-size: 14px;

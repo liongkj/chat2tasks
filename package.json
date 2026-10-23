@@ -18,6 +18,7 @@
     "test:extension": "playwright test"
   },
   "dependencies": {
+    "@base-ui/react": "^1.9.0",
     "@fastify/static": "^10.1.7",
     "@fontsource-variable/dm-sans": "^5.3.0",
     "@fontsource-variable/manrope": "^5.3.0",
