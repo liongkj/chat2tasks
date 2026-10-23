@@ -69,8 +69,10 @@ a {
   flex: 1;
   min-width: 0;
 }
-.nav-item:hover {
-  background: #e9e9ed;
+@media (hover: hover) and (pointer: fine) {
+  .nav-item:hover {
+    background: #e9e9ed;
+  }
 }
 .nav-item.active {
   color: var(--accent);
@@ -142,9 +144,11 @@ a {
   border-radius: 7px;
   color: var(--muted);
 }
-.icon-btn:hover {
-  color: var(--text);
-  background: #eeeef1;
+@media (hover: hover) and (pointer: fine) {
+  .icon-btn:hover {
+    color: var(--text);
+    background: #eeeef1;
+  }
 }
 .live-dot {
   width: 8px;
@@ -252,8 +256,10 @@ a {
   border-radius: 6px;
   font-size: 14px;
 }
-.popover button:hover {
-  background: var(--sidebar);
+@media (hover: hover) and (pointer: fine) {
+  .popover button:hover {
+    background: var(--sidebar);
+  }
 }
 .task-list {
   flex: 1;
@@ -296,8 +302,10 @@ a {
   border-bottom: 1px solid #ededf0;
   min-height: 90px;
 }
-.task-row:hover {
-  background: #f7f9fc;
+@media (hover: hover) and (pointer: fine) {
+  .task-row:hover {
+    background: #f7f9fc;
+  }
 }
 .task-row.selected {
   background: var(--accent-wash);
@@ -479,8 +487,10 @@ a {
   font-size: 14px;
   text-align: left;
 }
-.text-button:hover {
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .text-button:hover {
+    text-decoration: underline;
+  }
 }
 .note-section textarea {
   display: block;
@@ -542,16 +552,20 @@ a {
   background: var(--accent);
   color: white;
 }
-.button.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) and (pointer: fine) {
+  .button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 }
 .button.secondary {
   background: white;
   color: var(--text);
   border-color: #c6c6cd;
 }
-.button.secondary:hover:not(:disabled) {
-  background: var(--sidebar);
+@media (hover: hover) and (pointer: fine) {
+  .button.secondary:hover:not(:disabled) {
+    background: var(--sidebar);
+  }
 }
 .blocker {
   display: flex;
@@ -955,8 +969,10 @@ a {
   font-size: 17px;
   font-weight: 500;
 }
-.activator-name:hover {
-  border-color: var(--line);
+@media (hover: hover) and (pointer: fine) {
+  .activator-name:hover {
+    border-color: var(--line);
+  }
 }
 .toggle {
   display: flex;
@@ -975,7 +991,7 @@ a {
   border-radius: 50%;
   background: white;
   box-shadow: 0 1px 2px #0002;
-  transition: transform 0.15s;
+  transition: transform 150ms var(--ease-out);
 }
 .toggle.on {
   background: var(--green);
@@ -1181,9 +1197,11 @@ code {
   padding: 18px;
   text-align: left;
 }
-.connection-options > button:hover {
-  background: var(--accent-wash);
-  border-color: var(--accent);
+@media (hover: hover) and (pointer: fine) {
+  .connection-options > button:hover {
+    background: var(--accent-wash);
+    border-color: var(--accent);
+  }
 }
 .connection-options span {
   flex: 1;
@@ -1337,7 +1355,7 @@ code {
   .sidebar {
     transform: translateX(-100%);
     width: 250px;
-    transition: transform 0.18s;
+    transition: transform 180ms var(--ease-drawer);
   }
   .menu-open .sidebar {
     transform: translateX(0);
@@ -1435,4 +1453,54 @@ code {
 
 .note-label {
   margin-top: 20px;
+}
+
+.task-column,
+.detail-scroll,
+.settings-page,
+.modal,
+.sidebar {
+  overscroll-behavior: contain;
+}
+.detail-scroll,
+.task-row-sub,
+.task-note,
+.criteria,
+.steps,
+.inspector-heading,
+.toast {
+  overflow-wrap: anywhere;
+}
+.sidebar {
+  overflow-y: auto;
+}
+@media (pointer: coarse) {
+  .icon-btn,
+  .check-button,
+  .tabs > button,
+  .button,
+  .text-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (max-width: 700px) {
+  .workspace {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  .sidebar {
+    padding-top: calc(24px + env(safe-area-inset-top, 0px));
+    padding-left: calc(10px + env(safe-area-inset-left, 0px));
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    max-width: 100%;
+  }
+  .inspector.has-selection {
+    inset: calc(58px + env(safe-area-inset-top, 0px)) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  .toast {
+    top: calc(70px + env(safe-area-inset-top, 0px));
+    bottom: auto;
+  }
 }

@@ -8,6 +8,8 @@
   -webkit-font-smoothing: antialiased;
   color: #1d1d1f;
   background: #fff;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --text: #1d1d1f;
   --muted: #515154;
   --surface: #fff;
@@ -130,5 +132,33 @@ kbd {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Controls respond on press without delaying repeated task navigation. */
+button,
+a,
+summary {
+  touch-action: manipulation;
+}
+button,
+summary {
+  -webkit-user-select: none;
+  user-select: none;
+}
+button:not(:disabled):active,
+summary:active {
+  opacity: 0.7;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+@media (pointer: coarse) {
+  /* Preserve pinch zoom while preventing Safari's small-input focus zoom. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1rem) !important;
   }
 }

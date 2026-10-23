@@ -11,7 +11,7 @@ import {
   CompanionStateSchema,
   ConnectionSchema,
 } from '../src/shared/companion.js';
-import { SnapshotSchema } from '../src/shared/schema.js';
+import { SnapshotSchema, PublicSettingsSchema } from '../src/shared/schema.js';
 
 let directory: string, backend: ChildProcess, base: string;
 const password = 'isolated-extension-fixture';
@@ -174,6 +174,11 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('mobile-detail.png') });
+    const toast = await page.locator('.toast').boundingBox();
+    const complete = await page
+      .getByRole('button', { name: 'Mark Complete', exact: true })
+      .boundingBox();
+    if (toast && complete) expect(toast.y + toast.height).toBeLessThanOrEqual(complete.y);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
@@ -328,5 +333,54 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     await expect(page.getByRole('button', { name: 'Connect workspace' })).toBeVisible();
   } finally {
     await context.close();
+  }
+});
+
+test('narrow touch workspace keeps long conversation names and note controls usable', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 320, height: 740 },
+    hasTouch: true,
+    isMobile: true,
+    reducedMotion: 'reduce',
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.route('**/api/settings', async (route) => {
+      const response = await route.fetch();
+      const snapshot = PublicSettingsSchema.parse(await response.json());
+      snapshot.settings.chats.forEach((chat) => {
+        chat.name = 'CustomerSuccessEscalation'.repeat(8);
+      });
+      await route.fulfill({ response, json: snapshot });
+    });
+    await page.goto(base);
+    await page
+      .getByRole('button', { name: /^Open task:/ })
+      .first()
+      .click();
+    await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeInViewport();
+    await page
+      .locator('summary')
+      .filter({ hasText: /^Notes & details$/ })
+      .click();
+    const note = page.getByLabel('Your note');
+    await note.fill('A note entered from a narrow touch screen');
+    expect(
+      await note.evaluate((element) => parseFloat(getComputedStyle(element).fontSize)),
+    ).toBeGreaterThanOrEqual(16);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    expect(
+      await page
+        .locator('.detail-scroll')
+        .evaluate((element) => element.scrollWidth <= element.clientWidth),
+    ).toBe(true);
+    await page.screenshot({ path: test.info().outputPath('narrow-touch.png') });
+  } finally {
+    await context.close();
+    await browser.close();
   }
 });
