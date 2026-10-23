@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  ArrowLeft,
   ArrowUpRight,
   Check,
   CheckCheck,
@@ -14,11 +13,16 @@ import {
   Settings2,
   ShieldCheck,
   Unplug,
+  Circle,
+  CircleCheck,
+  ChevronUp,
+  MoreHorizontal,
+  SlidersHorizontal,
   X,
   Zap,
 } from 'lucide-react';
 import { z } from 'zod';
-import '@fontsource-variable/dm-sans';
+import '../../src/shared/theme.css';
 import {
   BackendUrlSchema,
   CaptureDraftSchema,
@@ -57,6 +61,8 @@ function App() {
   const [chatFilter, setChatFilter] = useState(''),
     [showDone, setShowDone] = useState(false),
     [search, setSearch] = useState('');
+  const [showOptions, setShowOptions] = useState(false),
+    [showFilters, setShowFilters] = useState(false);
   const refreshing = useRef(false);
   const connection = session.kind === 'paired' ? session.connection : null;
   const unpair = useCallback(async () => {
@@ -178,6 +184,13 @@ function App() {
   const openWorkspace = () => {
     if (connection) void chrome.tabs.create({ url: connection.serverUrl });
   };
+  const openConversation = (taskId: string) => {
+    if (!connection) return;
+    const url = new URL(connection.serverUrl);
+    url.searchParams.set('task', taskId);
+    url.searchParams.set('context', 'conversation');
+    void chrome.tabs.create({ url: url.href });
+  };
   const tasks =
     state?.tasks.filter(
       (t) =>
@@ -193,10 +206,6 @@ function App() {
     <div className="panel">
       <header>
         <span className="brand">
-          <span className="brand-icon">
-            <MessageSquare size={19} />
-            <Check size={10} />
-          </span>
           <span>
             chat2tasks<small>WhatsApp companion</small>
           </span>
@@ -225,12 +234,7 @@ function App() {
           <div className="setup-art">
             <Link2 size={25} />
           </div>
-          <div className="eyebrow">YOUR WORK, CLOSE BY</div>
-          <h1>
-            A little less
-            <br />
-            to switch between.
-          </h1>
+          <h1>Connect your workspace</h1>
           <p>Keep tasks beside WhatsApp Web. Connect this browser to your own Chat2Tasks server.</p>
           <form onSubmit={(event) => void connect(event)}>
             <label>
@@ -282,19 +286,32 @@ function App() {
         </main>
       ) : (
         <>
+          {tab === 'tasks' && (
+            <div className="view-heading">
+              <h1>{showDone ? 'Completed' : 'My Tasks'}</h1>
+              <button
+                className="icon"
+                aria-label="Filter tasks"
+                aria-expanded={showFilters}
+                onClick={() => setShowFilters(!showFilters)}
+              >
+                <SlidersHorizontal size={18} />
+              </button>
+            </div>
+          )}
           <nav aria-label="Companion views">
             {(['tasks', 'chats', 'capture'] satisfies ('tasks' | 'chats' | 'capture')[]).map(
               (item) => (
                 <button
                   key={item}
-                  className={tab === item && !detail ? 'active' : ''}
+                  className={tab === item ? 'active' : ''}
                   onClick={() => {
                     setTab(item);
                     setDetail(null);
                   }}
                 >
                   {item === 'tasks' ? (
-                    'My tasks'
+                    'Tasks'
                   ) : item === 'chats' ? (
                     'Conversations'
                   ) : (
@@ -304,119 +321,53 @@ function App() {
               ),
             )}
           </nav>
-          {detail ? (
-            <main className="detail">
-              <button className="text-button" onClick={() => setDetail(null)}>
-                <ArrowLeft size={14} /> Back to tasks
-              </button>
-              <span className="scope">{detail.task.scope}</span>
-              <h1>{detail.task.title}</h1>
-              <p>{detail.task.note}</p>
-              <h2>Next steps</h2>
-              <ol>
-                {detail.task.action_steps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ol>
-              <h2>You’re done when</h2>
-              <ul className="criteria">
-                {detail.task.done_when.map((step) => (
-                  <li key={step}>
-                    <CheckCheck size={14} />
-                    {step}
-                  </li>
-                ))}
-              </ul>
-              <Note
-                key={detail.task.id}
-                task={detail.task}
-                busy={busy}
-                onSave={(remark) =>
-                  action(async () => {
-                    if (connection) {
-                      await request(connection, 'note', OkSchema, { id: detail.task.id, remark });
-                      await refresh();
-                      setNotice('Note saved.');
-                    }
-                  })
-                }
-              />
-              <button
-                className="primary"
-                disabled={busy}
-                onClick={() => void action(() => tick(detail.task))}
-              >
-                <Check size={15} />
-                {detail.task.done ? 'Mark as to do' : 'Mark complete'}
-              </button>
-              <h2>Original conversation</h2>
-              {detail.messages.map((m) => (
-                <article className="source" key={m.id}>
-                  <small>
-                    {m.browser_source
-                      ? 'Captured selection'
-                      : m.direction === 'outgoing'
-                        ? 'You'
-                        : 'Incoming message'}{' '}
-                    · {new Date(m.timestamp * 1000).toLocaleDateString()}
-                  </small>
-                  <p>{m.body || `[${m.type}]`}</p>
-                  {m.type === 'image' && (
-                    <button className="text-button" onClick={openWorkspace}>
-                      View image in workspace <ArrowUpRight size={13} />
-                    </button>
-                  )}
-                </article>
-              ))}
-            </main>
-          ) : tab === 'tasks' ? (
+          {tab === 'tasks' ? (
             <main className="task-view">
-              <div className="view-heading">
-                <div>
-                  <div className="eyebrow">A CLEARER NEXT STEP</div>
-                  <h1>Your next moves.</h1>
+              {showFilters && (
+                <div className="filters">
+                  {' '}
+                  <div className="task-tabs">
+                    <button
+                      className={!showDone ? 'active' : ''}
+                      onClick={() => setShowDone(false)}
+                    >
+                      To do <span>{state?.tasks.filter((t) => !t.done).length ?? 0}</span>
+                    </button>
+                    <button className={showDone ? 'active' : ''} onClick={() => setShowDone(true)}>
+                      Completed
+                    </button>
+                  </div>
+                  <label className="sr-only" htmlFor="conversation-filter">
+                    Filter by conversation
+                  </label>
+                  <select
+                    id="conversation-filter"
+                    value={chatFilter}
+                    onChange={(event) => setChatFilter(event.target.value)}
+                  >
+                    <option value="">All conversations</option>
+                    {state?.chats.map((chat) => (
+                      <option key={chat.id} value={chat.id}>
+                        {chat.name}
+                        {chat.enabled ? '' : ' · paused'}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="search"
+                    aria-label="Search tasks"
+                    placeholder="Find a task…"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                  />
                 </div>
-                <button className="icon" aria-label="Refresh tasks" onClick={() => void refresh()}>
-                  <RefreshCw size={16} />
-                </button>
-              </div>
-              <label className="sr-only" htmlFor="conversation-filter">
-                Filter by conversation
-              </label>
-              <select
-                id="conversation-filter"
-                value={chatFilter}
-                onChange={(event) => setChatFilter(event.target.value)}
-              >
-                <option value="">All conversations</option>
-                {state?.chats.map((chat) => (
-                  <option key={chat.id} value={chat.id}>
-                    {chat.name}
-                    {chat.enabled ? '' : ' · paused'}
-                  </option>
-                ))}
-              </select>
-              <div className="task-tabs">
-                <button className={!showDone ? 'active' : ''} onClick={() => setShowDone(false)}>
-                  To do <span>{state?.tasks.filter((t) => !t.done).length ?? 0}</span>
-                </button>
-                <button className={showDone ? 'active' : ''} onClick={() => setShowDone(true)}>
-                  Completed
-                </button>
-              </div>
-              <input
-                className="search"
-                aria-label="Search tasks"
-                placeholder="Find a task…"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
+              )}
               {!state ? (
                 <div className="empty">Connecting to your workspace…</div>
               ) : !tasks.length ? (
                 <div className="empty">
                   <CheckCheck size={28} />
-                  <h2>{showDone ? 'A place for finished work.' : 'A little breathing room.'}</h2>
+                  <h2>{showDone ? 'No completed tasks yet' : 'You’re all caught up'}</h2>
                   <p>
                     {search
                       ? 'No tasks match your search.'
@@ -426,39 +377,138 @@ function App() {
               ) : (
                 <ul className="task-list">
                   {tasks.map((task) => (
-                    <li key={task.id}>
-                      <input
-                        aria-label={`Complete: ${task.title}`}
-                        type="checkbox"
-                        checked={task.done}
-                        disabled={busy}
-                        onChange={() => void action(() => tick(task))}
-                      />
-                      <button
-                        className="task-open"
-                        onClick={() =>
-                          void action(async () => {
-                            if (connection)
-                              setDetail(
-                                await request(
-                                  connection,
-                                  'tasks/' + encodeURIComponent(task.id),
-                                  CompanionTaskSchema,
-                                ),
-                              );
-                          })
-                        }
-                      >
-                        <strong>{task.title}</strong>
-                        <span>{task.scope}</span>
-                        {task.triage_state === 'needs_info' && <small>Needs a detail</small>}
-                      </button>
-                      {task.priority === 'high' && (
-                        <span className="priority" title="High priority">
-                          ↑
-                        </span>
+                    <li key={task.id} className={detail?.task.id === task.id ? 'expanded' : ''}>
+                      <div className="task-row">
+                        <button
+                          className="completion"
+                          aria-label={`${task.done ? 'Reopen' : 'Complete'}: ${task.title}`}
+                          aria-pressed={task.done}
+                          disabled={busy}
+                          onClick={() => void action(() => tick(task))}
+                        >
+                          {task.done ? <CircleCheck size={25} /> : <Circle size={25} />}
+                        </button>
+                        <button
+                          className="task-open"
+                          aria-expanded={detail?.task.id === task.id}
+                          onClick={() =>
+                            void action(async () => {
+                              if (detail?.task.id === task.id) {
+                                setDetail(null);
+                                return;
+                              }
+                              if (connection)
+                                setDetail(
+                                  await request(
+                                    connection,
+                                    'tasks/' + encodeURIComponent(task.id),
+                                    CompanionTaskSchema,
+                                  ),
+                                );
+                            })
+                          }
+                        >
+                          <strong>{task.title}</strong>
+                          <span>
+                            {state?.chats.find((chat) => task.chatIds.includes(chat.id))?.name ??
+                              task.scope}
+                          </span>
+                          {task.triage_state === 'needs_info' && <small>Needs a detail</small>}
+                        </button>
+                        {detail?.task.id === task.id ? (
+                          <button
+                            className="icon"
+                            aria-label="Collapse task"
+                            onClick={() => setDetail(null)}
+                          >
+                            <ChevronUp size={16} />
+                          </button>
+                        ) : (
+                          <ChevronRight size={15} />
+                        )}
+                      </div>
+                      {detail?.task.id === task.id && (
+                        <div className="task-expansion">
+                          <h2>Next steps</h2>
+                          <ol className="steps">
+                            {detail.task.action_steps.map((step) => (
+                              <li key={step}>{step}</li>
+                            ))}
+                          </ol>
+                          {detail.messages.length > 0 && (
+                            <section className="source-preview">
+                              <h2>From the conversation</h2>
+                              <blockquote>
+                                <p>{detail.messages[0]?.body || 'Image attachment'}</p>
+                                <cite>
+                                  {new Date(
+                                    (detail.messages[0]?.timestamp ?? 0) * 1000,
+                                  ).toLocaleString()}
+                                </cite>
+                              </blockquote>
+                            </section>
+                          )}
+                          <button className="text-button" onClick={() => openConversation(task.id)}>
+                            <ArrowUpRight size={16} /> View conversation in workspace
+                          </button>
+                          <button
+                            className="primary"
+                            disabled={busy}
+                            onClick={() => void action(() => tick(detail.task))}
+                          >
+                            {detail.task.done ? 'Mark as to do' : 'Mark Complete'}
+                          </button>
+                          <details>
+                            <summary>Notes &amp; details</summary>
+                            <Note
+                              key={detail.task.id}
+                              task={detail.task}
+                              busy={busy}
+                              onSave={(remark) =>
+                                action(async () => {
+                                  if (connection) {
+                                    await request(connection, 'note', OkSchema, {
+                                      id: detail.task.id,
+                                      remark,
+                                    });
+                                    await refresh();
+                                    setNotice('Note saved.');
+                                  }
+                                })
+                              }
+                            />
+
+                            <p>{detail.task.note}</p>
+                            <h2>You’re done when</h2>
+                            <ul className="criteria">
+                              {detail.task.done_when.map((step) => (
+                                <li key={step}>{step}</li>
+                              ))}
+                            </ul>
+                            {detail.messages.map((m) => (
+                              <article className="source" key={m.id}>
+                                <small>
+                                  {m.browser_source
+                                    ? 'Captured selection'
+                                    : m.direction === 'outgoing'
+                                      ? 'You'
+                                      : 'Incoming message'}{' '}
+                                  · {new Date(m.timestamp * 1000).toLocaleDateString()}
+                                </small>
+                                <p>{m.body || `[${m.type}]`}</p>
+                                {m.type === 'image' && (
+                                  <button
+                                    className="text-button"
+                                    onClick={() => openConversation(task.id)}
+                                  >
+                                    View image in workspace <ArrowUpRight size={14} />
+                                  </button>
+                                )}
+                              </article>
+                            ))}
+                          </details>
+                        </div>
                       )}
-                      <ChevronRight size={14} />
                     </li>
                   ))}
                 </ul>
@@ -466,12 +516,7 @@ function App() {
             </main>
           ) : tab === 'chats' ? (
             <main className="chats">
-              <div className="eyebrow">ONLY THE CHATS YOU CHOOSE</div>
-              <h1>
-                Keep the right
-                <br />
-                conversations close.
-              </h1>
+              <h1>Conversations</h1>
               <p>Pausing stops new analysis. Existing tasks and notes stay available.</p>
               {state?.chats.map((chat) => (
                 <div className="chat" key={chat.id}>
@@ -511,8 +556,7 @@ function App() {
             </main>
           ) : (
             <main className="capture">
-              <div className="eyebrow">FROM CHAT TO NEXT STEP</div>
-              <h1>A thought worth keeping.</h1>
+              <h1>Capture a message</h1>
               <p>
                 Select text in WhatsApp Web, right-click, and choose{' '}
                 <strong>Capture selection in Chat2Tasks</strong>. Review it here before saving.
@@ -607,39 +651,70 @@ function App() {
           )}
           <footer>
             <div className="status">
-              <span className={state?.status.syncing ? 'dot pulse' : 'dot green'} />
+              <span className={state?.status.error ? 'dot warning' : 'dot green'} />
               <span>
-                {state?.status.error ?? state?.status.phase ?? 'Connecting…'}
-                <small>
-                  {state?.analysisMode === 'manual'
-                    ? 'Manual analysis'
-                    : `Automatic · ${state?.quietSeconds ?? 45}s quiet period`}
-                </small>
+                {state?.status.error
+                  ? 'Needs attention'
+                  : state?.status.syncing
+                    ? 'Updating tasks…'
+                    : state
+                      ? 'Connected to workspace'
+                      : 'Connecting…'}
               </span>
               <button
-                className="run"
-                disabled={busy || !state?.chats.some((c) => c.enabled) || state.status.syncing}
-                onClick={() =>
-                  void action(async () => {
-                    if (connection) {
-                      await request(connection, 'run', OkSchema, {});
-                      await refresh();
-                      setNotice('Task analysis requested.');
-                    }
-                  })
-                }
+                className="icon"
+                aria-label="More options"
+                aria-expanded={showOptions}
+                onClick={() => setShowOptions(!showOptions)}
               >
-                <Zap size={13} /> Run now
+                <MoreHorizontal size={21} />
               </button>
             </div>
-            <div className="footer-links">
-              <button onClick={openWorkspace}>
-                Open workspace <ArrowUpRight size={12} />
-              </button>
-              <button onClick={() => void action(disconnect)}>
-                <Unplug size={12} /> Disconnect
-              </button>
-            </div>
+            {showOptions && (
+              <div className="options-menu">
+                <button
+                  onClick={() => {
+                    setShowDone(!showDone);
+                    setTab('tasks');
+                    setDetail(null);
+                    setShowOptions(false);
+                  }}
+                >
+                  <CheckCheck size={16} /> {showDone ? 'Show to do' : 'Show completed'}
+                </button>
+                <button
+                  aria-label="Refresh tasks"
+                  onClick={() => {
+                    void refresh();
+                    setShowOptions(false);
+                  }}
+                >
+                  <RefreshCw size={16} /> Refresh tasks
+                </button>
+                {state?.status.error && <p role="alert">{state.status.error}</p>}
+                <button
+                  disabled={busy || !state?.chats.some((c) => c.enabled) || state.status.syncing}
+                  onClick={() =>
+                    void action(async () => {
+                      if (connection) {
+                        await request(connection, 'run', OkSchema, {});
+                        await refresh();
+                        setNotice('Task analysis requested.');
+                        setShowOptions(false);
+                      }
+                    })
+                  }
+                >
+                  <Zap size={16} /> Find tasks now
+                </button>
+                <button onClick={openWorkspace}>
+                  <ArrowUpRight size={16} /> Open workspace
+                </button>
+                <button onClick={() => void action(disconnect)}>
+                  <Unplug size={16} /> Disconnect
+                </button>
+              </div>
+            )}
           </footer>
         </>
       )}

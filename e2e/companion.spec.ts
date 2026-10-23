@@ -1,4 +1,4 @@
-import { test, expect, chromium } from '@playwright/test';
+import { test, expect, chromium, type Page } from '@playwright/test';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +15,40 @@ import { SnapshotSchema } from '../src/shared/schema.js';
 
 let directory: string, backend: ChildProcess, base: string;
 const password = 'isolated-extension-fixture';
+async function expectReadableTasks(page: Page, selector: string) {
+  const text = await page
+    .locator(selector)
+    .first()
+    .evaluate((element) => {
+      const luminance = (color: string) => {
+        const channels = (color.match(/[\d.]+/g) ?? []).slice(0, 3).map((channel) => {
+          const value = Number(channel) / 255;
+          return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        });
+        return (
+          (channels[0] ?? 0) * 0.2126 + (channels[1] ?? 0) * 0.7152 + (channels[2] ?? 0) * 0.0722
+        );
+      };
+      let background = 'rgb(255, 255, 255)';
+      for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+        const color = getComputedStyle(ancestor).backgroundColor;
+        if (color.startsWith('rgb(')) {
+          background = color;
+          break;
+        }
+      }
+      const foreground = luminance(getComputedStyle(element).color),
+        surface = luminance(background);
+      return {
+        size: Number.parseFloat(getComputedStyle(element).fontSize),
+        contrast: (Math.max(foreground, surface) + 0.05) / (Math.min(foreground, surface) + 0.05),
+      };
+    });
+  expect(text.size, 'Task text must stay at least 14px').toBeGreaterThanOrEqual(14);
+  expect(text.contrast, 'Task text must retain readable 4.5:1 contrast').toBeGreaterThanOrEqual(
+    4.5,
+  );
+}
 async function owner(path: string, body?: unknown) {
   return fetch(base + '/api/' + path, {
     method: body === undefined ? 'GET' : 'POST',
@@ -64,6 +98,92 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+test('readable workspace keeps completion, notes, source context, and mobile navigation working', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1080, height: 1058 },
+    deviceScaleFactor: 1,
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(base);
+    const title = 'Review the onboarding flow before Friday';
+    await expect(page.getByRole('heading', { name: title })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'From the conversation' })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('workspace.png') });
+    await expectReadableTasks(page, '.task-title');
+    await expectReadableTasks(page, '.task-row-sub');
+    // Protect the reported unreadable-text regression on the primary task surface.
+    expect(
+      await page
+        .locator('.task-title')
+        .first()
+        .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+    ).toBeGreaterThanOrEqual(16);
+    expect(
+      await page
+        .locator('.task-row-sub')
+        .first()
+        .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
+    ).toBeGreaterThanOrEqual(14);
+    await page.getByRole('button', { name: 'View conversation', exact: true }).click();
+    await expect(
+      page.getByText('Could you take a look at the new onboarding flow?', { exact: false }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Back to task', exact: true }).click();
+    await page
+      .locator('summary')
+      .filter({ hasText: /^Notes & details$/ })
+      .click();
+    await page.getByLabel('Your note').fill('Read the source before reviewing');
+    await page.getByRole('button', { name: 'Save note' }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.own_remark,
+      )
+      .toBe('Read the source before reviewing');
+    await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
+    ).not.toBeVisible();
+    await page.getByRole('button', { name: /^Completed/ }).click();
+    await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
+    await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
+    await page.getByRole('button', { name: /^My Tasks/ }).click();
+    await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Chrome companion', exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('button', { name: 'Close add connection' }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('button', { name: /^My Tasks/ }).click();
+    await expect(
+      page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
+    ).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('mobile.png') });
+    await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('mobile-detail.png') });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
 test('packaged companion pairs, changes tasks, reviews captures, and loses access immediately after revocation', async () => {
   const extension = join(directory, 'approved-extension');
   await cp(resolve('dist/extension'), extension, { recursive: true });
@@ -79,10 +199,16 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
   const context = await chromium.launchPersistentContext(join(directory, 'browser'), {
     channel: 'chromium',
     headless: true,
-    viewport: { width: 390, height: 900 },
+    viewport: { width: 390, height: 1058 },
+    httpCredentials: { username: 'admin', password },
     args: ['--disable-extensions-except=' + extension, '--load-extension=' + extension],
   });
   try {
+    // Establish the owner session before Chrome opens a workspace tab from the companion.
+    const ownerPage = await context.newPage();
+    await ownerPage.goto(base);
+    await expect(ownerPage.getByRole('heading', { name: 'My Tasks', exact: true })).toBeVisible();
+    await ownerPage.close();
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const id = new URL(worker.url()).host;
     const page = await context.newPage();
@@ -91,11 +217,25 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     await page.getByLabel('Server address').fill(base);
     await page.getByLabel('Pairing code').fill(code.code);
     await page.getByRole('button', { name: 'Connect workspace' }).click();
-    await expect(page.getByRole('heading', { name: 'Your next moves.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My Tasks' })).toBeVisible();
     const title = 'Review the onboarding flow before Friday';
     await expect(page.getByText(title, { exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('companion.png') });
     await page.getByText(title, { exact: true }).click();
+    await expect(page.locator('footer')).toContainText('Connected to workspace');
+    await page.screenshot({ path: test.info().outputPath('companion-detail.png') });
+    await expectReadableTasks(page, '.task-open strong');
+    await expectReadableTasks(page, '.task-open span');
+    const opened = context.waitForEvent('page');
+    await page.getByRole('button', { name: 'View conversation in workspace' }).click();
+    const sourcePage = await opened;
+    await expect(sourcePage.getByRole('heading', { name: title, exact: true })).toBeVisible();
+    await expect(sourcePage.locator('.message-card')).toBeVisible();
+    await sourcePage.close();
+    await page
+      .locator('summary')
+      .filter({ hasText: /^Notes & details$/ })
+      .click();
     await page.getByLabel('Your note').fill('A note from the companion');
     await page.getByRole('button', { name: 'Save note' }).click();
     await expect
@@ -104,9 +244,13 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
         return snapshot.tasks.find((t) => t.title === title)?.own_remark;
       })
       .toBe('A note from the companion');
-    await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
+    await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
+    await expect(page.getByText(title, { exact: true })).not.toBeVisible();
+    await page.getByRole('button', { name: 'More options' }).click();
+    await page.getByRole('button', { name: 'Show completed', exact: true }).click();
+    await page.getByText(title, { exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark as to do', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Back to tasks' }).click();
+    await page.getByRole('button', { name: 'Collapse task' }).click();
     await page.getByRole('button', { name: 'Conversations', exact: true }).click();
     await page.getByRole('switch', { name: 'Activate Design team' }).click();
     await expect(page.getByRole('switch', { name: 'Activate Design team' })).toHaveAttribute(
@@ -178,7 +322,8 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     expect(devices.devices.length).toBe(1);
     await owner('extensions/' + devices.devices[0]?.id + '/revoke', {});
     expect((await fetch(base + '/api/companion/state', { headers })).status).toBe(401);
-    await page.getByRole('button', { name: 'My tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'More options' }).click();
     await page.getByRole('button', { name: 'Refresh tasks' }).click();
     await expect(page.getByRole('button', { name: 'Connect workspace' })).toBeVisible();
   } finally {
