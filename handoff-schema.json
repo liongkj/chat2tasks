@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "handoff": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100000
+    }
+  },
+  "required": ["handoff"],
+  "additionalProperties": false
+}

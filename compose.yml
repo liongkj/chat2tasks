@@ -1,0 +1,21 @@
+services:
+  chat2tasks:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PORT:-2786}:2786"
+    environment:
+      PORT: 2786
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://127.0.0.1:2786}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      TRUST_PROXY_AUTH: ${TRUST_PROXY_AUTH:-false}
+    volumes:
+      - task-data:/app/data
+      - codex-home:/home/node/.codex
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  task-data:
+  codex-home:

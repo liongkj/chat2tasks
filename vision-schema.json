@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "readings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uncertainties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "message_id",
+          "observations",
+          "uncertainties"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "readings"
+  ],
+  "additionalProperties": false
+}

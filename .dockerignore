@@ -1,0 +1,15 @@
+.git
+node_modules
+dist
+.venv
+data
+codex-home
+work
+.env
+config.json
+entity-links.json
+seed.json
+__pycache__
+*.sqlite*
+*.log
+*.backup*

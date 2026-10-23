@@ -1,0 +1,17 @@
+data/
+node_modules/
+dist/
+codex-home/
+.env
+compose.override.yml
+config.json
+entity-links.json
+seed.json
+__pycache__/
+*.py[cod]
+.venv/
+work/
+*.sqlite*
+*.log
+*.backup*
+.DS_Store
