@@ -29,6 +29,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { z } from 'zod';
+import { RefreshGate } from '../shared/refresh.js';
 import {
   PublicSettingsSchema,
   SnapshotSchema,
@@ -74,14 +75,14 @@ export function App() {
   const search = useRef<HTMLInputElement>(null),
     file = useRef<HTMLInputElement>(null);
   const initialSelection = useRef(false);
-  const refreshVersion = useRef(0);
+  const refreshGate = useRef(new RefreshGate());
   const pendingTicks = useRef(new Map<string, boolean>());
   const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
   const refresh = useCallback(async () => {
-    const version = ++refreshVersion.current;
+    const ticket = refreshGate.current.start();
     try {
       const next = await api('state', SnapshotSchema);
-      if (version !== refreshVersion.current) return;
+      if (!refreshGate.current.accept(ticket)) return;
       setData({
         ...next,
         tasks: next.tasks.map((task) => {
@@ -91,7 +92,7 @@ export function App() {
       });
       setOnline(true);
     } catch {
-      if (version === refreshVersion.current) setOnline(false);
+      if (refreshGate.current.accept(ticket)) setOnline(false);
     }
   }, []);
   const refreshConfig = useCallback(async () => {
@@ -174,21 +175,21 @@ export function App() {
     const done = !task.done;
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
-    refreshVersion.current++;
+    refreshGate.current.invalidate();
     setData((current) => ({
       ...current,
       tasks: current.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
     }));
     try {
       await api('tick', OkSchema, { id: task.id, done });
+      refreshGate.current.invalidate();
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
-      void refresh();
       setNotice(task.done ? 'Moved back to your tasks' : 'One less thing. Task completed.');
     } catch (e) {
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
-      refreshVersion.current++;
+      refreshGate.current.invalidate();
       setData((current) => ({
         ...current,
         tasks: current.tasks.map((item) =>

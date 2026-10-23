@@ -37,6 +37,7 @@ import {
   type Connection,
 } from '../../src/shared/companion.js';
 import type { Task } from '../../src/shared/schema.js';
+import { RefreshGate } from '../../src/shared/refresh.js';
 import { ApiError, OkSchema, pair, request } from './api.js';
 import './style.css';
 
@@ -66,10 +67,14 @@ function App() {
     [search, setSearch] = useState('');
   const [showOptions, setShowOptions] = useState(false),
     [showFilters, setShowFilters] = useState(false);
-  const refreshVersion = useRef(0);
+  const refreshGate = useRef(new RefreshGate());
   const pendingTicks = useRef(new Map<string, boolean>());
+  const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
   const connection = session.kind === 'paired' ? session.connection : null;
   const unpair = useCallback(async () => {
+    refreshGate.current.invalidate();
+    pendingTicks.current.clear();
+    setPendingTickIds(new Set());
     await chrome.storage.local.remove('connection');
     setSession({ kind: 'unpaired' });
     setState(null);
@@ -110,10 +115,10 @@ function App() {
   }, []);
   const refresh = useCallback(async () => {
     if (!connection) return;
-    const version = ++refreshVersion.current;
+    const ticket = refreshGate.current.start();
     try {
       const next = await request(connection, 'state', CompanionStateSchema);
-      if (version !== refreshVersion.current) return;
+      if (!refreshGate.current.accept(ticket)) return;
       setState({
         ...next,
         tasks: next.tasks.map((task) => {
@@ -122,7 +127,7 @@ function App() {
         }),
       });
     } catch (error) {
-      if (version !== refreshVersion.current) return;
+      if (!refreshGate.current.accept(ticket)) return;
       setNotice(message(error));
       if (error instanceof ApiError && error.status === 401) await unpair();
     }
@@ -171,10 +176,12 @@ function App() {
     }
   }
   async function tick(task: Task) {
-    if (!connection) return;
+    if (!connection || pendingTicks.current.has(task.id)) return;
     const done = !task.done;
     pendingTicks.current.set(task.id, done);
-    refreshVersion.current++;
+    setPendingTickIds(new Set(pendingTicks.current.keys()));
+    refreshGate.current.invalidate();
+    setNotice('');
     setState((previous) =>
       previous
         ? {
@@ -188,11 +195,9 @@ function App() {
     );
     try {
       await request(connection, 'tick', OkSchema, { id: task.id, done });
-      pendingTicks.current.delete(task.id);
-      void refresh();
+      refreshGate.current.invalidate();
     } catch (error) {
-      pendingTicks.current.delete(task.id);
-      refreshVersion.current++;
+      refreshGate.current.invalidate();
       setState((previous) =>
         previous
           ? {
@@ -208,8 +213,12 @@ function App() {
           ? { ...previous, task: { ...previous.task, done: task.done } }
           : previous,
       );
-      void refresh();
-      throw error;
+      setNotice(message(error));
+      if (error instanceof ApiError && error.status === 401) await unpair();
+      else void refresh();
+    } finally {
+      pendingTicks.current.delete(task.id);
+      setPendingTickIds(new Set(pendingTicks.current.keys()));
     }
   }
   async function disconnect() {
@@ -426,8 +435,8 @@ function App() {
                           className="completion"
                           aria-label={`${task.done ? 'Reopen' : 'Complete'}: ${task.title}`}
                           aria-pressed={task.done}
-                          disabled={busy}
-                          onClick={() => void action(() => tick(task))}
+                          disabled={busy || pendingTickIds.has(task.id)}
+                          onClick={() => void tick(task)}
                         >
                           {task.done ? <CircleCheck size={25} /> : <Circle size={25} />}
                         </button>
@@ -496,8 +505,8 @@ function App() {
                           </button>
                           <button
                             className="primary"
-                            disabled={busy}
-                            onClick={() => void action(() => tick(detail.task))}
+                            disabled={busy || pendingTickIds.has(detail.task.id)}
+                            onClick={() => void tick(detail.task)}
                           >
                             {detail.task.done ? 'Mark as to do' : 'Mark Complete'}
                           </button>
