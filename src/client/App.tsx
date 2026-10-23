@@ -1,3 +1,5 @@
+import { useInputModality } from '../shared/useInputModality.js';
+import { Menu } from '@base-ui/react/menu';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
@@ -13,7 +15,7 @@ import {
   FileText,
   Inbox,
   LoaderCircle,
-  Menu,
+  Menu as MenuIcon,
   MessageSquare,
   MoreHorizontal,
   Plus,
@@ -55,6 +57,7 @@ const stateLabel = {
 };
 
 export function App() {
+  useInputModality();
   const [data, setData] = useState(empty),
     [config, setConfig] = useState<PublicSettings | null>(null);
   const [view, setView] = useState<View>('tasks'),
@@ -277,7 +280,7 @@ export function App() {
               aria-label="Open navigation"
               onClick={() => setMobileMenu(true)}
             >
-              <Menu size={18} />
+              <MenuIcon size={18} />
             </button>
             <span className="workspace-crumb">{data.demo ? 'Sample workspace' : 'Workspace'}</span>
             <ChevronRight size={12} />
@@ -372,53 +375,50 @@ export function App() {
                         </option>
                       ))}
                     </select>
-                    <div className="menu-anchor">
-                      <button
-                        className="icon-btn"
-                        aria-label="More task actions"
-                        aria-expanded={showMenu}
-                        onClick={() => setShowMenu(!showMenu)}
-                      >
+                    <Menu.Root open={showMenu} onOpenChange={setShowMenu}>
+                      <Menu.Trigger className="icon-btn" aria-label="More task actions">
                         <MoreHorizontal size={18} />
-                      </button>
-                      {showMenu && (
-                        <div className="popover">
-                          <button
-                            disabled={data.status.syncing}
-                            onClick={() => {
-                              void sync();
-                              setShowMenu(false);
-                            }}
-                          >
-                            <Zap size={16} /> Find tasks now
-                          </button>
-                          <button
-                            onClick={() => {
-                              setFilter('all');
-                              setShowMenu(false);
-                            }}
-                          >
-                            Show all tasks
-                          </button>
-                          <button
-                            onClick={() => {
-                              download('chat2tasks-export.json', JSON.stringify(data, null, 2));
-                              setShowMenu(false);
-                            }}
-                          >
-                            <ArrowDownToLine size={14} /> Export workspace
-                          </button>
-                          <button
-                            onClick={() => {
-                              file.current?.click();
-                              setShowMenu(false);
-                            }}
-                          >
-                            <FileText size={14} /> Import task ticks
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                      </Menu.Trigger>
+                      <Menu.Portal>
+                        <Menu.Positioner className="menu-positioner" sideOffset={6} align="end">
+                          <Menu.Popup className="popover">
+                            <Menu.Item
+                              disabled={data.status.syncing}
+                              onClick={() => {
+                                void sync();
+                                setShowMenu(false);
+                              }}
+                            >
+                              <Zap size={16} /> Find tasks now
+                            </Menu.Item>
+                            <Menu.Item
+                              onClick={() => {
+                                setFilter('all');
+                                setShowMenu(false);
+                              }}
+                            >
+                              Show all tasks
+                            </Menu.Item>
+                            <Menu.Item
+                              onClick={() => {
+                                download('chat2tasks-export.json', JSON.stringify(data, null, 2));
+                                setShowMenu(false);
+                              }}
+                            >
+                              <ArrowDownToLine size={14} /> Export workspace
+                            </Menu.Item>
+                            <Menu.Item
+                              onClick={() => {
+                                file.current?.click();
+                                setShowMenu(false);
+                              }}
+                            >
+                              <FileText size={14} /> Import task ticks
+                            </Menu.Item>
+                          </Menu.Popup>
+                        </Menu.Positioner>
+                      </Menu.Portal>
+                    </Menu.Root>
                   </div>
                 </div>
                 {data.status.error && (

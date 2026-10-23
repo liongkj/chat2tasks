@@ -157,13 +157,44 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
     await page.getByRole('button', { name: /^My Tasks/ }).click();
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
+    const moreTasks = page.getByRole('button', { name: 'More task actions' });
+    await moreTasks.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: 'Find tasks now' })).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(page.getByRole('menuitem', { name: 'Show all tasks' })).toBeFocused();
+    await page.screenshot({
+      path: test.info().outputPath('task-menu.png'),
+      animations: 'disabled',
+    });
+    await page.keyboard.press('Escape');
+    await expect(moreTasks).toBeFocused();
+    await expect(page.getByRole('menu')).not.toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(
       page.getByRole('heading', { name: 'Chrome companion', exact: true }),
     ).toBeVisible();
     await page.getByRole('button', { name: 'Add connection', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCSS('transition-duration', '0.2s, 0.2s');
     await page.getByRole('button', { name: 'Close add connection' }).click();
+    await expect(page.getByRole('button', { name: 'Add connection', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCSS('transition-duration', '0s');
+    await page.keyboard.press('Shift+Tab');
+    await expect
+      .poll(() =>
+        page.getByRole('dialog').evaluate((dialog) => dialog.contains(document.activeElement)),
+      )
+      .toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath('connection-dialog.png'),
+      animations: 'disabled',
+    });
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add connection', exact: true })).toBeFocused();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'Open navigation' }).click();
     await page.getByRole('button', { name: /^My Tasks/ }).click();
@@ -252,7 +283,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
     await expect(page.getByText(title, { exact: true })).not.toBeVisible();
     await page.getByRole('button', { name: 'More options' }).click();
-    await page.getByRole('button', { name: 'Show completed', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Show completed', exact: true }).click();
     await page.getByText(title, { exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark as to do', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Collapse task' }).click();
@@ -329,7 +360,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     expect((await fetch(base + '/api/companion/state', { headers })).status).toBe(401);
     await page.getByRole('button', { name: 'Tasks', exact: true }).click();
     await page.getByRole('button', { name: 'More options' }).click();
-    await page.getByRole('button', { name: 'Refresh tasks' }).click();
+    await page.getByRole('menuitem', { name: 'Refresh tasks' }).click();
     await expect(page.getByRole('button', { name: 'Connect workspace' })).toBeVisible();
   } finally {
     await context.close();
