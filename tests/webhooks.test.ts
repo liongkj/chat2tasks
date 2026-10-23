@@ -199,6 +199,11 @@ test('a saved webhook batch reaches the decision API first; skip avoids Luna and
     f.hooks.receive(f.raw, f.sign(f.raw));
     assert.equal(f.store.messages().length, 1);
     assert.deepEqual(calls, []);
+    f.store.queueChat('active', 0, true);
+    await f.sync.run(['active']);
+    assert.equal(f.store.snapshot().status.error, null);
+    assert.equal(f.store.jobs()[0]?.reconcile, 0);
+    assert.deepEqual(calls, []);
     await f.sync.run(['active']);
     assert.deepEqual(calls, ['/v1/systemone']);
     assert.equal(f.store.pending(f.store.messages()).length, 0);

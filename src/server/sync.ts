@@ -88,6 +88,10 @@ export class Sync {
         if (!this.active(chat)) continue;
         const job = this.store.jobs().find((job) => job.chat_id === chat.id);
         try {
+          if (job?.reconcile)
+            this.store.db
+              .prepare('UPDATE chat_jobs SET reconcile=0 WHERE chat_id=? AND generation=?')
+              .run(chat.id, job.generation);
           const result = await this.runChat(
             chat,
             profile,
