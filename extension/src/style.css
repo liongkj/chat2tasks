@@ -75,9 +75,11 @@ header {
   color: var(--muted);
   border-radius: 7px;
 }
-.icon:hover {
-  background: var(--sidebar);
-  color: var(--text);
+@media (hover: hover) and (pointer: fine) {
+  .icon:hover {
+    background: var(--sidebar);
+    color: var(--text);
+  }
 }
 main {
   padding: 24px 20px;
@@ -115,15 +117,19 @@ main {
   background: var(--accent);
   color: white;
 }
-.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 }
 .secondary {
   border-color: #c6c6cd;
   background: white;
 }
-.secondary:hover {
-  background: var(--sidebar);
+@media (hover: hover) and (pointer: fine) {
+  .secondary:hover {
+    background: var(--sidebar);
+  }
 }
 .hint {
   display: flex;
@@ -361,8 +367,10 @@ nav button.active {
   gap: 6px;
   text-align: left;
 }
-.text-button:hover {
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .text-button:hover {
+    text-decoration: underline;
+  }
 }
 .task-expansion > .primary {
   margin-top: 12px;
@@ -538,8 +546,10 @@ footer {
   border-radius: 6px;
   text-align: left;
 }
-.options-menu button:hover {
-  background: var(--sidebar);
+@media (hover: hover) and (pointer: fine) {
+  .options-menu button:hover {
+    background: var(--sidebar);
+  }
 }
 .options-menu p {
   font-size: 14px;
@@ -578,5 +588,26 @@ footer {
     margin: auto;
     border-left: 1px solid var(--line);
     border-right: 1px solid var(--line);
+  }
+}
+
+main,
+.source p {
+  overscroll-behavior: contain;
+}
+.avatar {
+  flex-shrink: 0;
+}
+.toggle span {
+  transition: transform 150ms var(--ease-out);
+}
+@media (pointer: coarse) {
+  .icon,
+  .completion,
+  .task-row > .icon,
+  .task-tabs button,
+  .text-button {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
