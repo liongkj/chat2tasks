@@ -66,7 +66,8 @@ function App() {
     [search, setSearch] = useState('');
   const [showOptions, setShowOptions] = useState(false),
     [showFilters, setShowFilters] = useState(false);
-  const refreshing = useRef(false);
+  const refreshVersion = useRef(0);
+  const pendingTicks = useRef(new Map<string, boolean>());
   const connection = session.kind === 'paired' ? session.connection : null;
   const unpair = useCallback(async () => {
     await chrome.storage.local.remove('connection');
@@ -108,15 +109,22 @@ function App() {
     return () => chrome.storage.onChanged.removeListener(changed);
   }, []);
   const refresh = useCallback(async () => {
-    if (!connection || refreshing.current) return;
-    refreshing.current = true;
+    if (!connection) return;
+    const version = ++refreshVersion.current;
     try {
-      setState(await request(connection, 'state', CompanionStateSchema));
+      const next = await request(connection, 'state', CompanionStateSchema);
+      if (version !== refreshVersion.current) return;
+      setState({
+        ...next,
+        tasks: next.tasks.map((task) => {
+          const pending = pendingTicks.current.get(task.id);
+          return pending === undefined ? task : { ...task, done: pending };
+        }),
+      });
     } catch (error) {
+      if (version !== refreshVersion.current) return;
       setNotice(message(error));
       if (error instanceof ApiError && error.status === 401) await unpair();
-    } finally {
-      refreshing.current = false;
     }
   }, [connection, unpair]);
   useEffect(() => {
@@ -164,13 +172,45 @@ function App() {
   }
   async function tick(task: Task) {
     if (!connection) return;
-    await request(connection, 'tick', OkSchema, { id: task.id, done: !task.done });
-    setDetail((previous) =>
-      previous?.task.id === task.id
-        ? { ...previous, task: { ...previous.task, done: !task.done } }
+    const done = !task.done;
+    pendingTicks.current.set(task.id, done);
+    refreshVersion.current++;
+    setState((previous) =>
+      previous
+        ? {
+            ...previous,
+            tasks: previous.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
+          }
         : previous,
     );
-    await refresh();
+    setDetail((previous) =>
+      previous?.task.id === task.id ? { ...previous, task: { ...previous.task, done } } : previous,
+    );
+    try {
+      await request(connection, 'tick', OkSchema, { id: task.id, done });
+      pendingTicks.current.delete(task.id);
+      void refresh();
+    } catch (error) {
+      pendingTicks.current.delete(task.id);
+      refreshVersion.current++;
+      setState((previous) =>
+        previous
+          ? {
+              ...previous,
+              tasks: previous.tasks.map((item) =>
+                item.id === task.id ? { ...item, done: task.done } : item,
+              ),
+            }
+          : previous,
+      );
+      setDetail((previous) =>
+        previous?.task.id === task.id
+          ? { ...previous, task: { ...previous.task, done: task.done } }
+          : previous,
+      );
+      void refresh();
+      throw error;
+    }
   }
   async function disconnect() {
     if (!connection) return;

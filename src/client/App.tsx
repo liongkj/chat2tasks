@@ -74,12 +74,24 @@ export function App() {
   const search = useRef<HTMLInputElement>(null),
     file = useRef<HTMLInputElement>(null);
   const initialSelection = useRef(false);
+  const refreshVersion = useRef(0);
+  const pendingTicks = useRef(new Map<string, boolean>());
+  const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current;
     try {
-      setData(await api('state', SnapshotSchema));
+      const next = await api('state', SnapshotSchema);
+      if (version !== refreshVersion.current) return;
+      setData({
+        ...next,
+        tasks: next.tasks.map((task) => {
+          const pending = pendingTicks.current.get(task.id);
+          return pending === undefined ? task : { ...task, done: pending };
+        }),
+      });
       setOnline(true);
     } catch {
-      setOnline(false);
+      if (version === refreshVersion.current) setOnline(false);
     }
   }, []);
   const refreshConfig = useCallback(async () => {
@@ -158,11 +170,32 @@ export function App() {
       setSelected(visible[0]?.id ?? null);
   }, [visible, selected, data.tasks]);
   async function tick(task: Task) {
+    if (pendingTicks.current.has(task.id)) return;
+    const done = !task.done;
+    pendingTicks.current.set(task.id, done);
+    setPendingTickIds(new Set(pendingTicks.current.keys()));
+    refreshVersion.current++;
+    setData((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
+    }));
     try {
-      await api('tick', OkSchema, { id: task.id, done: !task.done });
-      await refresh();
+      await api('tick', OkSchema, { id: task.id, done });
+      pendingTicks.current.delete(task.id);
+      setPendingTickIds(new Set(pendingTicks.current.keys()));
+      void refresh();
       setNotice(task.done ? 'Moved back to your tasks' : 'One less thing. Task completed.');
     } catch (e) {
+      pendingTicks.current.delete(task.id);
+      setPendingTickIds(new Set(pendingTicks.current.keys()));
+      refreshVersion.current++;
+      setData((current) => ({
+        ...current,
+        tasks: current.tasks.map((item) =>
+          item.id === task.id ? { ...item, done: task.done } : item,
+        ),
+      }));
+      void refresh();
       setNotice(errorMessage(e));
     }
   }
@@ -560,6 +593,7 @@ export function App() {
                                 className="check-button"
                                 aria-label={t.done ? `Reopen: ${t.title}` : `Complete: ${t.title}`}
                                 aria-pressed={t.done}
+                                disabled={pendingTickIds.has(t.id)}
                                 onClick={() => void tick(t)}
                               >
                                 {t.done ? <CircleCheck size={19} /> : <Circle size={19} />}
@@ -628,6 +662,7 @@ export function App() {
                     messages={data.messages}
                     config={config}
                     onTick={() => void tick(selectedTask)}
+                    ticking={pendingTickIds.has(selectedTask.id)}
                     onSaved={() => void refresh()}
                     notify={setNotice}
                   />
@@ -712,6 +747,7 @@ function TaskDetail({
   messages,
   config,
   onTick,
+  ticking,
   onSaved,
   notify,
 }: {
@@ -719,6 +755,7 @@ function TaskDetail({
   messages: Message[];
   config: PublicSettings | null;
   onTick: () => void;
+  ticking: boolean;
   onSaved: () => void;
   notify: (text: string) => void;
 }) {
@@ -897,7 +934,11 @@ function TaskDetail({
         )}
       </div>
       <div className="detail-actions">
-        <button className={`button ${task.done ? 'secondary' : 'primary'}`} onClick={onTick}>
+        <button
+          className={`button ${task.done ? 'secondary' : 'primary'}`}
+          disabled={ticking}
+          onClick={onTick}
+        >
           {task.done ? 'Reopen task' : 'Mark Complete'}
         </button>
       </div>

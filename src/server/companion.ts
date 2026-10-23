@@ -260,7 +260,8 @@ export async function registerCompanion(server: FastifyInstance, companion: Comp
     );
     routes.post('/api/companion/tick', (request) => {
       const input = z.object({ id: z.string(), done: z.boolean() }).parse(request.body);
-      companion.task(input.id);
+      if (!companion.store.db.prepare('SELECT id FROM tasks WHERE id=?').get(input.id))
+        throw new CompanionError(404, 'Task not found');
       companion.store.transaction(() => companion.store.tick(input.id, input.done));
       return { ok: true };
     });
