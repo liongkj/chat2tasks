@@ -80,13 +80,16 @@ test.beforeAll(async () => {
     stdio: 'ignore',
   });
   await expect
-    .poll(async () => {
-      try {
-        return (await fetch(base + '/api/health')).status;
-      } catch {
-        return 0;
-      }
-    })
+    .poll(
+      async () => {
+        try {
+          return (await fetch(base + '/api/health')).status;
+        } catch {
+          return 0;
+        }
+      },
+      { timeout: 15000 },
+    )
     .toBe(200);
 });
 test.afterAll(async () => {
@@ -148,15 +151,52 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
           )?.own_remark,
       )
       .toBe('Read the source before reviewing');
+    let releaseCompletion!: () => void;
+    const heldCompletion = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    await page.route('**/api/tick', async (route) => {
+      await heldCompletion;
+      await route.continue();
+    });
     await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
     await expect(
       page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
     ).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reopen task', exact: true })).toBeDisabled();
+    expect(
+      SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+        (task) => task.title === title,
+      )?.done,
+    ).toBe(false);
+    releaseCompletion();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.done,
+      )
+      .toBe(true);
+    await page.unroute('**/api/tick');
     await page.getByRole('button', { name: /^Completed/ }).click();
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
     await page.getByRole('button', { name: /^My Tasks/ }).click();
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
+    await page.route(
+      '**/api/tick',
+      (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Could not save completion' }),
+        }),
+      { times: 1 },
+    );
+    await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeVisible();
+    await expect(page.getByRole('status')).toContainText('Could not save completion');
     const moreTasks = page.getByRole('button', { name: 'More task actions' });
     await moreTasks.focus();
     await page.keyboard.press('ArrowDown');
@@ -205,7 +245,9 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('mobile-detail.png') });
-    const toast = await page.locator('.toast').boundingBox();
+    const toast = await page.locator('.toast').evaluateAll(
+      (elements) => elements[0]?.getBoundingClientRect().toJSON() ?? null,
+    );
     const complete = await page
       .getByRole('button', { name: 'Mark Complete', exact: true })
       .boundingBox();
@@ -280,8 +322,32 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
         return snapshot.tasks.find((t) => t.title === title)?.own_remark;
       })
       .toBe('A note from the companion');
+    let releaseCompletion!: () => void;
+    const heldCompletion = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    await page.route('**/api/companion/tick', async (route) => {
+      await heldCompletion;
+      await route.continue();
+    });
     await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
     await expect(page.getByText(title, { exact: true })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: /^Complete:/ }).first()).toBeEnabled();
+    expect(
+      SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+        (task) => task.title === title,
+      )?.done,
+    ).toBe(false);
+    releaseCompletion();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.done,
+      )
+      .toBe(true);
+    await page.unroute('**/api/companion/tick');
     await page.getByRole('button', { name: 'More options' }).click();
     await page.getByRole('menuitem', { name: 'Show completed', exact: true }).click();
     await page.getByText(title, { exact: true }).click();

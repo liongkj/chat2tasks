@@ -37,6 +37,7 @@ import {
   type Connection,
 } from '../../src/shared/companion.js';
 import type { Task } from '../../src/shared/schema.js';
+import { RefreshGate } from '../../src/shared/refresh.js';
 import { ApiError, OkSchema, pair, request } from './api.js';
 import './style.css';
 
@@ -66,9 +67,14 @@ function App() {
     [search, setSearch] = useState('');
   const [showOptions, setShowOptions] = useState(false),
     [showFilters, setShowFilters] = useState(false);
-  const refreshing = useRef(false);
+  const refreshGate = useRef(new RefreshGate());
+  const pendingTicks = useRef(new Map<string, boolean>());
+  const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
   const connection = session.kind === 'paired' ? session.connection : null;
   const unpair = useCallback(async () => {
+    refreshGate.current.invalidate();
+    pendingTicks.current.clear();
+    setPendingTickIds(new Set());
     await chrome.storage.local.remove('connection');
     setSession({ kind: 'unpaired' });
     setState(null);
@@ -108,15 +114,22 @@ function App() {
     return () => chrome.storage.onChanged.removeListener(changed);
   }, []);
   const refresh = useCallback(async () => {
-    if (!connection || refreshing.current) return;
-    refreshing.current = true;
+    if (!connection) return;
+    const ticket = refreshGate.current.start();
     try {
-      setState(await request(connection, 'state', CompanionStateSchema));
+      const next = await request(connection, 'state', CompanionStateSchema);
+      if (!refreshGate.current.accept(ticket)) return;
+      setState({
+        ...next,
+        tasks: next.tasks.map((task) => {
+          const pending = pendingTicks.current.get(task.id);
+          return pending === undefined ? task : { ...task, done: pending };
+        }),
+      });
     } catch (error) {
+      if (!refreshGate.current.accept(ticket)) return;
       setNotice(message(error));
       if (error instanceof ApiError && error.status === 401) await unpair();
-    } finally {
-      refreshing.current = false;
     }
   }, [connection, unpair]);
   useEffect(() => {
@@ -163,14 +176,50 @@ function App() {
     }
   }
   async function tick(task: Task) {
-    if (!connection) return;
-    await request(connection, 'tick', OkSchema, { id: task.id, done: !task.done });
-    setDetail((previous) =>
-      previous?.task.id === task.id
-        ? { ...previous, task: { ...previous.task, done: !task.done } }
+    if (!connection || pendingTicks.current.has(task.id)) return;
+    const done = !task.done;
+    pendingTicks.current.set(task.id, done);
+    setPendingTickIds(new Set(pendingTicks.current.keys()));
+    refreshGate.current.invalidate();
+    setNotice('');
+    setState((previous) =>
+      previous
+        ? {
+            ...previous,
+            tasks: previous.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
+          }
         : previous,
     );
-    await refresh();
+    setDetail((previous) =>
+      previous?.task.id === task.id ? { ...previous, task: { ...previous.task, done } } : previous,
+    );
+    try {
+      await request(connection, 'tick', OkSchema, { id: task.id, done });
+      refreshGate.current.invalidate();
+    } catch (error) {
+      refreshGate.current.invalidate();
+      setState((previous) =>
+        previous
+          ? {
+              ...previous,
+              tasks: previous.tasks.map((item) =>
+                item.id === task.id ? { ...item, done: task.done } : item,
+              ),
+            }
+          : previous,
+      );
+      setDetail((previous) =>
+        previous?.task.id === task.id
+          ? { ...previous, task: { ...previous.task, done: task.done } }
+          : previous,
+      );
+      setNotice(message(error));
+      if (error instanceof ApiError && error.status === 401) await unpair();
+      else void refresh();
+    } finally {
+      pendingTicks.current.delete(task.id);
+      setPendingTickIds(new Set(pendingTicks.current.keys()));
+    }
   }
   async function disconnect() {
     if (!connection) return;
@@ -386,8 +435,8 @@ function App() {
                           className="completion"
                           aria-label={`${task.done ? 'Reopen' : 'Complete'}: ${task.title}`}
                           aria-pressed={task.done}
-                          disabled={busy}
-                          onClick={() => void action(() => tick(task))}
+                          disabled={busy || pendingTickIds.has(task.id)}
+                          onClick={() => void tick(task)}
                         >
                           {task.done ? <CircleCheck size={25} /> : <Circle size={25} />}
                         </button>
@@ -456,8 +505,8 @@ function App() {
                           </button>
                           <button
                             className="primary"
-                            disabled={busy}
-                            onClick={() => void action(() => tick(detail.task))}
+                            disabled={busy || pendingTickIds.has(detail.task.id)}
+                            onClick={() => void tick(detail.task)}
                           >
                             {detail.task.done ? 'Mark as to do' : 'Mark Complete'}
                           </button>
