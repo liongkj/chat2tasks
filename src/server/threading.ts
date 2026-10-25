@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
+import { z } from 'zod';
 import { callModel } from './ai.js';
-import { Threads } from './threads.js';
-import { ThreadPlanSchema } from '../shared/threads.js';
+import { Threads, ThreadError } from './threads.js';
+import { threadPlanContract } from './thread-plan.js';
 
 export class Threading {
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -98,8 +99,12 @@ export class Threading {
                 timestamp: m.timestamp,
               })),
           }));
+        const contract = threadPlanContract(
+          batch.map((m) => m.id),
+          context.map((t) => t.id),
+        );
         const prompt = await readFile('prompts/threads.txt', 'utf8');
-        const plan = ThreadPlanSchema.parse(
+        const plan = contract.parse(
           await callModel(
             store,
             profile,
@@ -109,22 +114,24 @@ export class Threading {
                 CHATS: snapshot.chats
                   .filter((c) => c.enabled)
                   .map(({ id, name }) => ({ id, name })),
-                EXISTING_THREADS: context,
+                EXISTING_THREADS: context.map((t) => ({ ...t, id: contract.threadKeys.get(t.id) })),
                 MESSAGES_TO_GROUP: batch.map((m) => ({
-                  id: m.id,
+                  id: contract.messageKeys.get(m.id),
                   conversationId: m.conversationId,
                   timestamp: m.timestamp,
                   body: m.body.slice(0, 6000),
                   bodyTruncated: m.body.length > 6000,
                   type: m.type,
                   entity_link: m.entity_link,
-                  reply_to_id: m.reply_to_id,
+                  reply_to_id: m.reply_to_id
+                    ? (contract.messageKeys.get(m.reply_to_id) ?? m.reply_to_id)
+                    : undefined,
                   reply_to_wa_id: m.reply_to_wa_id,
                   reply_quote: m.reply_quote?.slice(0, 3000),
                   image_reading: m.image_reading,
                 })),
               }),
-            'threads-schema.json',
+            contract.schema,
             'conversation threading',
           ),
         );
@@ -132,12 +139,22 @@ export class Threading {
         this.threads.apply(plan, batch);
       }
       if (!this.stopped) this.threads.status({ kind: 'idle' });
-    } catch {
+    } catch (error) {
+      console.error(
+        'Thread organisation failed:',
+        error instanceof z.ZodError
+          ? error.issues.map(({ path, code }) => ({ path, code }))
+          : error instanceof Error
+            ? error.message
+            : 'Unknown model failure',
+      );
       if (!this.stopped)
         this.threads.status({
           kind: 'error',
           message:
-            'Could not organise threads. Check your model connection and try again. Your original messages are safe.',
+            error instanceof z.ZodError || error instanceof ThreadError
+              ? 'The model returned an incomplete grouping. Choose Organise now to retry. Your original messages are safe.'
+              : 'Could not organise threads. Check your model connection and try again. Your original messages are safe.',
         });
     } finally {
       this.running = false;

@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { Store } from '../src/server/store.js';
 import { Threads } from '../src/server/threads.js';
 import { Threading } from '../src/server/threading.js';
+import { threadPlanContract } from '../src/server/thread-plan.js';
 import { MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
 
 function fixture() {
@@ -115,6 +116,39 @@ test('organisation rejects omitted, duplicate, unknown and invented-thread assig
       assert.throws(() => f.threads.apply(plan, f.messages));
     assert.equal(f.threads.snapshot().threads.length, 0);
     assert.equal(f.threads.pending().length, 3);
+  } finally {
+    f.close();
+  }
+});
+
+test('the model must give every supplied message one valid destination using short references', () => {
+  const f = fixture();
+  try {
+    const first = f.messages[0];
+    assert.ok(first);
+    f.threads.apply(
+      { threads: [{ id: null, title: 'PBI capacity', messageIds: ['a'] }], otherMessageIds: [] },
+      [first],
+    );
+    const existing = f.threads.snapshot().threads[0];
+    assert.ok(existing);
+    const contract = threadPlanContract(['b', 'c'], [existing.id]);
+    assert.deepEqual([...contract.messageKeys.values()], ['m1', 'm2']);
+    assert.deepEqual([...contract.threadKeys.values()], ['t1']);
+    const response = {
+      threads: [{ id: 't1', title: 'PBI capacity' }],
+      assignments: { m1: 0, m2: null },
+    };
+    for (const invalid of [
+      { ...response, assignments: { m1: 0 } },
+      { ...response, assignments: { ...response.assignments, invented: 0 } },
+      { ...response, assignments: { m1: 1, m2: null } },
+      { ...response, threads: [{ id: 'invented', title: 'PBI capacity' }] },
+    ])
+      assert.throws(() => contract.parse(invalid));
+    f.threads.apply(contract.parse(response), f.messages.slice(1));
+    assert.deepEqual(f.threads.snapshot().threads[0]?.messageIds.sort(), ['a', 'b']);
+    assert.equal(f.threads.pending().length, 0);
   } finally {
     f.close();
   }
@@ -291,7 +325,7 @@ test('organisation checkpoints model responses and requires a manual retry after
       );
       const pending = f.threads.pending().filter((m) => active.has(m.conversationId)),
         existing = f.threads.snapshot().threads[0];
-      const grouped = pending.filter((m) => m.id !== 'c').map((m) => m.id);
+      const grouped = pending.filter((m) => m.id !== 'c');
       beforeReply();
       response.setHeader('Content-Type', 'application/json');
       response.end(
@@ -301,9 +335,11 @@ test('organisation checkpoints model responses and requires a manual retry after
               message: {
                 content: JSON.stringify({
                   threads: grouped.length
-                    ? [{ id: existing?.id ?? null, title: 'PBI capacity', messageIds: grouped }]
+                    ? [{ id: existing ? 't1' : null, title: 'PBI capacity' }]
                     : [],
-                  otherMessageIds: pending.filter((m) => m.id === 'c').map((m) => m.id),
+                  assignments: Object.fromEntries(
+                    pending.map((m, i) => [`m${i + 1}`, m.id === 'c' ? null : 0]),
+                  ),
                 }),
               },
             },
