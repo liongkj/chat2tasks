@@ -29,6 +29,12 @@ tasks.example.com {
 
 Preserve the original `Host` and `Origin`. The server validates the workspace origin for owner mutations. Companion requests use their own extension origin, a device token, and `X-Chat2Tasks-Extension`; the proxy must pass those headers through. Do not replace all origins with localhost or add wildcard CORS.
 
+## MCP access
+
+Set a separate random `MCP_TOKEN` of at least 32 characters in your private `.env`, then recreate the service. The Compose file passes it to Chat2Tasks; without it, `/mcp` returns 404. Connect a Streamable HTTP MCP client to your HTTPS workspace origin followed by `/mcp`, with `Authorization: Bearer YOUR_MCP_TOKEN`. See [MCP issue triage](../README.md#mcp-issue-triage) for the tools and write boundaries.
+
+Preserve the original `Host` and bearer `Authorization` header. The app authenticates `/mcp` independently of its web Basic login. If the proxy adds authentication, give `/mcp` a route that preserves MCP bearer access while keeping the web workspace protected. Do not replace the MCP bearer header with a web Basic credential. There is no OAuth flow or long-lived SSE stream to configure. Origin-less model clients are accepted; unexpected browser origins are rejected. Changing the token revokes previous MCP clients after service recreation.
+
 ## Update an existing stack
 
 1. Commit or otherwise preserve local source changes, fetch the intended revision, and inspect its changes.

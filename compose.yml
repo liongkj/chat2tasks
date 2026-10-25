@@ -10,6 +10,7 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://127.0.0.1:2786}
       APP_PASSWORD: ${APP_PASSWORD:-}
       TRUST_PROXY_AUTH: ${TRUST_PROXY_AUTH:-false}
+      MCP_TOKEN: ${MCP_TOKEN:-}
     volumes:
       - task-data:/app/data
       - codex-home:/home/node/.codex

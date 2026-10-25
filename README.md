@@ -55,6 +55,36 @@ Use **Settings** to add, name, test, and select connections. Choose **Use connec
 
 **Test connection** makes one small, billable model request. Saving a connection does not run a test; normal active-chat processing continues in the background. Selected models must return valid schema JSON. Invalid task output is rejected without marking its source messages processed.
 
+## MCP issue triage
+
+Connect an external model to the saved Chat2Tasks issues and their evidence through `/mcp`. The endpoint uses [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), with a separate bearer token. It is disabled until you set `MCP_TOKEN`.
+
+1. Generate a token with `openssl rand -hex 32`, and save it as `MCP_TOKEN` in your private `.env`. Tokens must have at least 32 characters. Recreate the service with `docker compose up -d --build`.
+2. In an MCP client that supports Streamable HTTP and custom authorization headers, configure:
+
+   | Setting | Value |
+   | --- | --- |
+   | URL | `http://127.0.0.1:2786/mcp`, or your HTTPS workspace origin followed by `/mcp` |
+   | Transport | Streamable HTTP |
+   | Authorization header | `Bearer YOUR_MCP_TOKEN` |
+
+3. Ask the connected model to review open issues, read their original evidence, and save their triage. The `triage_issues` prompt provides the workflow to clients that support MCP prompts.
+
+| Tool | Purpose |
+| --- | --- |
+| `list_tasks` | Search tasks and filter by completion, priority, or triage state. Defaults to open tasks. |
+| `get_task` | Read a task, its exact source messages, cached image observations, and current revision. |
+| `list_conversations` | List followed conversations, including paused ones. |
+| `get_conversation` | Read saved conversation messages, newest first. |
+| `get_source_image` | Read an original source screenshot from the private cache, or retrieve it from the configured OpenWA server. |
+| `triage_task` | Update an existing task's title, scope, evidence note, priority, state, next steps, completion criteria, and blocking question. |
+
+List tools and conversation reads support `offset` and `limit`, with a maximum of 100 items per page. `triage_task` requires all triage fields and the `expected_revision` returned by `get_task`. If the task, personal notes, completion tick, or cited evidence changed, the write is rejected; read the task again and reassess. A `needs_info` state requires a concrete blocking question.
+
+Triage preserves completion ticks, personal notes, and source links, and leaves pending messages available for normal processing. The tools do not create tasks, change settings, send WhatsApp replies, or execute task instructions. Model/provider credentials are never returned. The MCP token grants access to this single-owner workspace's saved tasks, messages, notes, and images, including paused conversations. Normal task extraction remains independent and may revise task descriptions when new messages arrive. Connecting and reading do not invoke the app's models; model usage in your MCP client follows that client's provider settings.
+
+For a reverse proxy, preserve `Host` and `Authorization`. `/mcp` uses its bearer token independently of the web workspace's Basic authentication. If your proxy imposes its own login, configure `/mcp` to reach Chat2Tasks with the MCP bearer header intact; keep the workspace protected. Origin-less model clients are supported; browser requests with an origin outside the configured workspace origins are rejected. Use HTTPS for remote connections. Rotate access by changing `MCP_TOKEN` and recreating the service; clearing it disables the endpoint. This endpoint does not provide OAuth or the older HTTP+SSE transport.
+
 ## Message receipt and model triggers
 
 Receiving a message does not run Luna. The stages are independent:

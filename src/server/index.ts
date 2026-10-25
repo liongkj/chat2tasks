@@ -12,6 +12,7 @@ import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
 import { Companion, CompanionError, registerCompanion } from './companion.js';
+import { registerMcp } from './mcp.js';
 
 const port = z.coerce
   .number()
@@ -65,6 +66,7 @@ server.addHook('onRequest', async (request, reply) => {
       .send({ error: 'Host is not allowed. Set PUBLIC_ORIGIN for your reverse proxy.' });
   if (request.url === '/api/health') return;
   if (request.url.startsWith('/api/companion/')) return;
+  if (request.routeOptions.url === '/mcp') return;
   const password = process.env.APP_PASSWORD;
   if (password) {
     const expected = Buffer.from(`Basic ${Buffer.from(`admin:${password}`).toString('base64')}`),
@@ -102,6 +104,7 @@ server.setErrorHandler((error, request, reply) => {
 });
 server.get('/api/health', () => ({ ok: true }));
 await registerCompanion(server, new Companion(store, sync, syncEnabled));
+await registerMcp(server, store, { token: process.env.MCP_TOKEN, origins });
 await server.register(async (receiver) => {
   receiver.removeContentTypeParser('application/json');
   receiver.addContentTypeParser(
