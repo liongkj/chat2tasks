@@ -61,6 +61,63 @@ test('replayed task generation is idempotent and cannot overwrite a manual tick'
     f.close();
   }
 });
+test('TODO references stay unique and stable through edits, completion and restart', () => {
+  const f = fixture();
+  try {
+    f.store.apply([f.change], [f.message]);
+    const first = f.store.snapshot().tasks[0];
+    assert.ok(first);
+    assert.equal(first.reference, 'TODO-001');
+    f.store.apply(
+      [{ ...f.change, id: first.id, title: 'Restore the missing export column' }],
+      [f.message],
+    );
+    f.store.tick(first.id, true);
+    f.store.apply([{ ...f.change, title: 'Review the next export' }], [f.message]);
+    assert.equal(f.store.taskEvidence(first.reference).task.id, first.id);
+    const references = f.store.snapshot().tasks.map((task) => task.reference);
+    assert.deepEqual(references, ['TODO-001', 'TODO-002']);
+    const reopened = new Store(f.dir);
+    try {
+      assert.deepEqual(
+        reopened.snapshot().tasks.map((task) => task.reference),
+        references,
+      );
+      assert.equal(reopened.taskEvidence(first.reference).task.done, true);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    f.close();
+  }
+});
+test('upgrading existing tasks assigns references without changing their content or completion', () => {
+  const f = fixture();
+  try {
+    f.store.apply([f.change], [f.message]);
+    const task = f.store.snapshot().tasks[0];
+    assert.ok(task);
+    f.store.tick(task.id, true);
+    f.store.remark(task.id, 'Preserve my note');
+    const before = f.store.snapshot().tasks[0];
+    f.store.db.exec(
+      'DROP TRIGGER IF EXISTS assign_task_reference; DROP TABLE IF EXISTS task_references',
+    );
+    const upgraded = new Store(f.dir);
+    try {
+      assert.deepEqual(upgraded.snapshot().tasks[0], before);
+      upgraded.apply([{ ...f.change, title: 'A task after upgrade' }], [f.message]);
+      assert.deepEqual(
+        upgraded.snapshot().tasks.map((item) => item.reference),
+        ['TODO-001', 'TODO-002'],
+      );
+    } finally {
+      upgraded.close();
+    }
+  } finally {
+    f.close();
+  }
+});
 test('a source outside the supplied conversation rejects the entire task batch', () => {
   const f = fixture();
   try {

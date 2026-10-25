@@ -72,6 +72,10 @@ export class Store {
     chmodSync(join(dir, 'tasks.sqlite'), 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000;
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,scope TEXT NOT NULL,note TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL);
+      CREATE TABLE IF NOT EXISTS task_references(number INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE);
+      CREATE TRIGGER IF NOT EXISTS assign_task_reference AFTER INSERT ON tasks BEGIN
+        INSERT INTO task_references(task_id) VALUES(NEW.id);
+      END;
       CREATE TABLE IF NOT EXISTS completion(task_id TEXT PRIMARY KEY REFERENCES tasks(id),done INTEGER NOT NULL,updated REAL NOT NULL);
       CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sources(task_id TEXT NOT NULL REFERENCES tasks(id),message_id TEXT NOT NULL REFERENCES messages(id),PRIMARY KEY(task_id,message_id));
@@ -89,6 +93,13 @@ export class Store {
       CREATE TABLE IF NOT EXISTS app_secrets(id TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS webhook_events(id TEXT PRIMARY KEY,received REAL NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_jobs(chat_id TEXT PRIMARY KEY,due REAL NOT NULL,first REAL NOT NULL,generation INTEGER NOT NULL,reconcile INTEGER NOT NULL,manual INTEGER NOT NULL DEFAULT 0);`);
+    this.transaction(() =>
+      this.db.exec(`
+      INSERT INTO task_references(task_id)
+      SELECT t.id FROM tasks t LEFT JOIN task_references ref ON ref.task_id=t.id
+      WHERE ref.task_id IS NULL ORDER BY t.created,t.id;
+    `),
+    );
     if (
       !this.db
         .prepare('PRAGMA table_info(chat_jobs)')
@@ -371,7 +382,9 @@ export class Store {
   }
   taskEvidence(id: string) {
     const snapshot = this.snapshot();
-    const task = snapshot.tasks.find((item) => item.id === id);
+    const task = snapshot.tasks.find(
+      (item) => item.id === id || item.reference === id.toUpperCase(),
+    );
     if (!task) throw new TaskTriageError('Task not found');
     const messages = snapshot.messages.filter((message) => task.source_ids.includes(message.id));
     return { task, messages, revision: hash({ task, messages }) };
@@ -386,15 +399,15 @@ export class Store {
         );
       this.db
         .prepare('UPDATE tasks SET title=?,scope=?,note=?,updated=? WHERE id=?')
-        .run(update.title, update.scope, update.note, now(), update.id);
+        .run(update.title, update.scope, update.note, now(), current.task.id);
       const { action_steps, done_when, priority, triage_state, blocking_question } = update;
       this.db
         .prepare('INSERT OR REPLACE INTO triage VALUES(?,?)')
         .run(
-          update.id,
+          current.task.id,
           JSON.stringify({ action_steps, done_when, priority, triage_state, blocking_question }),
         );
-      return this.taskEvidence(update.id);
+      return this.taskEvidence(current.task.id);
     });
   }
   tick(id: string, done: boolean) {
@@ -536,7 +549,7 @@ export class Store {
     });
     const tasks = this.db
       .prepare(
-        "SELECT t.*,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM tasks t LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id ORDER BY t.created,t.id",
+        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id ORDER BY t.created,t.id",
       )
       .all()
       .map((row) => {

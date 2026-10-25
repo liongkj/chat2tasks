@@ -248,7 +248,7 @@ function App() {
       (t) =>
         t.done === showDone &&
         (!chatFilter || t.chatIds.includes(chatFilter)) &&
-        (t.title + ' ' + t.scope).toLowerCase().includes(search.toLowerCase()),
+        (t.reference + ' ' + t.title + ' ' + t.scope).toLowerCase().includes(search.toLowerCase()),
     ) ?? [];
   const destinationChat =
     state?.chats.find((chat) => chat.id === captureChat && chat.enabled)?.id ??
@@ -462,6 +462,7 @@ function App() {
                         >
                           <strong>{task.title}</strong>
                           <span>
+                            {task.reference} ·{' '}
                             {state?.chats.find((chat) => task.chatIds.includes(chat.id))?.name ??
                               task.scope}
                           </span>

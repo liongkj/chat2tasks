@@ -136,6 +136,7 @@ export const TaskTriageUpdateSchema = TaskTriageSchema.safeExtend({
 });
 export const TaskSchema = z.object({
   id: text,
+  reference: z.string().regex(/^TODO-\d{3,}$/),
   title: text,
   scope: text,
   note: z.string(),
