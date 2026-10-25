@@ -1105,6 +1105,16 @@ test('workspace threads open the exact source message and remain navigable on a 
     await page.getByRole('button', { name: 'View in Product team', exact: true }).click();
     await expect(page).toHaveURL(new RegExp('message=' + source.id));
     await expect(page.locator(`[data-message-id="${source.id}"]`)).toBeInViewport();
+    await expect(page).not.toHaveURL(/[?&]task=/);
+    await page.reload();
+    await expect(page.locator(`[data-message-id="${source.id}"]`)).toBeInViewport();
+    await expect(page).not.toHaveURL(/[?&]task=/);
+    await expect(page.locator(`[data-message-id="${source.id}"]`)).toContainText(
+      'Original message',
+    );
+    await expect(page.locator(`[data-message-id="${source.id}"]`)).not.toContainText(
+      'Task evidence',
+    );
     await page.goBack();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: label, exact: true }).click();

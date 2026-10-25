@@ -260,8 +260,10 @@ export function ConversationWorkspace({
                       message={message}
                       name={chat.name}
                       allMessages={messages}
-                      highlighted={selectedIds.has(message.id) || selectedMessageId === message.id}
+                      highlighted={selectedIds.has(message.id)}
+                      focused={selectedMessageId === message.id}
                       continuation={
+                        selectedMessageId !== message.id &&
                         !!previous &&
                         !annotations.has(previous.id) &&
                         previous.direction === message.direction &&
