@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Chat2Tasks Companion",
-  "version": "0.1.1",
-  "description": "Your tasks alongside WhatsApp Web. Connect to your own Chat2Tasks server and review selected text before saving it.",
+  "version": "0.2.0",
+  "description": "Quiet TODO links in WhatsApp Web and topic threads across your connected chats. Connect to your own Chat2Tasks workspace.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage", "contextMenus"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    { "matches": ["https://web.whatsapp.com/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ],
   "side_panel": { "default_path": "index.html" },
   "action": {
     "default_title": "Open Chat2Tasks",

@@ -10,6 +10,7 @@ import { OpenWA } from '../src/server/openwa.js';
 import { Sync } from '../src/server/sync.js';
 import { Webhooks } from '../src/server/webhooks.js';
 import { MessageSchema } from '../src/shared/schema.js';
+import { Threads } from '../src/server/threads.js';
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-webhook-')),
     store = new Store(dir);
@@ -90,6 +91,14 @@ test('an edited older message keeps its stable source identity and durable work 
     });
     f.store.cache([m]);
     f.store.apply([], [m]);
+    const threads = new Threads(f.store),
+      source = threads.snapshot().messages[0];
+    assert.ok(source);
+    const correction = threads.move({
+      messageId: source.id,
+      expectedRevision: source.groupingRevision,
+      target: { kind: 'new', title: 'Chosen discussion' },
+    });
     const raw = Buffer.from(
       JSON.stringify({
         ...f.event,
@@ -100,11 +109,13 @@ test('an edited older message keeps its stable source identity and durable work 
     f.hooks.receive(raw, f.sign(raw));
     assert.equal(f.store.messages()[0]?.id, 'stable-id');
     assert.equal(f.store.messages()[0]?.body, 'Corrected body');
+    assert.equal(threads.snapshot().messages[0]?.threadId, correction.threadId);
     assert.equal(f.store.pending(f.store.messages()).length, 1);
     const reopened = new Store(f.dir);
     try {
       assert.equal(reopened.jobs()[0]?.chat_id, 'active');
       assert.equal(reopened.webhookSecret(), f.store.webhookSecret());
+      assert.equal(new Threads(reopened).snapshot().messages[0]?.threadId, correction.threadId);
     } finally {
       reopened.close();
     }

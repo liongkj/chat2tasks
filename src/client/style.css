@@ -2078,3 +2078,11 @@ select:focus-visible {
     grid-template-columns: 380px minmax(0, 1fr);
   }
 }
+.threads-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}

@@ -13,6 +13,10 @@ import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
 import { Companion, CompanionError, registerCompanion } from './companion.js';
 import { registerMcp } from './mcp.js';
+import { Threads, ThreadError } from './threads.js';
+import { Threading } from './threading.js';
+import { registerThreadRoutes } from './thread-routes.js';
+import { seedDemoThreads } from './thread-demo.js';
 
 const port = z.coerce
   .number()
@@ -26,6 +30,13 @@ const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
 const openwa = new OpenWA(store),
   sync = new Sync(store, openwa);
+const threads = new Threads(store);
+if (demo) seedDemoThreads(threads);
+const organiser = new Threading(
+  threads,
+  syncEnabled,
+  () => sync.running || store.status().debouncing,
+);
 const webhooks = new Webhooks(store, openwa, sync);
 const server = Fastify({
   logger: { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie'] },
@@ -86,6 +97,8 @@ server.addHook('onRequest', async (request, reply) => {
     return reply.code(403).send({ error: 'Invalid request origin or content type' });
 });
 server.setErrorHandler((error, request, reply) => {
+  if (error instanceof ThreadError)
+    return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof TaskTriageError)
     return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof CompanionError)
@@ -105,7 +118,14 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
-await registerCompanion(server, new Companion(store, sync, syncEnabled));
+await registerCompanion(
+  server,
+  new Companion(store, sync, syncEnabled),
+  threads,
+  organiser,
+  openwa,
+);
+registerThreadRoutes(server, '/api', threads, organiser, openwa);
 await registerMcp(server, store, { token: process.env.MCP_TOKEN, origins });
 await server.register(async (receiver) => {
   receiver.removeContentTypeParser('application/json');
@@ -281,9 +301,12 @@ server.post('/api/handoff', async (request, reply) => {
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
 await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
 if (syncEnabled) sync.start();
+organiser.start();
 async function shutdown() {
+  const threadJob = organiser.stop();
   sync.stop();
   await server.close();
+  await threadJob;
   store.close();
 }
 process.on('SIGTERM', () => void shutdown());

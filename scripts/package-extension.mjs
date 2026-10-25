@@ -10,6 +10,16 @@ await build({
   target: 'chrome116',
   minify: true,
 });
+await build({
+  entryPoints: ['extension/src/content.tsx'],
+  outfile: 'dist/extension/content.js',
+  bundle: true,
+  format: 'iife',
+  jsx: 'automatic',
+  loader: { '.css': 'text' },
+  target: 'chrome116',
+  minify: true,
+});
 await cp('extension/manifest.json', 'dist/extension/manifest.json');
 await cp('extension/icons', 'dist/extension/icons', { recursive: true });
 const entries = {};

@@ -12,6 +12,7 @@ import {
   ConnectionSchema,
 } from '../src/shared/companion.js';
 import { SnapshotSchema, PublicSettingsSchema } from '../src/shared/schema.js';
+import { ThreadSnapshotSchema } from '../src/shared/threads.js';
 
 let directory: string, backend: ChildProcess, base: string;
 const password = 'isolated-extension-fixture';
@@ -911,6 +912,206 @@ test('conversation settings can recover from a failed initial load without losin
       page.getByRole('button', { name: 'Filter tasks from Design team', exact: true }),
     ).toBeVisible();
     await expect(page.getByRole('alert')).not.toBeVisible();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+test('in-page TODO links and cross-chat threads keep drafts, source navigation and saved corrections intact', async () => {
+  const initial = ThreadSnapshotSchema.parse(await (await owner('threads')).json());
+  const a = initial.messages.find((m) => m.id === 'sample-message-0'),
+    b = initial.messages.find((m) => m.id === 'sample-thread-followup');
+  expect(a).toBeTruthy();
+  expect(b).toBeTruthy();
+  if (!a || !b) throw Error('Missing thread demo sources');
+  const linkedTask = initial.tasks.find((t) => t.source_ids.includes(a.id));
+  if (!linkedTask) throw Error('Missing linked demo task');
+  const extension = join(directory, 'thread-extension');
+  await cp(resolve('dist/extension'), extension, { recursive: true });
+  const manifest = z
+    .looseObject({ host_permissions: z.array(z.string()).optional() })
+    .parse(JSON.parse(await readFile(join(extension, 'manifest.json'), 'utf8')));
+  manifest.host_permissions = ['http://127.0.0.1/*'];
+  await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest));
+  const context = await chromium.launchPersistentContext(join(directory, 'thread-browser'), {
+    channel: 'chromium',
+    headless: true,
+    viewport: { width: 1400, height: 900 },
+    args: ['--disable-extensions-except=' + extension, '--load-extension=' + extension],
+  });
+  try {
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    const id = new URL(worker.url()).host;
+    const panel = await context.newPage();
+    await panel.goto('chrome-extension://' + id + '/index.html');
+    const code = PairCodeSchema.parse(await (await owner('extensions/pairing', {})).json());
+    await panel.getByLabel('Server address').fill(base);
+    await panel.getByLabel('Pairing code').fill(code.code);
+    await panel.getByRole('button', { name: 'Connect workspace' }).click();
+    await expect(panel.getByRole('heading', { name: 'My Tasks' })).toBeVisible();
+    const connection = ConnectionSchema.parse(
+      await worker.evaluate(async () => (await chrome.storage.local.get('connection')).connection),
+    );
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      *{box-sizing:border-box}body{margin:0;font:14px system-ui;color:#242424}#app{height:100vh;display:flex}#rail{display:flex;flex-direction:column;width:320px;border-right:1px solid #ddd;background:#fff}#rail>header{height:64px;padding:20px;font-size:20px;font-weight:600}#side{flex:1;overflow:auto}#side input{margin:12px;width:290px;padding:12px;border:1px solid #ddd;border-radius:6px}#pane-side [role=row]{padding:24px 18px;border-bottom:1px solid #eee;cursor:pointer}#main{display:flex;flex:1;min-width:0;flex-direction:column;background:#f4f1e9}#main header{padding:24px;background:white;height:70px}.history{padding:50px 35px;flex:1;overflow:auto}[data-id]{margin:22px 0;padding:12px 16px;background:#fff;border-radius:7px;max-width:650px}.selectable-text{margin:0;line-height:1.6}footer{padding:16px;background:#eee}textarea{width:100%;padding:16px;border:0;border-radius:6px;font:14px system-ui}
+      </style></head><body><div id="app"><div id="rail"><header>WhatsApp</header><div id="side"><input role="textbox" aria-label="Search or start a new chat"><div id="pane-side"></div></div></div><main id="main"></main></div>
+      <script>
+      const messages=${JSON.stringify({ a, b })};const drafts={'Design team':'Unsent draft','Product team':''};let current='Design team';
+      function show(name){current=name;const m=name==='Design team'?messages.a:messages.b;const main=document.querySelector('#main');main.innerHTML='<header><span dir="auto"></span></header><div class="history"><div data-id=""><p class="selectable-text"></p></div><div data-id="unmatched"><p class="selectable-text"></p></div></div><footer><textarea aria-label="Type a message"></textarea></footer>';main.querySelector('header span').textContent=name;main.querySelector('[data-id]').dataset.id=m.waMessageId;for(const p of main.querySelectorAll('.selectable-text'))p.textContent=m.body;const input=main.querySelector('textarea');input.value=drafts[name];input.addEventListener('input',()=>drafts[current]=input.value);}
+      function rows(value){const list=document.querySelector('#pane-side');list.replaceChildren();for(const name of ['Design team','Product team'].filter(n=>value?n.toLowerCase().includes(value.toLowerCase()):n==='Design team')){const row=document.createElement('div');row.setAttribute('role','row');const span=document.createElement('span');span.title=name;span.textContent=name;row.append(span);row.onclick=()=>show(name);list.append(row);}}
+      document.querySelector('#side input').addEventListener('input',e=>rows(e.target.value));show('Design team');rows('');
+      </script></body></html>`;
+    await context.route('https://web.whatsapp.com/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: html }),
+    );
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto('https://web.whatsapp.com/');
+    const modes = page.locator('#chat2tasks-modes');
+    await expect(modes.getByRole('button', { name: 'Threads', exact: true })).toBeVisible();
+    await expect(
+      page.getByRole('button', {
+        name: `Open ${linkedTask.reference}: ${linkedTask.title}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.locator('[data-id="unmatched"] [data-chat2tasks]')).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: 'Type a message', exact: true })).toHaveValue(
+      'Unsent draft',
+    );
+    await expect(page.locator('#main .selectable-text').first()).toHaveText(a.body);
+    await page.screenshot({ path: test.info().outputPath('whatsapp-reading.png') });
+    await modes.getByRole('button', { name: 'Threads', exact: true }).click();
+    const smart = page.locator('#chat2tasks-threads');
+    await smart
+      .getByRole('button', { name: 'Onboarding review 2 chats · 2 messages', exact: true })
+      .click();
+    await expect(
+      smart.getByRole('heading', { name: 'Onboarding review', exact: true }),
+    ).toBeVisible();
+    await expect(smart.getByText(b.body, { exact: true })).toBeVisible();
+    await expect(
+      smart.getByRole('button', { name: 'Reply in Design team', exact: true }),
+    ).toBeVisible();
+    await expect(
+      smart.getByRole('button', { name: 'Reply in Product team', exact: true }),
+    ).toBeVisible();
+    expect(await smart.locator('.c-smart').evaluate((el) => el.outerHTML)).not.toContain(
+      connection.token,
+    );
+    await page.screenshot({ path: test.info().outputPath('whatsapp-threads.png') });
+    await smart.getByRole('button', { name: 'Chats', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Type a message', exact: true })).toHaveValue(
+      'Unsent draft',
+    );
+    await expect(page.locator('#main .selectable-text').first()).toHaveText(a.body);
+    await modes.getByRole('button', { name: 'Threads', exact: true }).click();
+    await smart
+      .getByRole('button', { name: 'Onboarding review 2 chats · 2 messages', exact: true })
+      .click();
+    await smart.getByRole('button', { name: 'Reply in Product team', exact: true }).click();
+    await expect(page.locator('#main header')).toHaveText('Product team');
+    await expect(page.locator('#main [data-id]').first()).toBeFocused();
+    await expect(smart).not.toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Type a message', exact: true })).toHaveValue(
+      '',
+    );
+    await modes.getByRole('button', { name: 'Threads', exact: true }).click();
+    await smart
+      .getByRole('button', { name: 'Onboarding review 2 chats · 2 messages', exact: true })
+      .click();
+    const followup = smart.locator('.t-message').filter({ hasText: b.body });
+    await followup.getByRole('button', { name: 'Move message to another thread' }).click();
+    await followup.getByLabel('Move to another thread').selectOption('new');
+    await followup.getByLabel('Thread name').fill('Onboarding follow-up');
+    await followup.getByRole('button', { name: 'Move message', exact: true }).click();
+    await expect(
+      smart.getByRole('heading', { name: 'Onboarding follow-up', exact: true }),
+    ).toBeVisible();
+    await page.reload();
+    await modes.getByRole('button', { name: 'Threads', exact: true }).click();
+    await smart
+      .getByRole('button', { name: 'Onboarding follow-up 1 chat · 1 message', exact: true })
+      .click();
+    await expect(smart.getByText(b.body, { exact: true })).toBeVisible();
+    const saved = ThreadSnapshotSchema.parse(await (await owner('threads')).json());
+    expect(saved.threads.find((t) => t.title === 'Onboarding follow-up')?.messageIds).toEqual([
+      b.id,
+    ]);
+    await page.setViewportSize({ width: 640, height: 844 });
+    await smart.getByRole('button', { name: '← Threads', exact: true }).click();
+    await smart
+      .getByRole('button', { name: 'Thursday lunch 1 chat · 1 message', exact: true })
+      .click();
+    await expect(smart.getByRole('heading', { name: 'Thursday lunch', exact: true })).toBeVisible();
+    await expect(smart.locator('.t-task-links')).not.toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('whatsapp-threads-narrow.png') });
+    await owner('extensions/' + connection.deviceId + '/revoke', {});
+    await expect(smart.getByRole('alert')).toContainText(/revoked|Pair the companion/, {
+      timeout: 10000,
+    });
+    await expect(smart.locator('.t-workspace')).not.toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+test('workspace threads open the exact source message and remain navigable on a phone', async () => {
+  const state = ThreadSnapshotSchema.parse(await (await owner('threads')).json());
+  const source = state.messages.find((m) => m.id === 'sample-thread-followup');
+  if (!source) throw Error('Missing thread source');
+  const topic = state.threads.find((t) => t.messageIds.includes(source.id));
+  if (!topic) throw Error('Missing topic');
+  const count = new Set(
+    state.messages.filter((m) => m.threadId === topic.id).map((m) => m.conversationId),
+  ).size;
+  const label = `${topic.title} ${count} ${count === 1 ? 'chat' : 'chats'} · ${topic.messageIds.length} ${topic.messageIds.length === 1 ? 'message' : 'messages'}`;
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1000 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    let cold = true;
+    await page.route('**/api/threads', async (route) => {
+      if (!cold) {
+        await route.continue();
+        return;
+      }
+      cold = false;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...state,
+          threads: [],
+          messages: state.messages.map((m) => ({ ...m, threadId: null })),
+          status: { kind: 'running', remaining: state.messages.length },
+        }),
+      });
+    });
+    await page.goto(base + '/?view=threads');
+    const firstTopic = state.threads[0];
+    if (firstTopic)
+      await expect(page.getByRole('heading', { name: firstTopic.title, exact: true })).toBeVisible({
+        timeout: 10000,
+      });
+    await page.getByRole('button', { name: label, exact: true }).click();
+    await expect(page.getByRole('heading', { name: topic.title, exact: true })).toBeVisible();
+    await expect(page.getByText(source.body, { exact: true })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('workspace-threads.png') });
+    await page.getByRole('button', { name: 'View in Product team', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp('message=' + source.id));
+    await expect(page.locator(`[data-message-id="${source.id}"]`)).toBeInViewport();
+    await page.goBack();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole('button', { name: label, exact: true }).click();
+    await expect(page.getByRole('heading', { name: topic.title, exact: true })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('workspace-threads-phone.png') });
+    await page.getByRole('button', { name: '← Threads', exact: true }).click();
+    await expect(page.getByRole('button', { name: label, exact: true })).toBeFocused();
   } finally {
     await context.close();
     await browser.close();

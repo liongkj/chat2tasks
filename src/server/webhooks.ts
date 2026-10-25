@@ -120,9 +120,7 @@ export class Webhooks {
           reply_to_id: quoted.length === 1 ? quoted[0]?.id : previous?.reply_to_id,
           reply_quote: event.data.quotedMessage?.body,
         });
-        this.store.db
-          .prepare('INSERT OR REPLACE INTO messages VALUES(?,?)')
-          .run(message.id, JSON.stringify(message));
+        this.store.upsertMessage(message);
       }
       if (event.event === 'message.edited' || event.event === 'message.revoked') {
         const message = prior.find((m) => m.chatId === chat.chatId);
@@ -131,9 +129,7 @@ export class Webhooks {
             event.event === 'message.revoked'
               ? { ...message, type: 'revoked', body: '[Message deleted]', image_digest: null }
               : { ...message, body: event.data.body ?? message.body };
-          this.store.db
-            .prepare('INSERT OR REPLACE INTO messages VALUES(?,?)')
-            .run(updated.id, JSON.stringify(updated));
+          this.store.upsertMessage(updated);
         }
       }
       if (settings.trigger.mode === 'automatic')

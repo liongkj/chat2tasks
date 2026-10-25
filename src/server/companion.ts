@@ -4,6 +4,10 @@ import type { FastifyInstance } from 'fastify';
 import { Store, hash, now } from './store.js';
 import type { Sync } from './sync.js';
 import { MessageSchema } from '../shared/schema.js';
+import type { Threads } from './threads.js';
+import type { Threading } from './threading.js';
+import type { OpenWA } from './openwa.js';
+import { registerThreadRoutes } from './thread-routes.js';
 import {
   CaptureSchema,
   DeviceSchema,
@@ -194,7 +198,13 @@ export class Companion {
   }
 }
 
-export async function registerCompanion(server: FastifyInstance, companion: Companion) {
+export async function registerCompanion(
+  server: FastifyInstance,
+  companion: Companion,
+  threads: Threads,
+  organiser: Threading,
+  openwa: OpenWA,
+) {
   server.get('/api/extensions', () => companion.devices());
   server.post('/api/extensions/pairing', () => companion.createCode());
   server.post('/api/extensions/:id/revoke', (request) => {
@@ -246,6 +256,7 @@ export async function registerCompanion(server: FastifyInstance, companion: Comp
       }
     });
     routes.options('/api/companion/*', () => ({}));
+    registerThreadRoutes(routes, '/api/companion', threads, organiser, openwa);
     routes.post('/api/companion/pair', (request) => {
       const input = PairRequestSchema.parse(request.body),
         id = ExtensionIdSchema.parse(request.headers['x-chat2tasks-extension']);
