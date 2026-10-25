@@ -1,69 +1,73 @@
-# Context First design QA
+# Task desk design QA
 
 final result: passed
 
-## Visual target and captured state
+## Selected target and captured state
 
-- Selected visual target: the second displayed ideation result, **Context First**, chosen by the owner. The original generated board is 1586 × 992 pixels.
-- Local visual truth: `work/design-qa/reference.png`. The original board and comparison captures remain in ignored local QA storage. Published implementation captures use illustrative sample data.
-- Desktop implementation: `docs/qa/context-first/desktop.jpg`, 1440 × 1000 pixels, 1440 × 1000 CSS viewport, device scale factor 1.
-- Mobile implementation: `docs/qa/context-first/mobile.jpg`, 390 × 844 pixels, 390 × 844 CSS viewport, device scale factor 1.
-- State: Operations selected, an incomplete task needing information selected, three linked messages highlighted, original messages visible. Sample references and conversation names differ from the generated board; no production messages were used in the implementation captures.
-- Source desktop normalization: crop the app region at approximately x=22, y=108, width=1227, height=853; scale uniformly to 1440px wide and crop the small bottom remainder to the 1000px viewport. Presentation title and mobile panel are excluded.
-- Source mobile normalization: crop the mobile content at approximately x=1266, y=110, width=300; scale uniformly by 1.3 to 390px wide and inspect its first 844px. The generated board's taller mobile continuation is cropped, not stretched.
-- Combined full-view comparison: `work/design-qa/comparison-final.jpg`; its source and implementation are in the same comparison input. The reproducible local layout is `work/design-qa/comparison-final.html`.
-- Focused comparisons: `work/design-qa/comparison-mobile-final.jpg` and `work/design-qa/comparison-detail-final.jpg`. These make the mobile action, serif title, blocker and criteria readable at useful scale. The task pane is normalized to 450px in both focused views.
-- Palette refinement: the owner subsequently rejected the sage-and-ivory scheme. The published desktop and mobile captures now show the revised white, grey and graphite palette. The local reference comparisons above document the earlier layout and typography review; their palette is superseded by this feedback.
+The owner selected **Task desk**, the first of three working primary-workspace alternatives. Its reference is the rendered prototype, rather than the earlier conversation-led image concept.
 
-## Findings and comparison history
+- Desktop target: `work/design-qa/task-desk/reference-desktop.jpg`, 1440 × 1000.
+- Phone targets: `reference-mobile.jpg` and `reference-detail-mobile.jpg` in the same local QA folder, both 390 × 844.
+- Implementation: `docs/qa/task-desk/desktop.jpg`, `mobile.jpg` and `mobile-detail.jpg`, at the same respective CSS viewport sizes and device scale factor 1.
+- Combined desktop comparison: `work/design-qa/task-desk/comparison-desktop.jpg`, generated from `desktop.html`. It places both full views together, followed by readable task-document crops at native scale. The document begins at x=560 in both desktop captures.
+- Combined phone comparison: `work/design-qa/task-desk/comparison-mobile.jpg`, generated from `mobile.html`. The queue and document states are each shown beside their reference at native 390px width.
+- State: all open work across conversations; TODO-001 is selected in the desktop document and opened from the phone queue. Original messages and Notes & handoff are collapsed.
+- Captures use an independent synthetic database. Its five cases, wording, priorities and update times differ from the six-case prototype. Queue ordering and displayed counts come from those records. No production messages are in the published captures.
 
-1. **P2 — desktop proportions and typography.** The first implementation used a 250px conversation list and 400px task pane at 1440px; its thread occupied too much width. The title and body text were also smaller than the reference. Evidence: `work/design-qa/desktop-initial.jpg` and `work/design-qa/comparison-initial.jpg`. The final layout uses 120px navigation, 336px conversation list, approximately 534px thread and 450px task pane at the captured desktop width. Serif titles, body sizes and semantic state text were adjusted. The final full-view and focused comparisons show the corrected proportions and wrapping.
-2. **P2 — mobile task action below the first viewport.** Repeated message headings, extra status chrome and footer space delayed View task. Evidence: `work/design-qa/mobile-initial.jpg` and the initial comparison HTML. Consecutive messages from the same conversation and direction now share their source heading within a five-minute window; task annotations break that grouping. Mobile evidence filtering moved into the conversation menu, and redundant mobile footer space was removed. Final capture shows the source messages, blocker, next steps and View task together at 390 × 844.
-3. **P2 — narrow unbreakable source names.** The existing 320px regression found detail overflow. The detail scroll surface now wraps long tokens, and the desktop header limits its source subtitle to two lines. The existing narrow-touch E2E passes.
-4. **P1 — mobile focus and restoration.** The audit found focus reachable in hidden navigation. Closed desktop navigation is now removed from mobile layout; mobile navigation and task details use separate Base UI dialogs. Opening and returning from a task or conversation restores visible focus. The new critical-flow E2E verifies focus entry, containment, return and absence of off-screen focus.
-5. **P1 — conversation link restored before settings arrive.** Conversation resolution now waits for its settings while task-only links can restore independently. The conversation E2E holds the real settings response until the task is rendered, then verifies that chat selection survives. It also verifies refresh and browser Back.
-6. **P2 — decorative green and cream throughout the workspace.** The owner's colour feedback prompted a neutral palette across navigation, conversation selection, message bubbles, evidence markers, actions, dialogs and settings. White surfaces, grey selection and graphite actions now share web palette tokens. Amber identifies missing information; green is reserved for confirmed success and connection status. Layout and typography remain unchanged.
+## Delivered behaviour
 
-No actionable P0/P1/P2 visual or interaction findings remain in the reviewed flow.
+Task desk is the default route. The sidebar selects readiness and conversation filters, the queue sorts open work by priority and update time, and the task document contains the blocker, next steps and completion criteria. Original messages expand inline. Notes, link copying, handoff downloads, merging and merge history remain under Notes & handoff.
 
-## Required fidelity surfaces
+On phones, the queue comes first. A task opens in a full-screen Base UI dialog; returning restores the source control's focus. Completion and Undo use the existing persisted tick request, pending-write guard, optimistic update, rollback and refresh gate. Undo remains available inside the task dialog. Returning after completion and undo can find the recreated queue row by its stable task reference.
 
-- **Fonts and typography:** system sans for controls and messages; Times New Roman/system serif for app-owned editorial headings, matching the selected reference's character. The selected task title is 34px on desktop; message text is 16px; step and criterion text is 15px. Actual text is retained, with expandable background for long task notes. Existing readability checks still enforce task titles of at least 16px, secondary task text of at least 14px, and 4.5:1 contrast.
-- **Spacing and layout:** a narrow workspace rail, followed conversations, saved-message thread and a linked-task pane. Desktop regions scroll independently. Mobile uses a single conversation page with inline task previews and a full-screen task dialog. Completion controls remain accessible in the task view; the mobile preview action is visible in the comparison viewport.
-- **Colors and tokens:** white base, neutral grey surfaces and selection, graphite actions and charcoal text. Amber marks missing information; small green indicators mark confirmed success and connection status. Web tokens live in `src/client/style.css`; the extension's existing shared palette remains unchanged.
-- **Image quality and assets:** the target contains no photographic or decorative raster assets. Standard Lucide icons match its line icon treatment; monograms represent the current user or saved conversation, not invented people. Real cached attachments, reply quotes, browser provenance and image-reading uncertainty remain available. No screenshot is used as the implementation.
-- **Copy and content:** app-owned copy reflects real capabilities. Add missing information opens a personal note; it does not claim to clear the blocker. Completion criteria are plain criteria, rather than invented subtask completion state. Incoming labels identify the saved conversation because the message contract has no sender-name field. Merge tasks names the actual merge operation; Download handoff names its download result. All tasks, activity and connection setup remain available as functional destinations.
+Conversations, Activity and Settings remain reachable from the sidebar. The task menu retains manual analysis, export, import and the combined open/completed view. Existing task aliases, merged-task links, conversation links, search and browser history continue to work. Readiness filters are validated against the task schema and persisted as `state=…` in the URL.
+
+## Fidelity review
+
+- **Geometry:** at 1440 × 1000, measured navigation, queue and document widths are exactly 210px, 350px and 880px, matching the selected prototype. The four-region conversation-first default is replaced by these three regions. On phones the queue and document each occupy the available width.
+- **Typography:** system sans throughout. Desktop task headings are 29px, phone headings 27px, queue titles 16px and secondary task text 14px. The readable-workspace check verifies at least 4.5:1 contrast for primary queue text. Full source text and long tokens remain readable and wrap within their scroll surface.
+- **Colour:** white surfaces, neutral greys and graphite actions; amber identifies missing information and green indicates confirmed completion or connection status. The selected palette is retained across settings and dialogs. The extension keeps its existing visual design.
+- **Spacing and hierarchy:** the task reference and readiness precede the title; background and blocker precede next steps and criteria. The completion control stays in the document footer. Source and note disclosures use simple dividers. Sidebar and queue scroll independently.
+- **Assets:** standard Lucide icons. Cached source images, reply quotes, browser provenance and image-reading uncertainty remain available. No decorative raster assets were required.
+- **Intentional product details:** More task actions and the search shortcut retain existing capabilities. Notes & handoff names the full existing disclosure rather than the prototype's shorter Add a note label. The sidebar retains destinations for conversation browsing, activity and settings. A fresh phone queue has no selected-task highlight until a task is opened; a direct TODO link opens its document.
+
+No actionable P0/P1/P2 visual findings remain in the reviewed primary flow. Different sample text changes wrapping and vertical positions without changing the layout geometry.
 
 ## Exact field mappings
 
-- Conversation identity: `Chat.sessionId/chatId` matched against `Message.sessionId/chatId`; display label is `Chat.name`.
-- Message text and timing: `Message.body`, `Message.direction`, `Message.timestamp`. Incoming text is labelled From plus the saved conversation name, not asserted to be an identified individual.
-- Linked evidence: `Task.source_ids` matched against `Message.id`. A task merged across conversations opens the full task evidence view, so a conversation filter cannot hide some of its sources.
-- Task state: `Task.triage_state`, `Task.blocking_question`, `Task.action_steps`, `Task.done_when`; manual completion is `Task.done`; personal note is `Task.own_remark`.
-- Open count per conversation: unique incomplete tasks whose sources include a message in that conversation. A task with evidence in two conversations can appear in both contexts.
-- Activity receipt timestamp: `Snapshot.status.last_webhook`; completed-analysis timestamp: `Snapshot.status.last_extract`. Server availability is the successful `/api/state` read, not evidence that a new message or task analysis has occurred.
+| Display | Source |
+| --- | --- |
+| Task reference | `Task.reference`; legacy ID and merged references resolve through existing matching rules |
+| Readiness | `Task.triage_state`; Reported done remains separate from manual completion |
+| Completed state | `Task.done`; Undo writes the previous boolean through `/api/tick` |
+| Missing-information question | `Task.blocking_question` |
+| Background, next steps, complete when | `Task.note`, `Task.action_steps`, `Task.done_when` |
+| Personal note | `Task.own_remark`; saving it does not change readiness |
+| Original-message count | `Task.source_ids.length` |
+| Rendered original messages | `Task.source_ids` matched to `Message.id`; a missing cached source is not fabricated |
+| Conversation label/filter | Source `Message.sessionId/chatId` matched to `Chat.sessionId/chatId`; `Chat.name` is the label |
+| Multiple-conversation label | Number of distinct session/chat pairs among the task's source messages |
+| Original text, direction, time | `Message.body`, `Message.direction`, `Message.timestamp`; incoming labels name the conversation, not an inferred sender |
+| Queue and filter counts | The same task-query function applies conversation scope, search, readiness and completion filters |
+| Queue ordering | Open tasks before completed tasks in the combined view, then `Task.priority === 'high'`, then descending `Task.updated` |
+| Activity receipt and analysis times | `Snapshot.status.last_webhook` and `Snapshot.status.last_extract`, respectively |
+| Workspace server availability | A successful `/api/state` response; it does not assert that a message or analysis just occurred |
 
 ## Verification and limits
 
-- `npm test`: 36 backend/domain/integration tests passed. Backend source is unchanged.
-- `npm run build`: TypeScript, web build, packaged extension and bundled server passed.
-- `npm run test:extension`: eight critical browser journeys passed, covering completion latency and rollback, notes, task links, history, narrow wrapping, model dialogs, extension pairing/capture/revocation, conversation discovery, merging and old-reference redirects, cross-conversation evidence, delayed settings, mobile focus return, and recovery from a failed settings load.
-- The local compiled implementation was opened and operated in the in-app browser. Desktop and mobile renders were inspected, and the reference and implementation were compared together.
-- Palette follow-up: the web production build and existing readable-workspace browser journey passed again. Updated desktop and mobile captures were inspected alongside the settings page. Measured text contrast in the selected conversation and task surfaces ranges from 5.02:1 for message timestamps to 15.52:1 for task headings; primary actions measure 14.16:1. Earlier interaction evidence remains applicable to unchanged behaviour.
-- Existing extension interactions passed; the extension's visual design was not reworked in this change.
-- Production task mutations, model calls and deployment were not used as QA evidence. The preview uses an independent sample database.
-- Build warnings about the existing dependency annotations and bundle-size threshold remain informational; no warning threshold was changed.
-
-## Follow-up polish
-
-- P3: mobile preview step numbers use the ordinary ordered-list treatment; the full task pane uses the reference's circular numbering.
-- P3: system font metrics and locale-specific date ordering vary by platform. Source message length can change bubble height and scrolling.
+- Production build passed, including TypeScript, web assets, the packaged extension and bundled server. Subsequent presentation and URL-validation edits passed TypeScript/web checks.
+- All eight existing browser journeys are covered by passing local results. The final targeted rerun passed the desktop/phone completion and undo journey and packaged-extension journey after correcting return focus and keeping the extension's original button label in its test. The six other journeys passed and their unchanged evidence was reused.
+- Browser coverage includes TODO links and history, persisted readiness selection, copy links, notes, completion latency and rollback, desktop/phone Undo, focus after a queue row is recreated, 320px long names and note controls, model dialogs, extension pairing/capture/revocation, conversation discovery, manual merging and old-reference redirects, cross-conversation evidence, delayed settings, and settings-load recovery.
+- The compiled implementation was inspected in the in-app browser at 1440 × 1000 and 390 × 844, and compared against the chosen prototype in the same combined inputs. Tablet conversation layout also accommodates the wider application sidebar.
+- Backend source, contracts, dependencies and deployment configuration are unchanged. Production task writes, model calls and deployment were not used for QA. The local preview remains on a separate sample database.
+- Existing dependency-annotation and bundle-size build warnings remain informational; their thresholds were not changed.
 
 ## Implementation checklist
 
-- [x] Resolve the selected concept and inspect its real image.
-- [x] Compare full desktop and mobile views in the same input.
-- [x] Compare readable task-detail and mobile regions.
-- [x] Repair material proportions, typography and mobile action placement.
-- [x] Preserve task persistence, evidence, manual completion and merge semantics.
-- [x] Verify the critical flows and known mobile regressions.
+- [x] Promote the selected task-first information architecture into the application.
+- [x] Use real task, source, conversation and completion contracts.
+- [x] Keep queue, counts and desktop selection on the same filtering logic.
+- [x] Preserve notes, handoff, merging, aliases, source attachments and secondary destinations.
+- [x] Persist readiness, conversation, search and evidence navigation in links.
+- [x] Verify completion/undo persistence, rollback and mobile focus return.
+- [x] Compare desktop, phone queue and phone document against the selected prototype.

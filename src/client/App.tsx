@@ -4,11 +4,10 @@ import {
   Activity,
   ArrowLeft,
   CheckCircle2,
-  Inbox,
   Link2,
   Menu as MenuIcon,
   MessageCircle,
-  Search,
+  SquareCheck,
   Settings2,
   TriangleAlert,
   X,
@@ -31,6 +30,8 @@ import { ActivityView } from './Activity.js';
 import { SettingsPanel } from './Settings.js';
 import { TaskDetail } from './TaskDetail.js';
 import { TaskQueue } from './TaskQueue.js';
+import { TaskFilters } from './TaskFilters.js';
+import { matchesTaskFilter, taskFilterLabel, tasksForDesk } from './taskDesk.js';
 import { useWorkspaceLocation, type WorkspaceView } from './taskLocation.js';
 
 const empty: Snapshot = {
@@ -51,6 +52,9 @@ function useNarrowLayout() {
   }, []);
   return narrow;
 }
+type Notice =
+  | { kind: 'message'; text: string }
+  | { kind: 'completion'; text: string; taskId: Task['id']; previousDone: boolean; done: boolean };
 export function App() {
   useInputModality();
   const narrow = useNarrowLayout();
@@ -60,12 +64,16 @@ export function App() {
   const [configError, setConfigError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [online, setOnline] = useState(true);
-  const [notice, setNotice] = useState('');
+  const [notice, setNoticeState] = useState<Notice | null>(null);
+  const notify = useCallback((text: string) => setNoticeState({ kind: 'message', text }), []);
   const [mobileMenu, setMobileMenu] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const file = useRef<HTMLInputElement>(null);
   const focusSearch = useRef(false);
-  const taskReturnFocus = useRef<HTMLElement | null>(null);
+  const taskReturnFocus = useRef<{
+    element: HTMLElement | null;
+    reference: Task['reference'];
+  } | null>(null);
   const initialized = useRef<string | null>(null);
   const restoredSelection = useRef<string | null>(null);
   const refreshGate = useRef(new RefreshGate());
@@ -105,7 +113,7 @@ export function App() {
   }, [refresh, refreshConfig]);
   useEffect(() => {
     if (!notice) return;
-    const timer = setTimeout(() => setNotice(''), 7000);
+    const timer = setTimeout(() => setNoticeState(null), 7000);
     return () => clearTimeout(timer);
   }, [notice]);
   const chats = config?.settings.chats ?? [];
@@ -113,11 +121,11 @@ export function App() {
   const selectedTask = data.tasks.find((task) => matchesTaskIdentifier(task, location.task));
   useEffect(() => {
     if (!loaded || !config || narrow) return;
-    const key = `${location.view}:${location.chat ?? ''}`;
-    if (initialized.current === key) return;
-    initialized.current = key;
     if (location.task) return;
     if (location.view === 'conversations') {
+      const key = `${location.view}:${location.chat ?? ''}`;
+      if (initialized.current === key) return;
+      initialized.current = key;
       const current = chat ?? chats[0];
       if (!current) return;
       const related = tasksForMessages(data.tasks, messagesForChat(current, data.messages));
@@ -130,17 +138,9 @@ export function App() {
         .at(0);
       updateLocation({ chat: current.id, task: next?.reference ?? null }, { replace: true });
     } else if (location.view === 'tasks') {
-      const next = data.tasks
-        .filter(
-          (task) =>
-            (location.filter === 'all' || task.done === (location.filter === 'done')) &&
-            matchesTaskQuery(task, location.query),
-        )
-        .sort(
-          (a, b) =>
-            Number(b.priority === 'high') - Number(a.priority === 'high') || b.updated - a.updated,
-        )
-        .at(0);
+      const next = tasksForDesk({ tasks: data.tasks, messages: data.messages, chats, location }).at(
+        0,
+      );
       if (next) updateLocation({ task: next.reference }, { replace: true });
     }
   }, [
@@ -166,7 +166,7 @@ export function App() {
       !loaded ||
       !selectedTask ||
       restoredSelection.current === location.task ||
-      (location.view === 'conversations' && !config)
+      ((location.view === 'conversations' || location.chat) && !config)
     )
       return;
     restoredSelection.current = location.task;
@@ -178,10 +178,15 @@ export function App() {
     updateLocation(
       {
         task: selectedTask.reference,
-        ...(location.view === 'tasks' && location.filter !== 'all'
+        ...(location.view === 'tasks' && !matchesTaskFilter(selectedTask, location.filter)
           ? { filter: selectedTask.done ? 'done' : 'open' }
           : {}),
         ...(location.view === 'conversations' && !chat ? { chat: linkedChat?.id ?? null } : {}),
+        ...(location.view === 'tasks' &&
+        chat &&
+        !tasksForMessages([selectedTask], messagesForChat(chat, data.messages)).length
+          ? { chat: null }
+          : {}),
         ...(!matchesTaskQuery(selectedTask, location.query) ? { query: '' } : {}),
       },
       { replace: true },
@@ -211,14 +216,6 @@ export function App() {
       filter: 'open',
     });
   };
-  const openSearch = () => {
-    focusSearch.current = true;
-    navigate('tasks');
-    if (location.view === 'tasks') {
-      search.current?.focus();
-      focusSearch.current = false;
-    }
-  };
   useEffect(() => {
     if (location.view === 'tasks' && focusSearch.current) {
       search.current?.focus();
@@ -230,7 +227,15 @@ export function App() {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
         focusSearch.current = true;
-        updateLocation({ view: 'tasks', task: null });
+        updateLocation({
+          view: 'tasks',
+          task: null,
+          chat: null,
+          filter: 'open',
+          query: '',
+          tab: 'overview',
+          expanded: false,
+        });
         search.current?.focus();
       }
     };
@@ -243,16 +248,15 @@ export function App() {
       : location.view === 'conversations'
         ? 'Conversations'
         : location.view === 'tasks'
-          ? 'All tasks'
+          ? taskFilterLabel[location.filter]
           : location.view === 'settings'
             ? 'Settings'
             : 'Activity';
   useEffect(() => {
     document.title = `Chat2Tasks — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
   }, [viewTitle, chat, location.view]);
-  async function tick(task: Task) {
-    if (pendingTicks.current.has(task.id)) return;
-    const done = !task.done;
+  async function tick(task: Task, done = !task.done) {
+    if (pendingTicks.current.has(task.id) || task.done === done) return;
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
     refreshGate.current.invalidate();
@@ -265,7 +269,13 @@ export function App() {
       refreshGate.current.invalidate();
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
-      setNotice(done ? 'Task completed' : 'Task reopened');
+      setNoticeState({
+        kind: 'completion',
+        text: done ? 'Task completed' : 'Task reopened',
+        taskId: task.id,
+        previousDone: task.done,
+        done,
+      });
     } catch (error) {
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
@@ -277,23 +287,25 @@ export function App() {
         ),
       }));
       void refresh();
-      setNotice(errorMessage(error));
+      notify(errorMessage(error));
     }
   }
   async function sync() {
     try {
       await api('sync', OkSchema, {});
-      setNotice(
+      notify(
         data.demo ? 'Sample workspace · live analysis is disabled' : 'Task analysis requested',
       );
       await refresh();
     } catch (error) {
-      setNotice(errorMessage(error));
+      notify(errorMessage(error));
     }
   }
   const openTask = (task: Task, expanded = true) => {
-    taskReturnFocus.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    taskReturnFocus.current = {
+      element: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      reference: task.reference,
+    };
     updateLocation({ task: task.reference, tab: 'overview', expanded });
   };
   const closeTask = () =>
@@ -328,6 +340,7 @@ export function App() {
   const detail = selectedTask ? (
     <TaskDetail
       key={selectedTask.id}
+      layout={location.view === 'tasks' ? 'desk' : 'context'}
       task={selectedTask}
       tasks={data.tasks}
       messages={data.messages}
@@ -351,16 +364,18 @@ export function App() {
       ticking={pendingTickIds.has(selectedTask.id)}
       onSaved={() => void refresh()}
       onMerged={onMerged}
-      notify={setNotice}
+      notify={notify}
     />
   ) : (
     <div className="inspector-empty">
       <Link2 size={27} />
-      <h2>{loaded && location.task ? 'Task not found' : 'A next step, with context.'}</h2>
+      <h2>{!loaded ? 'Loading tasks…' : location.task ? 'Task not found' : 'Choose a task'}</h2>
       <p>
-        {loaded && location.task
-          ? 'This task link is no longer available. Choose another task.'
-          : 'Choose a linked task to see its next steps and completion criteria.'}
+        {!loaded
+          ? 'Your saved work will appear here.'
+          : location.task
+            ? 'This task link is no longer available. Choose another task.'
+            : 'Its next steps, completion criteria and original messages will appear here.'}
       </p>
     </div>
   );
@@ -389,51 +404,51 @@ export function App() {
     </div>
   );
   const inspector = !narrow ? (
-    <aside className="inspector" aria-label="Task details">
-      {inspectorHeading}
+    <aside
+      className={`inspector ${location.view === 'tasks' ? 'desk-inspector' : ''}`}
+      aria-label="Task details"
+    >
+      {location.view !== 'tasks' && inspectorHeading}
       {detail}
     </aside>
   ) : null;
   const navigation = (
     <>
-      <button className="brand" onClick={() => navigate('conversations')}>
-        chat2tasks
+      <button className="brand" onClick={() => navigate('tasks')}>
+        <SquareCheck size={20} /> <span>chat2tasks</span>
       </button>
-      <nav aria-label="Workspace">
+      <TaskFilters
+        tasks={data.tasks}
+        loaded={loaded}
+        messages={data.messages}
+        chats={chats}
+        location={location}
+        onLocation={(patch) => {
+          setMobileMenu(false);
+          updateLocation(patch);
+        }}
+      />
+      <div className="sidebar-bottom">
         <button
           className={`nav-item ${location.view === 'conversations' ? 'active' : ''}`}
           aria-current={location.view === 'conversations' ? 'page' : undefined}
           onClick={() => navigate('conversations')}
         >
-          <MessageCircle size={22} />
+          <MessageCircle size={16} />
           <span>Conversations</span>
         </button>
-        <button
-          className={`nav-item ${location.view === 'tasks' ? 'active' : ''}`}
-          aria-current={location.view === 'tasks' ? 'page' : undefined}
-          onClick={() => navigate('tasks')}
-        >
-          <Inbox size={22} />
-          <span>All tasks</span>
-        </button>
-        <button className="nav-item" onClick={openSearch}>
-          <Search size={22} />
-          <span>Search</span>
-        </button>
-      </nav>
-      <div className="sidebar-bottom">
         <button
           className={`nav-item ${location.view === 'activity' ? 'active' : ''}`}
           onClick={() => navigate('activity')}
         >
-          <Activity size={21} />
+          <Activity size={16} />
           <span>Activity</span>
         </button>
         <button
           className={`nav-item ${location.view === 'settings' || location.view === 'connections' ? 'active' : ''}`}
           onClick={() => navigate('settings')}
         >
-          <Settings2 size={21} />
+          <Settings2 size={16} />
           <span>Settings</span>
         </button>
         <span
@@ -446,8 +461,11 @@ export function App() {
           }
         >
           <span className="owner-avatar">Y</span>
-          <span className="sr-only">
-            {!online ? 'Server unavailable' : data.demo ? 'Sample workspace' : 'Server available'}
+          <span className="presence-copy">
+            Your workspace
+            <small>
+              {!online ? 'Server unavailable' : data.demo ? 'Sample data' : 'Server available'}
+            </small>
           </span>
         </span>
       </div>
@@ -457,6 +475,34 @@ export function App() {
     <Dialog.Trigger className="icon-btn mobile-toggle" aria-label="Open navigation">
       <MenuIcon size={21} />
     </Dialog.Trigger>
+  );
+  const taskDialogOpen =
+    narrow && !!location.task && (location.view === 'tasks' || location.expanded);
+  const undo = notice?.kind === 'completion' ? notice : null;
+  const undoTask = undo ? data.tasks.find((task) => task.id === undo.taskId) : undefined;
+  const notification = notice && (
+    <div className="toast" role="status">
+      <CheckCircle2 size={17} />
+      <span>{notice.text}</span>
+      {undo && (
+        <button
+          className="toast-undo"
+          disabled={!undoTask || undoTask.done !== undo.done || pendingTickIds.has(undo.taskId)}
+          onClick={() => {
+            if (undoTask) void tick(undoTask, undo.previousDone);
+          }}
+        >
+          Undo
+        </button>
+      )}
+      <button
+        className="icon-btn"
+        aria-label="Dismiss notification"
+        onClick={() => setNoticeState(null)}
+      >
+        <X size={15} />
+      </button>
+    </div>
   );
   const questions = data.questions
     .filter((question) => {
@@ -478,7 +524,7 @@ export function App() {
                 await api('resolve', OkSchema, { id: question.id, task_id: event.target.value });
                 await refresh();
               } catch (error) {
-                setNotice(errorMessage(error));
+                notify(errorMessage(error));
               }
             }}
           >
@@ -513,7 +559,7 @@ export function App() {
                 await api('resolve', OkSchema, { id: question.id, task_id: null });
                 await refresh();
               } catch (error) {
-                setNotice(errorMessage(error));
+                notify(errorMessage(error));
               }
             }}
           >
@@ -528,7 +574,7 @@ export function App() {
         <div className="app">
           <aside className="sidebar">{navigation}</aside>
           <main className="workspace">
-            {location.view !== 'conversations' && (
+            {location.view !== 'conversations' && location.view !== 'tasks' && (
               <header className="topbar">
                 {navigationTrigger}
                 <span>{viewTitle}</span>
@@ -601,21 +647,21 @@ export function App() {
             ) : location.view === 'tasks' ? (
               <TaskQueue
                 tasks={data.tasks}
+                loading={!loaded}
                 messages={data.messages}
                 chats={chats}
                 location={location}
                 selectedTask={selectedTask}
-                pending={pendingTickIds}
                 syncing={data.status.syncing}
                 search={search}
                 onLocation={updateLocation}
                 onSelectTask={openTask}
-                onTick={(task) => void tick(task)}
                 onSync={() => void sync()}
                 onExport={() => download('chat2tasks-export.json', JSON.stringify(data, null, 2))}
                 onImport={() => file.current?.click()}
                 inspector={inspector}
                 questions={questions}
+                navigationTrigger={navigationTrigger}
               />
             ) : location.view === 'activity' ? (
               <ActivityView data={data} online={online} onSync={() => void sync()} />
@@ -644,7 +690,7 @@ export function App() {
                       setConfig(next);
                       void refresh();
                     }}
-                    notify={setNotice}
+                    notify={notify}
                   />
                 ) : (
                   <p className="empty-copy">Loading settings…</p>
@@ -663,27 +709,15 @@ export function App() {
                 try {
                   await api('import', OkSchema, JSON.parse(await imported.text()));
                   await refresh();
-                  setNotice('Task ticks imported');
+                  notify('Task ticks imported');
                 } catch (error) {
-                  setNotice(errorMessage(error));
+                  notify(errorMessage(error));
                 } finally {
                   input.value = '';
                 }
               }}
             />
-            {notice && (
-              <div className="toast" role="status">
-                <CheckCircle2 size={17} />
-                <span>{notice}</span>
-                <button
-                  className="icon-btn"
-                  aria-label="Dismiss notification"
-                  onClick={() => setNotice('')}
-                >
-                  <X size={15} />
-                </button>
-              </div>
-            )}
+            {!taskDialogOpen && notification}
           </main>
           <Dialog.Portal>
             <Dialog.Backdrop className="modal-backdrop navigation-backdrop" />
@@ -700,7 +734,7 @@ export function App() {
         </div>
       </Dialog.Root>
       <Dialog.Root
-        open={narrow && !!location.task && (location.view === 'tasks' || location.expanded)}
+        open={taskDialogOpen}
         onOpenChange={(open) => {
           if (!open) closeTask();
         }}
@@ -710,13 +744,21 @@ export function App() {
           <Dialog.Viewport className="task-dialog-viewport">
             <Dialog.Popup
               className="task-dialog inspector"
-              finalFocus={() =>
-                taskReturnFocus.current?.isConnected
-                  ? taskReturnFocus.current
-                  : document.querySelector<HTMLElement>(
-                      '.task-search input, .thread-back, .conversation-rail-heading button',
+              finalFocus={() => {
+                if (taskReturnFocus.current?.element?.isConnected)
+                  return taskReturnFocus.current.element;
+                const row = taskReturnFocus.current
+                  ? document.querySelector<HTMLElement>(
+                      `[data-task-reference="${CSS.escape(taskReturnFocus.current.reference)}"]`,
                     )
-              }
+                  : null;
+                return (
+                  row ??
+                  document.querySelector<HTMLElement>(
+                    '.task-search input, .thread-back, .conversation-rail-heading button',
+                  )
+                );
+              }}
             >
               <Dialog.Title className="sr-only">Task details</Dialog.Title>
               <Dialog.Description className="sr-only">
@@ -725,11 +767,12 @@ export function App() {
               <div className="inspector-heading">
                 <Dialog.Close className="text-button" aria-label="Close task details">
                   <ArrowLeft size={18} />
-                  {location.view === 'conversations' ? 'Conversation' : 'All tasks'}
+                  {location.view === 'conversations' ? 'Conversation' : 'Back to work'}
                 </Dialog.Close>
                 <span>{selectedTask?.reference ?? 'Task details'}</span>
               </div>
               {detail}
+              {taskDialogOpen && notification}
             </Dialog.Popup>
           </Dialog.Viewport>
         </Dialog.Portal>

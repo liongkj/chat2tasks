@@ -4,7 +4,7 @@ export const stateLabel = {
   ready: 'Ready',
   waiting: 'Waiting',
   needs_info: 'Needs information',
-  reported_done: 'To verify',
+  reported_done: 'Reported done',
 } satisfies Record<Task['triage_state'], string>;
 
 export function messagesForChat(chat: Chat, messages: Message[]) {

@@ -10,18 +10,20 @@ export function MessageCard({
   allMessages,
   highlighted = false,
   continuation = false,
+  compact = false,
 }: {
   message: Message;
   name: string;
   allMessages: Message[];
   highlighted?: boolean;
   continuation?: boolean;
+  compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const author = message.direction === 'outgoing' ? 'You' : `From ${name}`;
   return (
     <article
-      className={`message-card ${message.direction} ${highlighted ? 'linked-evidence' : ''} ${continuation ? 'continuation' : ''}`}
+      className={`message-card ${message.direction} ${highlighted ? 'linked-evidence' : ''} ${continuation ? 'continuation' : ''} ${compact ? 'compact' : ''}`}
       id={`message-${message.id}`}
       data-message-id={message.id}
     >
@@ -31,6 +33,15 @@ export function MessageCard({
             {message.direction === 'outgoing' ? 'Y' : name.slice(0, 1)}
           </span>
           <strong>{author}</strong>
+          {compact && (
+            <time
+              dateTime={
+                message.timestamp ? new Date(message.timestamp * 1000).toISOString() : undefined
+              }
+            >
+              {message.timestamp ? time(message.timestamp) : 'Time unavailable'}
+            </time>
+          )}
           {highlighted && (
             <span className="evidence-indicator">
               <Link2 size={12} /> Task evidence
@@ -78,14 +89,16 @@ export function MessageCard({
               />
             </a>
           ))}
-        <time
-          dateTime={
-            message.timestamp ? new Date(message.timestamp * 1000).toISOString() : undefined
-          }
-          title={time(message.timestamp)}
-        >
-          {message.timestamp ? clockTime(message.timestamp) : 'Time unavailable'}
-        </time>
+        {!compact && (
+          <time
+            dateTime={
+              message.timestamp ? new Date(message.timestamp * 1000).toISOString() : undefined
+            }
+            title={time(message.timestamp)}
+          >
+            {message.timestamp ? clockTime(message.timestamp) : 'Time unavailable'}
+          </time>
+        )}
       </div>
       {message.image_reading && (
         <details className="image-reading">

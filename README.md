@@ -1,10 +1,10 @@
 # Chat2Tasks
 
-A little less to keep in mind. Turn selected WhatsApp conversations into clear, traceable tasks, with your choice of AI model.
+Turn selected WhatsApp conversations into traceable tasks, with your choice of AI model.
 
-Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and SQLite. The workspace starts with your followed conversations. Saved messages and their linked tasks stay side by side, with blockers, next steps, and completion criteria visible in the task panel. All tasks, activity, and connection settings remain one step away.
+Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and SQLite. Task desk opens a priority-sorted queue across your conversations. Filter by readiness or conversation, select a task, and review its blocker, next steps and completion criteria. Original messages expand inside the task document. Conversations, activity and settings remain available from the sidebar.
 
-![Conversation-led workspace with illustrative sample data](docs/qa/context-first/desktop.jpg)
+![Task desk with illustrative sample data](docs/qa/task-desk/desktop.jpg)
 
 ## Start with Docker
 
@@ -21,11 +21,15 @@ OpenWA is a separate prerequisite. Point Chat2Tasks at an existing compatible Op
 
 The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGIN=http://127.0.0.1:YOUR_PORT`.
 
-## Conversations and tasks
+## Tasks and conversations
 
-Choose a followed chat to read its cached messages. Selecting a linked task highlights the messages used as evidence. On mobile, each linked task appears beside its source; choose **View task** to open its full details, then return to the same conversation. Incoming message labels identify the saved conversation, since OpenWA sender identities are not part of this workspace contract.
+The sidebar filters **All open work**, **Needs information**, **Ready**, **Waiting**, **Reported done** and **Completed**. Conversation filters narrow that view to tasks linked to a saved chat. Search by title, text or TODO reference; **⌘/Ctrl K** moves to workspace search. **More task actions → Show all tasks** includes open and completed tasks together.
 
-**All tasks** provides workspace search, conversation filters, and Open / Completed / All views. A task’s completion criteria are always shown before its completion control. **Add missing information** opens the task’s personal note; saving a note does not change the source messages or automatically change its readiness state.
+Select a task to read its document. Expand its original messages to inspect text, quotes and cached attachments. **Notes & handoff** holds personal notes, link copying, handoff downloads and manual merging. Saving a note does not change source messages or automatically change readiness. **Mark complete** and **Reopen task** save your manual decision; the confirmation's **Undo** restores the previous completion state. Completion criteria are plain requirements, rather than separately ticked subtasks.
+
+On a phone, the queue comes first. Selecting a task opens a full-screen document; **Back to work** returns to the queue and restores focus. Readiness and conversation filters are in the navigation drawer.
+
+Choose **Conversations** to read a followed chat's cached messages and linked task annotations. Selecting a linked task highlights its evidence. On mobile, **View task** opens its details and returns to the same conversation. Incoming message labels identify the saved conversation, since OpenWA sender identities are not part of this workspace contract. In this conversation view, **Add missing information** opens the same personal note.
 
 **Activity** separates the most recent signed message event from the last completed task analysis. These are different from the browser’s connection to the workspace server.
 
@@ -33,7 +37,7 @@ Choose a followed chat to read its cached messages. Selecting a linked task high
 
 Each task has a permanent reference such as **TODO-001**, shown as a tag in the task list and details. References remain the same when tasks are edited, completed, or reordered. Existing workspaces receive references automatically without changing their tasks or completion records. Search by reference in the workspace, Chrome companion, or MCP tools.
 
-Selecting a task updates the address with `task=TODO-001`. The selected view and conversation are also kept in the address. Refreshing, sharing the address, or using browser Back/Forward restores the selection. **Copy link** in task details copies the current task link. Conversation links also preserve `context=conversation`, and links using older internal task IDs still work. A link to a completed task opens it in the completed list; an unknown reference shows **Task not found**.
+Selecting a task updates the address with `task=TODO-001`. The view, conversation filter, search and readiness filter are also kept in the address; for example, `state=needs_info` restores the blocked-task view. Refreshing, sharing the address, or using browser Back/Forward restores that context. **Notes & handoff → Copy link** copies the current task link. `context=conversation` expands the original messages in Task desk, and older internal task IDs still work. A link to a completed task opens it in the completed list; an unknown reference shows **Task not found**.
 
 If task analysis grouped an issue incorrectly, open **Notes & handoff → Merge tasks…**, choose the correct existing TODO, and confirm the merge. Save any draft note first. Source messages move to the destination; its description, personal note and completion tick stay unchanged. The original personal note remains under **Merged tasks**, and the retired TODO's reference and internal-ID links open the destination. Pending completion questions follow the destination too. Repeated merge requests are safe, and changed tasks reject a stale merge.
 
