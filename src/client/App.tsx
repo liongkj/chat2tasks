@@ -37,10 +37,13 @@ import {
   type Task,
   type Message,
   type PublicSettings,
+  type TaskEvidence,
 } from '../shared/schema.js';
 import { api, download, OkSchema, time } from './api.js';
 import { SettingsPanel } from './Settings.js';
 import { taskUrl, useTaskLocation, type TaskTab } from './taskLocation.js';
+import { TaskMerge } from './TaskMerge.js';
+import { matchesTaskIdentifier, matchesTaskQuery } from '../shared/tasks.js';
 
 type View = 'tasks' | 'chats' | 'models' | 'activity';
 const empty: Snapshot = {
@@ -153,11 +156,7 @@ export function App() {
   );
   const visible = scoped
     .filter(
-      (t) =>
-        (filter === 'all' || t.done === (filter === 'done')) &&
-        `${t.reference} ${t.title} ${t.scope} ${t.note}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
+      (t) => (filter === 'all' || t.done === (filter === 'done')) && matchesTaskQuery(t, query),
     )
     .sort(
       (a, b) =>
@@ -165,9 +164,7 @@ export function App() {
         Number(b.priority === 'high') - Number(a.priority === 'high') ||
         b.updated - a.updated,
     );
-  const selectedTask = data.tasks.find(
-    (t) => t.id === selected || t.reference === selected?.toUpperCase(),
-  );
+  const selectedTask = data.tasks.find((t) => matchesTaskIdentifier(t, selected));
   useEffect(() => {
     if (initialSelection.current || !loaded || !visible.length) return;
     initialSelection.current = true;
@@ -185,12 +182,7 @@ export function App() {
     if (filter !== 'all' && selectedTask.done !== (filter === 'done'))
       setFilter(selectedTask.done ? 'done' : 'open');
     if (!scoped.some((task) => task.id === selectedTask.id)) setChat(null);
-    if (
-      !`${selectedTask.reference} ${selectedTask.title} ${selectedTask.scope} ${selectedTask.note}`
-        .toLowerCase()
-        .includes(query.toLowerCase())
-    )
-      setQuery('');
+    if (!matchesTaskQuery(selectedTask, query)) setQuery('');
     if (selected !== selectedTask.reference)
       selectTask(selectedTask.reference, { tab: taskLocation.tab, replace: true });
   }, [selected, selectedTask, loaded, filter, scoped, query, taskLocation.tab, selectTask]);
@@ -686,6 +678,32 @@ export function App() {
                   <TaskDetail
                     key={selectedTask.id}
                     task={selectedTask}
+                    tasks={data.tasks}
+                    onMerged={(evidence) => {
+                      refreshGate.current.invalidate();
+                      setData((current) => ({
+                        ...current,
+                        tasks: [
+                          ...current.tasks.filter(
+                            (task) => task.id !== selectedTask.id && task.id !== evidence.task.id,
+                          ),
+                          {
+                            ...evidence.task,
+                            done: pendingTicks.current.get(evidence.task.id) ?? evidence.task.done,
+                          },
+                        ],
+                        messages: [
+                          ...new Map(
+                            [...current.messages, ...evidence.messages].map((message) => [
+                              message.id,
+                              message,
+                            ]),
+                          ).values(),
+                        ].sort((a, b) => a.timestamp - b.timestamp),
+                      }));
+                      selectTask(evidence.task.reference, { replace: true });
+                      void refresh();
+                    }}
                     tab={taskLocation.tab}
                     onTabChange={(tab) => selectTask(selectedTask.reference, { tab })}
                     messages={data.messages}
@@ -763,6 +781,12 @@ export function App() {
 }
 
 function conversationName(task: Task, messages: Message[], config: PublicSettings | null) {
+  const conversations = new Set(
+    messages
+      .filter((message) => task.source_ids.includes(message.id))
+      .map((message) => `${message.sessionId}\0${message.chatId}`),
+  );
+  if (conversations.size > 1) return `${conversations.size} conversations`;
   const source = messages.find((message) => task.source_ids.includes(message.id));
   return (
     config?.settings.chats.find(
@@ -774,6 +798,8 @@ function conversationName(task: Task, messages: Message[], config: PublicSetting
 
 function TaskDetail({
   task,
+  tasks,
+  onMerged,
   tab,
   onTabChange,
   messages,
@@ -784,6 +810,8 @@ function TaskDetail({
   notify,
 }: {
   task: Task;
+  tasks: Task[];
+  onMerged: (evidence: TaskEvidence) => void;
   tab: TaskTab;
   onTabChange: (tab: TaskTab) => void;
   messages: Message[];
@@ -952,6 +980,26 @@ function TaskDetail({
                   <Copy size={15} />
                 </button>
               </div>
+              <TaskMerge
+                task={task}
+                tasks={tasks}
+                dirty={saving || ticking || remark !== task.own_remark}
+                onMerged={onMerged}
+                notify={notify}
+              />
+              {task.merged_from.length > 0 && (
+                <section className="merge-history">
+                  <h3>Merged TODOs</h3>
+                  {task.merged_from.map((source) => (
+                    <div key={source.id}>
+                      <p>
+                        <strong>{source.reference}</strong> · {source.title}
+                      </p>
+                      {source.own_remark && <blockquote>{source.own_remark}</blockquote>}
+                    </div>
+                  ))}
+                </section>
+              )}
               <p className="updated-note">Updated {time(task.updated)}</p>
             </details>
           </>

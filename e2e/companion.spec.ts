@@ -633,3 +633,69 @@ test('add conversation dialog selects a discovered chat from the chosen session'
     await browser.close();
   }
 });
+
+test('Link issue moves evidence into an existing TODO and preserves notes, completion and old links', async () => {
+  const before = SnapshotSchema.parse(await (await owner('state')).json());
+  const [source, target] = before.tasks.filter((task) => !task.done);
+  if (!source || !target) throw Error('The sample needs two open TODOs');
+  const sourceNote = 'Keep this source note in merge history';
+  const targetNote = 'Keep the destination note unchanged';
+  await owner('remark', { id: target.id, remark: targetNote });
+  await owner('tick', { id: target.id, done: true });
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1080, height: 1058 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '?task=' + source.reference);
+    await page
+      .locator('summary')
+      .filter({ hasText: /^Notes & details$/ })
+      .click();
+    await page.getByLabel('Your note', { exact: true }).fill(sourceNote);
+    await page.getByRole('button', { name: 'Link issue', exact: true }).click();
+    await page.getByLabel('Destination TODO', { exact: true }).selectOption(target.id);
+    const merge = page.getByRole('button', { name: 'Merge into ' + target.reference, exact: true });
+    await expect(merge).toBeDisabled();
+    await page.getByRole('button', { name: 'Save note', exact: true }).click();
+    await expect(merge).toBeEnabled();
+    await merge.click();
+    await expect(page).toHaveURL(new RegExp('task=' + target.reference));
+    await expect(page.getByRole('heading', { name: target.title, exact: true })).toBeVisible();
+    await expect(page.locator('.inspector-heading')).toContainText('2 conversations');
+    await expect(page.getByRole('button', { name: 'Reopen task', exact: true })).toBeVisible();
+    await page
+      .locator('summary')
+      .filter({ hasText: /^Notes & details$/ })
+      .click();
+    await expect(page.getByLabel('Your note', { exact: true })).toHaveValue(targetNote);
+    await expect(page.locator('.merge-history')).toContainText(source.reference);
+    await expect(page.locator('.merge-history')).toContainText(sourceNote);
+    await page.getByRole('button', { name: /^View conversation/ }).click();
+    await expect(page.locator('.message-card')).toHaveCount(
+      new Set([...source.source_ids, ...target.source_ids]).size,
+    );
+    await page.goto(base + '?task=' + source.reference);
+    await expect(page).toHaveURL(new RegExp('task=' + target.reference));
+    await page.reload();
+    await expect(page.getByRole('heading', { name: target.title, exact: true })).toBeVisible();
+    await page.goto(base + '?task=' + source.id + '&context=conversation');
+    await expect(page).toHaveURL(new RegExp('task=' + target.reference));
+    await expect(page.locator('.message-card').first()).toBeVisible();
+    await page.getByLabel('Search tasks', { exact: true }).fill(source.reference);
+    await expect(page.locator('.task-row')).toHaveCount(1);
+    await expect(page.locator('.task-row .task-reference')).toHaveText(target.reference);
+    const after = SnapshotSchema.parse(await (await owner('state')).json());
+    expect(after.tasks.some((task) => task.id === source.id)).toBe(false);
+    const merged = after.tasks.find((task) => task.id === target.id);
+    expect(merged?.done).toBe(true);
+    expect(merged?.own_remark).toBe(targetNote);
+    expect(merged?.merged_from.find((task) => task.id === source.id)?.own_remark).toBe(sourceNote);
+    await page.screenshot({ path: test.info().outputPath('merged-todo.png') });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});

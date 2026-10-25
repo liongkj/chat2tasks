@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { TaskTriageSchema, TaskTriageUpdateSchema } from '../shared/schema.js';
 import { Store, TaskTriageError } from './store.js';
 import { OpenWA } from './openwa.js';
+import { matchesTaskQuery } from '../shared/tasks.js';
 
 const instructions = `Triage Chat2Tasks issues using their original conversation evidence.
 List tasks, then read each task and any relevant conversation or source images before updating it.
@@ -84,10 +85,7 @@ export function createMcpServer(store: Store) {
               (status === 'all' || task.done === (status === 'done')) &&
               (!priority || task.priority === priority) &&
               (!triage_state || task.triage_state === triage_state) &&
-              (!query ||
-                [task.reference, task.title, task.scope, task.note, task.own_remark].some((value) =>
-                  value.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
-                )),
+              (!query || matchesTaskQuery(task, query)),
           );
         return page(tasks, offset, limit);
       }),

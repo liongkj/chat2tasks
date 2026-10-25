@@ -294,7 +294,10 @@ export class Sync {
     const tasks = snapshot.tasks.filter((t) => t.source_ids.some((id) => ids.has(id)));
     const required = new Set(tasks.flatMap((t) => t.source_ids));
     for (const m of [...pending, ...replies]) if (m.reply_to_id) required.add(m.reply_to_id);
-    const context = messages.filter((m, i) => required.has(m.id) || i >= messages.length - 80);
+    const recent = new Set(messages.slice(-80).map((message) => message.id));
+    const context = snapshot.messages.filter(
+      (message) => required.has(message.id) || recent.has(message.id),
+    );
     const batch = messages.filter((m) => pending.some((p) => p.id === m.id)).slice(0, 80);
     if (batch.length) {
       this.store.status({ phase: `Finding next actions in ${chat.name}` });

@@ -367,6 +367,33 @@ a {
   gap: 10px;
   margin-bottom: 14px;
 }
+.task-merge {
+  margin-top: 12px;
+}
+.merge-panel,
+.merge-history {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e8e8ed;
+}
+.merge-panel p,
+.merge-history p,
+.merge-history blockquote {
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.merge-panel label {
+  display: block;
+  font-size: 14px;
+  margin: 14px 0 6px;
+}
+.merge-panel select {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 12px;
+}
 .row-chevron {
   color: var(--muted);
   margin-top: 9px;
