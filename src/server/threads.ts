@@ -19,7 +19,8 @@ const Membership = z.object({
   updated: z.number(),
 });
 const Topic = z.object({ id: z.string(), title: z.string(), created: z.number() });
-const digest = (m: Message) => hash([fingerprint(m), m.image_reading ?? null]);
+const digest = (m: Message) =>
+  hash(['named-destinations-v1', fingerprint(m), m.image_reading ?? null]);
 
 export class ThreadError extends Error {
   constructor(
