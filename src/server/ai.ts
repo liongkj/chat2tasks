@@ -102,7 +102,7 @@ export async function callModel(
   store: Store,
   profile: Profile,
   prompt: string,
-  schemaName: string,
+  schemaSource: string | Record<string, unknown>,
   purpose: string,
   images: Image[] = [],
 ): Promise<unknown> {
@@ -112,7 +112,10 @@ export async function callModel(
   let tokens: number | null = null,
     outcome = 'failed';
   try {
-    const schema = JSON.parse(await readFile(join(process.cwd(), schemaName), 'utf8'));
+    const schema =
+      typeof schemaSource === 'string'
+        ? JSON.parse(await readFile(join(process.cwd(), schemaSource), 'utf8'))
+        : schemaSource;
     let parsed: unknown;
     if (profile.kind === 'codex') {
       const dir = await mkdtemp(join(store.dir, '.ai-'));
