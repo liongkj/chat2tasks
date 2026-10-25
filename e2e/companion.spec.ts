@@ -112,7 +112,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     const page = await context.newPage();
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    await page.goto(base);
+    await page.goto(base + '?view=tasks');
     const title = 'Review the onboarding flow before Friday';
     await expect(page.getByRole('heading', { name: title })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'From the conversation' })).toBeVisible();
@@ -139,7 +139,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.getByRole('button', { name: 'Back to task', exact: true }).click();
     await page
       .locator('summary')
-      .filter({ hasText: /^Notes & details$/ })
+      .filter({ hasText: /^Notes & handoff$/ })
       .click();
     await page.getByLabel('Your note').fill('Read the source before reviewing');
     await page.getByRole('button', { name: 'Save note' }).click();
@@ -179,10 +179,10 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
       )
       .toBe(true);
     await page.unroute('**/api/tick');
-    await page.getByRole('button', { name: /^Completed/ }).click();
+    await page.getByRole('tab', { name: 'Completed', exact: true }).click();
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
-    await page.getByRole('button', { name: /^My Tasks/ }).click();
+    await page.getByRole('button', { name: 'All tasks', exact: true }).click();
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await page.route(
       '**/api/tick',
@@ -237,7 +237,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await expect(page.getByRole('button', { name: 'Add connection', exact: true })).toBeFocused();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('button', { name: /^My Tasks/ }).click();
+    await page.getByRole('button', { name: 'All tasks', exact: true }).click();
     await expect(
       page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
     ).toBeVisible();
@@ -276,7 +276,7 @@ test('TODO links restore the selected task and source view through refresh and b
   });
   try {
     const page = await context.newPage();
-    await page.goto(base + '?from=shared-link');
+    await page.goto(base + '?view=tasks&from=shared-link');
     await page.getByRole('button', { name: `Open task: ${first.title}`, exact: true }).click();
     await expect(page).toHaveURL(new RegExp('task=' + first.reference));
     await page.getByRole('button', { name: `Open task: ${second.title}`, exact: true }).click();
@@ -364,8 +364,8 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
   try {
     // Establish the owner session before Chrome opens a workspace tab from the companion.
     const ownerPage = await context.newPage();
-    await ownerPage.goto(base);
-    await expect(ownerPage.getByRole('heading', { name: 'My Tasks', exact: true })).toBeVisible();
+    await ownerPage.goto(base + '?view=tasks');
+    await expect(ownerPage.getByRole('heading', { name: 'All tasks', exact: true })).toBeVisible();
     await ownerPage.close();
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const id = new URL(worker.url()).host;
@@ -532,7 +532,7 @@ test('narrow touch workspace keeps long conversation names and note controls usa
       });
       await route.fulfill({ response, json: snapshot });
     });
-    await page.goto(base);
+    await page.goto(base + '?view=tasks');
     await page
       .getByRole('button', { name: /^Open task:/ })
       .first()
@@ -540,7 +540,7 @@ test('narrow touch workspace keeps long conversation names and note controls usa
     await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeInViewport();
     await page
       .locator('summary')
-      .filter({ hasText: /^Notes & details$/ })
+      .filter({ hasText: /^Notes & handoff$/ })
       .click();
     const note = page.getByLabel('Your note');
     await note.fill('A note entered from a narrow touch screen');
@@ -583,8 +583,9 @@ test('add conversation dialog selects a discovered chat from the chosen session'
               ];
       await route.fulfill({ json: rows });
     });
-    await page.goto(base);
-    await page.getByRole('button', { name: /^Conversations/ }).click();
+    await page.goto(base + '?view=tasks');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Connections', exact: true }).click();
     await page.getByLabel('OpenWA API URL').fill('http://127.0.0.1:9999');
     await page.getByRole('button', { name: 'Add chat' }).click();
     const dialog = page.getByRole('dialog');
@@ -634,7 +635,7 @@ test('add conversation dialog selects a discovered chat from the chosen session'
   }
 });
 
-test('Link issue moves evidence into an existing TODO and preserves notes, completion and old links', async () => {
+test('manual merge moves evidence into an existing TODO and preserves notes, completion and old links', async () => {
   const before = SnapshotSchema.parse(await (await owner('state')).json());
   const [source, target] = before.tasks.filter((task) => !task.done);
   if (!source || !target) throw Error('The sample needs two open TODOs');
@@ -652,10 +653,10 @@ test('Link issue moves evidence into an existing TODO and preserves notes, compl
     await page.goto(base + '?task=' + source.reference);
     await page
       .locator('summary')
-      .filter({ hasText: /^Notes & details$/ })
+      .filter({ hasText: /^Notes & handoff$/ })
       .click();
     await page.getByLabel('Your note', { exact: true }).fill(sourceNote);
-    await page.getByRole('button', { name: 'Link issue', exact: true }).click();
+    await page.getByRole('button', { name: 'Merge tasks…', exact: true }).click();
     await page.getByLabel('Destination TODO', { exact: true }).selectOption(target.id);
     const merge = page.getByRole('button', { name: 'Merge into ' + target.reference, exact: true });
     await expect(merge).toBeDisabled();
@@ -668,7 +669,7 @@ test('Link issue moves evidence into an existing TODO and preserves notes, compl
     await expect(page.getByRole('button', { name: 'Reopen task', exact: true })).toBeVisible();
     await page
       .locator('summary')
-      .filter({ hasText: /^Notes & details$/ })
+      .filter({ hasText: /^Notes & handoff$/ })
       .click();
     await expect(page.getByLabel('Your note', { exact: true })).toHaveValue(targetNote);
     await expect(page.locator('.merge-history')).toContainText(source.reference);
@@ -693,7 +694,141 @@ test('Link issue moves evidence into an existing TODO and preserves notes, compl
     expect(merged?.done).toBe(true);
     expect(merged?.own_remark).toBe(targetNote);
     expect(merged?.merged_from.find((task) => task.id === source.id)?.own_remark).toBe(sourceNote);
+    const settings = PublicSettingsSchema.parse(await (await owner('settings')).json());
+    const sourceMessage = before.messages.find((message) => source.source_ids.includes(message.id));
+    const sourceChat = settings.settings.chats.find(
+      (chat) => chat.sessionId === sourceMessage?.sessionId && chat.chatId === sourceMessage.chatId,
+    );
+    if (!sourceChat) throw Error('The merged sample needs its original conversation');
+    await page.goto(
+      base + '?view=conversations&chat=' + sourceChat.id + '&task=' + target.reference,
+    );
+    await page.getByRole('button', { name: /^View conversation/ }).click();
+    await expect(page).toHaveURL(/view=tasks/);
+    await expect(page.locator('.message-card')).toHaveCount(
+      new Set([...source.source_ids, ...target.source_ids]).size,
+    );
     await page.screenshot({ path: test.info().outputPath('merged-todo.png') });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('conversation evidence stays scoped and mobile task navigation returns keyboard focus', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const settings = PublicSettingsSchema.parse(await (await owner('settings')).json());
+  const chat = settings.settings.chats.find((item) => item.id === 'product');
+  const task = snapshot.tasks.find((item) => item.triage_state === 'needs_info');
+  if (!chat || !task) throw Error('The sample needs the product conversation and its blocked task');
+  const chatMessages = snapshot.messages.filter(
+    (message) => message.sessionId === chat.sessionId && message.chatId === chat.chatId,
+  );
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1024 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    let releaseSettings!: () => void;
+    const heldSettings = new Promise<void>((resolve) => {
+      releaseSettings = resolve;
+    });
+    await page.route('**/api/settings', async (route) => {
+      const response = await route.fetch();
+      await heldSettings;
+      await route.fulfill({ response });
+    });
+    await page.goto(base + '?view=conversations&chat=' + chat.id + '&task=' + task.reference);
+    await expect(page.locator('.inspector h2')).toHaveText(task.title);
+    releaseSettings();
+    const thread = page.getByRole('region', { name: 'Saved messages: ' + chat.name });
+    await expect(thread.locator('.message-card')).toHaveCount(chatMessages.length);
+    await expect(page).toHaveURL(new RegExp('chat=' + chat.id));
+    await page.unroute('**/api/settings');
+    await page
+      .getByRole('button', { name: 'Select linked task: ' + task.title, exact: true })
+      .click();
+    await expect(page.locator('.inspector h2')).toHaveText(task.title);
+    await expect(thread.locator('.linked-evidence')).toHaveCount(
+      chatMessages.filter((message) => task.source_ids.includes(message.id)).length,
+    );
+    await page.reload();
+    await expect(page.locator('.inspector h2')).toHaveText(task.title);
+    await page.getByRole('button', { name: 'Activity', exact: true }).click();
+    await expect(page).toHaveURL(/view=activity/);
+    await page.goBack();
+    await expect(page.locator('.inspector h2')).toHaveText(task.title);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const openTask = page.getByRole('button', { name: 'View task: ' + task.title, exact: true });
+    await openTask.click();
+    const dialog = page.getByRole('dialog', { name: 'Task details' });
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+    await dialog.getByRole('button', { name: 'Add missing information', exact: true }).click();
+    await expect(dialog.getByLabel('Your note', { exact: true })).toBeFocused();
+    await dialog.getByRole('button', { name: 'Close task details', exact: true }).click();
+    await expect(openTask).toBeFocused();
+    await page.getByRole('button', { name: 'Back to conversations', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: 'Open conversation: ' + chat.name, exact: true }),
+    ).toBeFocused();
+    const navigation = page.getByRole('button', { name: 'Open navigation', exact: true });
+    await navigation.click();
+    const drawer = page.getByRole('dialog', { name: 'Workspace navigation' });
+    await expect(drawer).toBeVisible();
+    await expect(
+      drawer.getByRole('button', { name: 'Close navigation', exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect
+      .poll(() => drawer.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(navigation).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    const focusedBounds = await page.evaluate(() =>
+      document.activeElement?.getBoundingClientRect().toJSON(),
+    );
+    expect(focusedBounds?.x ?? 0).toBeGreaterThanOrEqual(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath('conversation-mobile.png') });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('conversation settings can recover from a failed initial load without losing the workspace', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1080, height: 900 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.route(
+      '**/api/settings',
+      (route) =>
+        route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Settings temporarily unavailable' }),
+        }),
+      { times: 1 },
+    );
+    await page.goto(base);
+    await expect(page.getByRole('alert')).toContainText(
+      'Couldn’t load your conversations and settings',
+    );
+    await page.getByRole('button', { name: 'Reload settings', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: 'Open conversation: Design team', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('alert')).not.toBeVisible();
   } finally {
     await context.close();
     await browser.close();

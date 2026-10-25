@@ -2,9 +2,9 @@
 
 A little less to keep in mind. Turn selected WhatsApp conversations into clear, traceable tasks, with your choice of AI model.
 
-Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and SQLite. The interface takes cues from [Linear](https://linear.app) and [Apple’s Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines): a quiet sidebar, focused task lists, and details revealed when you need them.
+Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and SQLite. The workspace starts with your followed conversations. Saved messages and their linked tasks stay side by side, with blockers, next steps, and completion criteria visible in the task panel. All tasks, activity, and connection settings remain one step away.
 
-![Chat2Tasks sample workspace with fictional conversations](docs/workspace.png)
+![Conversation-led workspace with illustrative sample data](docs/qa/context-first/desktop.jpg)
 
 ## Start with Docker
 
@@ -15,19 +15,27 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open **http://127.0.0.1:2786**. In **Conversations**, enter your OpenWA server URL and API key. Find a session and its chats, or add a chat by ID. New chats start paused; activate only the conversations you want to follow. Enter a callback URL reachable from OpenWA, ending in `/api/webhooks/openwa`, then choose **Connect & test webhooks**. The app registers signed message and session events and verifies a delivery. For a private Docker hostname, add only that exact receiver hostname to OpenWA’s `SSRF_ALLOWED_HOSTS`; keep SSRF protection enabled.
+Open **http://127.0.0.1:2786**. Open **Settings → Connections** and enter your OpenWA server URL and API key. Find a session and its chats, or add a chat by ID. New chats start paused; activate only the conversations you want to follow. Enter a callback URL reachable from OpenWA, ending in `/api/webhooks/openwa`, then choose **Connect & test webhooks**. The app registers signed message and session events and verifies a delivery. For a private Docker hostname, add only that exact receiver hostname to OpenWA’s `SSRF_ALLOWED_HOSTS`; keep SSRF protection enabled.
 
 OpenWA is a separate prerequisite. Point Chat2Tasks at an existing compatible OpenWA installation. If it is another Compose stack, attach Chat2Tasks to that stack’s network with a Compose override. `localhost` inside the container refers to Chat2Tasks, not your host; on Docker Desktop use `host.docker.internal` for a host service. On Linux configure `host-gateway` or a shared Docker network.
 
 The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGIN=http://127.0.0.1:YOUR_PORT`.
 
+## Conversations and tasks
+
+Choose a followed chat to read its cached messages. Selecting a linked task highlights the messages used as evidence. On mobile, each linked task appears beside its source; choose **View task** to open its full details, then return to the same conversation. Incoming message labels identify the saved conversation, since OpenWA sender identities are not part of this workspace contract.
+
+**All tasks** provides workspace search, conversation filters, and Open / Completed / All views. A task’s completion criteria are always shown before its completion control. **Add missing information** opens the task’s personal note; saving a note does not change the source messages or automatically change its readiness state.
+
+**Activity** separates the most recent signed message event from the last completed task analysis. These are different from the browser’s connection to the workspace server.
+
 ## Task references and links
 
 Each task has a permanent reference such as **TODO-001**, shown as a tag in the task list and details. References remain the same when tasks are edited, completed, or reordered. Existing workspaces receive references automatically without changing their tasks or completion records. Search by reference in the workspace, Chrome companion, or MCP tools.
 
-Selecting a task updates the address to `?task=TODO-001`. Refreshing, sharing the address, or using browser Back/Forward restores the selection. **Copy link** in task details copies the current task link. Conversation links also preserve `context=conversation`, and links using older internal task IDs still work. A link to a completed task opens it in the completed list; an unknown reference shows **Task not found**.
+Selecting a task updates the address with `task=TODO-001`. The selected view and conversation are also kept in the address. Refreshing, sharing the address, or using browser Back/Forward restores the selection. **Copy link** in task details copies the current task link. Conversation links also preserve `context=conversation`, and links using older internal task IDs still work. A link to a completed task opens it in the completed list; an unknown reference shows **Task not found**.
 
-If task analysis grouped an issue incorrectly, open **Notes & details → Link issue**, choose the correct existing TODO, and confirm the merge. Save any draft note first. Source messages move to the destination; its description, personal note and completion tick stay unchanged. The original personal note remains under **Merged TODOs**, and the retired TODO's reference and internal-ID links open the destination. Pending completion questions follow the destination too. Repeated merge requests are safe, and changed tasks reject a stale merge.
+If task analysis grouped an issue incorrectly, open **Notes & handoff → Merge tasks…**, choose the correct existing TODO, and confirm the merge. Save any draft note first. Source messages move to the destination; its description, personal note and completion tick stay unchanged. The original personal note remains under **Merged tasks**, and the retired TODO's reference and internal-ID links open the destination. Pending completion questions follow the destination too. Repeated merge requests are safe, and changed tasks reject a stale merge.
 
 An owner-approved merge can combine conversations. Those linked messages become evidence for the combined TODO and can be sent to the configured model during later analysis of either conversation, including evidence originally saved from a now-paused conversation. Automatic processing preserves retired-ID redirects and receives the manual grouping as context. Unrelated conversations cannot be attached by task generation.
 

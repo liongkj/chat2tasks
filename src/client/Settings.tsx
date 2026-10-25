@@ -164,10 +164,10 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
     <div className="settings-page">
       <div className="settings-page-heading">
         <div>
-          <h1>{tab === 'chats' ? 'Conversations' : 'Settings'}</h1>
+          <h1>{tab === 'chats' ? 'Connections' : 'Settings'}</h1>
           <p className="page-description">
             {tab === 'chats'
-              ? 'Activate a chat to turn its follow-ups into clear next steps.'
+              ? 'Connect WhatsApp and choose which conversations to follow.'
               : 'Manage your models, API keys, and Chrome companion.'}
           </p>
         </div>
@@ -615,7 +615,7 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
           />
         </>
       )}
-      <CompanionSettings notify={notify} />
+      {tab === 'models' && <CompanionSettings notify={notify} />}
       <div className="settings-save-bottom">
         <button className="button primary" disabled={saving} onClick={() => void save()}>
           <Check size={14} />

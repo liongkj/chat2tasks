@@ -50,7 +50,7 @@ export function TaskMerge({
         disabled={merging}
         onClick={() => setOpen(!open)}
       >
-        <Link2 size={14} /> Link issue
+        <Link2 size={14} /> Merge tasks…
       </button>
       {open && (
         <div className="merge-panel">

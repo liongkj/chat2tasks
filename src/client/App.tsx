@@ -1,51 +1,38 @@
-import { useInputModality } from '../shared/useInputModality.js';
-import { Menu } from '@base-ui/react/menu';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Dialog } from '@base-ui/react/dialog';
 import {
-  ArrowDownToLine,
-  ArrowUpRight,
-  Check,
-  CheckCheck,
-  ChevronRight,
-  Circle,
-  CircleCheck,
-  CircleDot,
-  Command,
-  Copy,
-  FileText,
+  Activity,
+  ArrowLeft,
+  CheckCircle2,
   Inbox,
-  LoaderCircle,
+  Link2,
   Menu as MenuIcon,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
+  MessageCircle,
   Search,
   Settings2,
-  ShieldCheck,
-  Sparkles,
-  X,
-  Zap,
   TriangleAlert,
-  Activity,
+  X,
 } from 'lucide-react';
-import { z } from 'zod';
 import { RefreshGate } from '../shared/refresh.js';
+import { useInputModality } from '../shared/useInputModality.js';
 import {
   PublicSettingsSchema,
   SnapshotSchema,
+  type PublicSettings,
   type Snapshot,
   type Task,
-  type Message,
-  type PublicSettings,
   type TaskEvidence,
 } from '../shared/schema.js';
-import { api, download, OkSchema, time } from './api.js';
-import { SettingsPanel } from './Settings.js';
-import { taskUrl, useTaskLocation, type TaskTab } from './taskLocation.js';
-import { TaskMerge } from './TaskMerge.js';
 import { matchesTaskIdentifier, matchesTaskQuery } from '../shared/tasks.js';
+import { api, download, OkSchema } from './api.js';
+import { ConversationWorkspace } from './ConversationWorkspace.js';
+import { conversationName, messagesForChat, tasksForMessages } from './conversations.js';
+import { ActivityView } from './Activity.js';
+import { SettingsPanel } from './Settings.js';
+import { TaskDetail } from './TaskDetail.js';
+import { TaskQueue } from './TaskQueue.js';
+import { useWorkspaceLocation, type WorkspaceView } from './taskLocation.js';
 
-type View = 'tasks' | 'chats' | 'models' | 'activity';
 const empty: Snapshot = {
   demo: false,
   tasks: [],
@@ -54,31 +41,32 @@ const empty: Snapshot = {
   status: { syncing: false, phase: 'Connecting', pending: 0, error: null, debouncing: false },
   usage: { calls: 0, totalTokens: 0, model: '' },
 };
-const stateLabel = {
-  ready: 'Ready to start',
-  waiting: 'Waiting',
-  needs_info: 'Needs a detail',
-  reported_done: 'Ready to verify',
-};
-
+function useNarrowLayout() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 900px)');
+    const update = () => setNarrow(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  return narrow;
+}
 export function App() {
   useInputModality();
-  const [data, setData] = useState(empty),
-    [config, setConfig] = useState<PublicSettings | null>(null),
-    [loaded, setLoaded] = useState(false);
-  const { location: taskLocation, selectTask } = useTaskLocation();
-  const selected = taskLocation.task;
-  const [view, setView] = useState<View>('tasks'),
-    [filter, setFilter] = useState<'open' | 'all' | 'done'>('open');
-  const [query, setQuery] = useState(''),
-    [chat, setChat] = useState<string | null>(null);
-  const [notice, setNotice] = useState(''),
-    [online, setOnline] = useState(true),
-    [mobileMenu, setMobileMenu] = useState(false),
-    [showMenu, setShowMenu] = useState(false);
-  const search = useRef<HTMLInputElement>(null),
-    file = useRef<HTMLInputElement>(null);
-  const initialSelection = useRef(false);
+  const narrow = useNarrowLayout();
+  const { location, updateLocation } = useWorkspaceLocation();
+  const [data, setData] = useState(empty);
+  const [config, setConfig] = useState<PublicSettings | null>(null);
+  const [configError, setConfigError] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [online, setOnline] = useState(true);
+  const [notice, setNotice] = useState('');
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const search = useRef<HTMLInputElement>(null);
+  const file = useRef<HTMLInputElement>(null);
+  const focusSearch = useRef(false);
+  const taskReturnFocus = useRef<HTMLElement | null>(null);
+  const initialized = useRef<string | null>(null);
   const restoredSelection = useRef<string | null>(null);
   const refreshGate = useRef(new RefreshGate());
   const pendingTicks = useRef(new Map<string, boolean>());
@@ -102,10 +90,11 @@ export function App() {
     }
   }, []);
   const refreshConfig = useCallback(async () => {
+    setConfigError('');
     try {
       setConfig(await api('settings', PublicSettingsSchema));
-    } catch (e) {
-      setNotice(errorMessage(e));
+    } catch (error) {
+      setConfigError(errorMessage(error));
     }
   }, []);
   useEffect(() => {
@@ -119,73 +108,148 @@ export function App() {
     const timer = setTimeout(() => setNotice(''), 7000);
     return () => clearTimeout(timer);
   }, [notice]);
+  const chats = config?.settings.chats ?? [];
+  const chat = chats.find((item) => item.id === location.chat);
+  const selectedTask = data.tasks.find((task) => matchesTaskIdentifier(task, location.task));
+  useEffect(() => {
+    if (!loaded || !config || narrow) return;
+    const key = `${location.view}:${location.chat ?? ''}`;
+    if (initialized.current === key) return;
+    initialized.current = key;
+    if (location.task) return;
+    if (location.view === 'conversations') {
+      const current = chat ?? chats[0];
+      if (!current) return;
+      const related = tasksForMessages(data.tasks, messagesForChat(current, data.messages));
+      const next = related
+        .filter((task) => !task.done)
+        .sort(
+          (a, b) =>
+            Number(b.priority === 'high') - Number(a.priority === 'high') || b.updated - a.updated,
+        )
+        .at(0);
+      updateLocation({ chat: current.id, task: next?.reference ?? null }, { replace: true });
+    } else if (location.view === 'tasks') {
+      const next = data.tasks
+        .filter(
+          (task) =>
+            (location.filter === 'all' || task.done === (location.filter === 'done')) &&
+            matchesTaskQuery(task, location.query),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.priority === 'high') - Number(a.priority === 'high') || b.updated - a.updated,
+        )
+        .at(0);
+      if (next) updateLocation({ task: next.reference }, { replace: true });
+    }
+  }, [
+    loaded,
+    config,
+    narrow,
+    location.view,
+    location.chat,
+    location.task,
+    location.filter,
+    location.query,
+    chat,
+    chats,
+    data,
+    updateLocation,
+  ]);
+  useEffect(() => {
+    if (!location.task) {
+      restoredSelection.current = null;
+      return;
+    }
+    if (
+      !loaded ||
+      !selectedTask ||
+      restoredSelection.current === location.task ||
+      (location.view === 'conversations' && !config)
+    )
+      return;
+    restoredSelection.current = location.task;
+    const linkedChat = chats.find((item) =>
+      messagesForChat(item, data.messages).some((message) =>
+        selectedTask.source_ids.includes(message.id),
+      ),
+    );
+    updateLocation(
+      {
+        task: selectedTask.reference,
+        ...(location.view === 'tasks' && location.filter !== 'all'
+          ? { filter: selectedTask.done ? 'done' : 'open' }
+          : {}),
+        ...(location.view === 'conversations' && !chat ? { chat: linkedChat?.id ?? null } : {}),
+        ...(!matchesTaskQuery(selectedTask, location.query) ? { query: '' } : {}),
+      },
+      { replace: true },
+    );
+  }, [
+    location.task,
+    location.view,
+    location.filter,
+    location.query,
+    selectedTask,
+    loaded,
+    config,
+    chats,
+    chat,
+    data.messages,
+    updateLocation,
+  ]);
+  const navigate = (view: WorkspaceView) => {
+    setMobileMenu(false);
+    updateLocation({
+      view,
+      task: null,
+      tab: 'overview',
+      expanded: false,
+      chat: null,
+      query: '',
+      filter: 'open',
+    });
+  };
+  const openSearch = () => {
+    focusSearch.current = true;
+    navigate('tasks');
+    if (location.view === 'tasks') {
+      search.current?.focus();
+      focusSearch.current = false;
+    }
+  };
+  useEffect(() => {
+    if (location.view === 'tasks' && focusSearch.current) {
+      search.current?.focus();
+      focusSearch.current = false;
+    }
+  }, [location.view]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
-        setView('tasks');
+        focusSearch.current = true;
+        updateLocation({ view: 'tasks', task: null });
         search.current?.focus();
-      }
-      if (event.key === 'Escape') {
-        selectTask(null);
-        setMobileMenu(false);
-        setShowMenu(false);
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [selectTask]);
-  const navigate = (next: View) => {
-    setView(next);
-    setMobileMenu(false);
-    setShowMenu(false);
-  };
-  const settings = config?.settings;
-  const currentChat = settings?.chats.find((c) => c.id === chat);
-  const sourceIds = new Set(
-    data.messages
-      .filter(
-        (m) =>
-          !currentChat ||
-          (m.chatId === currentChat.chatId && m.sessionId === currentChat.sessionId),
-      )
-      .map((m) => m.id),
-  );
-  const scoped = data.tasks.filter(
-    (t) => !currentChat || t.source_ids.some((id) => sourceIds.has(id)),
-  );
-  const visible = scoped
-    .filter(
-      (t) => (filter === 'all' || t.done === (filter === 'done')) && matchesTaskQuery(t, query),
-    )
-    .sort(
-      (a, b) =>
-        Number(a.done) - Number(b.done) ||
-        Number(b.priority === 'high') - Number(a.priority === 'high') ||
-        b.updated - a.updated,
-    );
-  const selectedTask = data.tasks.find((t) => matchesTaskIdentifier(t, selected));
+  }, [updateLocation]);
+  const viewTitle =
+    location.view === 'connections'
+      ? 'Connections'
+      : location.view === 'conversations'
+        ? 'Conversations'
+        : location.view === 'tasks'
+          ? 'All tasks'
+          : location.view === 'settings'
+            ? 'Settings'
+            : 'Activity';
   useEffect(() => {
-    if (initialSelection.current || !loaded || !visible.length) return;
-    initialSelection.current = true;
-    if (!selected && window.matchMedia('(min-width: 1024px)').matches)
-      selectTask(visible[0]?.reference ?? null, { replace: true });
-  }, [visible, selected, loaded, selectTask]);
-  useEffect(() => {
-    if (!selected) {
-      restoredSelection.current = null;
-      return;
-    }
-    if (!loaded || !selectedTask || restoredSelection.current === selected) return;
-    restoredSelection.current = selected;
-    setView('tasks');
-    if (filter !== 'all' && selectedTask.done !== (filter === 'done'))
-      setFilter(selectedTask.done ? 'done' : 'open');
-    if (!scoped.some((task) => task.id === selectedTask.id)) setChat(null);
-    if (!matchesTaskQuery(selectedTask, query)) setQuery('');
-    if (selected !== selectedTask.reference)
-      selectTask(selectedTask.reference, { tab: taskLocation.tab, replace: true });
-  }, [selected, selectedTask, loaded, filter, scoped, query, taskLocation.tab, selectTask]);
+    document.title = `Chat2Tasks — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
+  }, [viewTitle, chat, location.view]);
   async function tick(task: Task) {
     if (pendingTicks.current.has(task.id)) return;
     const done = !task.done;
@@ -201,8 +265,8 @@ export function App() {
       refreshGate.current.invalidate();
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
-      setNotice(task.done ? 'Moved back to your tasks' : 'One less thing. Task completed.');
-    } catch (e) {
+      setNotice(done ? 'Task completed' : 'Task reopened');
+    } catch (error) {
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
       refreshGate.current.invalidate();
@@ -213,959 +277,464 @@ export function App() {
         ),
       }));
       void refresh();
-      setNotice(errorMessage(e));
+      setNotice(errorMessage(error));
     }
   }
   async function sync() {
     try {
       await api('sync', OkSchema, {});
-      setNotice('Running task analysis now…');
+      setNotice(
+        data.demo ? 'Sample workspace · live analysis is disabled' : 'Task analysis requested',
+      );
       await refresh();
-    } catch (e) {
-      setNotice(errorMessage(e));
+    } catch (error) {
+      setNotice(errorMessage(error));
     }
   }
-  const title =
-    view === 'tasks'
-      ? (currentChat?.name ?? (filter === 'done' ? 'Completed' : 'My Tasks'))
-      : view === 'chats'
-        ? 'Conversations'
-        : view === 'models'
-          ? 'Models & API keys'
-          : 'Activity';
-  return (
-    <div className={`app ${mobileMenu ? 'menu-open' : ''}`}>
-      {mobileMenu && (
-        <button
-          className="menu-scrim"
-          aria-label="Close navigation"
-          onClick={() => setMobileMenu(false)}
-        />
-      )}
-      <aside className="sidebar">
-        <button
-          className="brand"
-          onClick={() => {
-            setChat(null);
-            navigate('tasks');
-          }}
-        >
-          <span>chat2tasks</span>
-        </button>
-        <div className="search-shortcut">
-          <Search size={15} />
-          <input
-            ref={search}
-            aria-label="Search tasks"
-            placeholder="Search tasks…"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              navigate('tasks');
-            }}
-          />
-          <kbd>⌘ K</kbd>
-        </div>
-        <nav aria-label="Workspace">
-          <button
-            className={
-              view === 'tasks' && !chat && filter !== 'done' ? 'nav-item active' : 'nav-item'
-            }
-            onClick={() => {
-              setChat(null);
-              setFilter('open');
-              selectTask(null);
-              navigate('tasks');
-            }}
-          >
-            <Inbox size={17} />
-            <span>My Tasks</span>
-            <span className="nav-count">{data.tasks.filter((t) => !t.done).length}</span>
-          </button>
-          <button
-            className={view === 'chats' ? 'nav-item active' : 'nav-item'}
-            onClick={() => navigate('chats')}
-          >
-            <MessageSquare size={17} />
-            <span>Conversations</span>
-            <span className="nav-count">{settings?.chats.length ?? 0}</span>
-          </button>
-          <button
-            className={view === 'tasks' && filter === 'done' ? 'nav-item active' : 'nav-item'}
-            onClick={() => {
-              setChat(null);
-              setFilter('done');
-              selectTask(null);
-              navigate('tasks');
-            }}
-          >
-            <CircleCheck size={19} />
-            <span>Completed</span>
-            <span className="nav-count">{data.tasks.filter((t) => t.done).length}</span>
-          </button>
-        </nav>
-        <div className="sidebar-bottom">
-          <button
-            className={view === 'activity' ? 'nav-item active' : 'nav-item'}
-            onClick={() => navigate('activity')}
-          >
-            <Activity size={18} />
-            <span>Activity</span>
-            {data.status.syncing && <span className="live-dot" />}
-          </button>
-          <button
-            className={view === 'models' ? 'nav-item active' : 'nav-item'}
-            onClick={() => navigate('models')}
-          >
-            <Settings2 size={17} />
-            <span>Settings</span>
-          </button>
-        </div>
-      </aside>
-      <main className="workspace">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <button
-              className="icon-btn mobile-toggle"
-              aria-label="Open navigation"
-              onClick={() => setMobileMenu(true)}
-            >
-              <MenuIcon size={18} />
-            </button>
-            <span className="workspace-crumb">{data.demo ? 'Sample workspace' : 'Workspace'}</span>
-            <ChevronRight size={12} />
-            <span>{title}</span>
-          </div>
-          <div className="topbar-status">
-            <span className={`live-dot ${!online || data.status.error ? 'warning' : ''}`} />
-            <span>
-              {!online
-                ? 'Reconnecting…'
-                : data.status.syncing
-                  ? 'Working quietly…'
-                  : data.status.error
-                    ? 'Needs attention'
-                    : data.demo
-                      ? 'Sample workspace'
-                      : 'Connected'}
-            </span>
-            <button
-              className="avatar"
-              aria-label="Open workspace settings"
-              onClick={() => navigate('models')}
-            >
-              Me
-            </button>
-          </div>
-        </header>
-        {view === 'chats' || view === 'models' ? (
-          config && (
-            <SettingsPanel
-              key={view}
-              tab={view}
-              config={config}
-              onSave={(c) => {
-                setConfig(c);
-                void refresh();
-              }}
-              notify={setNotice}
-            />
-          )
-        ) : view === 'activity' ? (
-          <ActivityView data={data} onSync={() => void sync()} />
-        ) : (
-          <>
-            <div className="task-layout">
-              <section className="task-column">
-                <div className="page-heading">
-                  <h1>{currentChat?.name ?? (filter === 'done' ? 'Completed' : 'My Tasks')}</h1>
-                  <p>
-                    {new Intl.DateTimeFormat(undefined, {
-                      weekday: 'long',
-                      day: 'numeric',
-                      month: 'long',
-                    }).format(new Date())}
-                  </p>
-                </div>
-                <div className="task-toolbar">
-                  <div className="tabs" role="tablist" aria-label="Task status">
-                    {(
-                      [
-                        ['open', 'To do'],
-                        ['done', 'Completed'],
-                      ] satisfies [typeof filter, string][]
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        role="tab"
-                        aria-selected={filter === value}
-                        className={filter === value ? 'selected' : ''}
-                        onClick={() => {
-                          setFilter(value);
-                          selectTask(null);
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="task-toolbar-end">
-                    <select
-                      aria-label="Filter by conversation"
-                      value={chat ?? ''}
-                      onChange={(event) => {
-                        setChat(event.target.value || null);
-                        selectTask(null);
-                      }}
-                    >
-                      <option value="">All conversations</option>
-                      {settings?.chats.map((conversation) => (
-                        <option key={conversation.id} value={conversation.id}>
-                          {conversation.name}
-                        </option>
-                      ))}
-                    </select>
-                    <Menu.Root open={showMenu} onOpenChange={setShowMenu}>
-                      <Menu.Trigger className="icon-btn" aria-label="More task actions">
-                        <MoreHorizontal size={18} />
-                      </Menu.Trigger>
-                      <Menu.Portal>
-                        <Menu.Positioner className="menu-positioner" sideOffset={6} align="end">
-                          <Menu.Popup className="popover">
-                            <Menu.Item
-                              disabled={data.status.syncing}
-                              onClick={() => {
-                                void sync();
-                                setShowMenu(false);
-                              }}
-                            >
-                              <Zap size={16} /> Find tasks now
-                            </Menu.Item>
-                            <Menu.Item
-                              onClick={() => {
-                                setFilter('all');
-                                setShowMenu(false);
-                              }}
-                            >
-                              Show all tasks
-                            </Menu.Item>
-                            <Menu.Item
-                              onClick={() => {
-                                download('chat2tasks-export.json', JSON.stringify(data, null, 2));
-                                setShowMenu(false);
-                              }}
-                            >
-                              <ArrowDownToLine size={14} /> Export workspace
-                            </Menu.Item>
-                            <Menu.Item
-                              onClick={() => {
-                                file.current?.click();
-                                setShowMenu(false);
-                              }}
-                            >
-                              <FileText size={14} /> Import task ticks
-                            </Menu.Item>
-                          </Menu.Popup>
-                        </Menu.Positioner>
-                      </Menu.Portal>
-                    </Menu.Root>
-                  </div>
-                </div>
-                {data.status.error && (
-                  <div className="inline-alert">
-                    <TriangleAlert size={15} />
-                    <div>
-                      <strong>Sync needs a moment</strong>
-                      <p>{data.status.error}</p>
-                      {data.status.retry_at && (
-                        <small>Will retry automatically · {time(data.status.retry_at)}</small>
-                      )}
-                    </div>
-                    <button className="text-button" onClick={() => navigate('models')}>
-                      Settings
-                    </button>
-                  </div>
-                )}
-                {data.questions.map((q) => (
-                  <div className="question-card" key={q.id}>
-                    <span className="label purple">A quick clarification</span>
-                    <h3>{q.question}</h3>
-                    <p>“{data.messages.find((m) => m.id === q.message_id)?.body}”</p>
-                    <div className="form-inline">
-                      <select
-                        aria-label="Choose the completed task"
-                        defaultValue=""
-                        onChange={async (e) => {
-                          if (!e.target.value) return;
-                          try {
-                            await api('resolve', OkSchema, { id: q.id, task_id: e.target.value });
-                            await refresh();
-                          } catch (err) {
-                            setNotice(errorMessage(err));
-                          }
-                        }}
-                      >
-                        <option value="" disabled>
-                          Choose the completed task…
-                        </option>
-                        {data.tasks
-                          .filter((t) => {
-                            const m = data.messages.find((m) => m.id === q.message_id);
-                            return (
-                              m &&
-                              t.source_ids.some((id) =>
-                                data.messages.some(
-                                  (source) =>
-                                    source.id === id &&
-                                    source.chatId === m.chatId &&
-                                    source.sessionId === m.sessionId,
-                                ),
-                              )
-                            );
-                          })
-                          .map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.title}
-                            </option>
-                          ))}
-                      </select>
-                      <button
-                        className="text-button"
-                        onClick={async () => {
-                          try {
-                            await api('resolve', OkSchema, { id: q.id, task_id: null });
-                            await refresh();
-                          } catch (e) {
-                            setNotice(errorMessage(e));
-                          }
-                        }}
-                      >
-                        Dismiss
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                <div className="task-list">
-                  {!data.tasks.length ? (
-                    <div className="onboarding">
-                      <div className="empty-art">
-                        <MessageSquare size={28} />
-                        <span>
-                          <Check size={14} />
-                        </span>
-                      </div>
-                      <h2>Good conversations lead somewhere.</h2>
-                      <p>
-                        Connect a WhatsApp chat. We’ll find the follow-ups and keep the original
-                        context one click away.
-                      </p>
-                      <button className="button primary" onClick={() => navigate('chats')}>
-                        <Plus size={15} /> Connect your first chat
-                      </button>
-                      <small>
-                        <ShieldCheck size={12} />
-                        Nothing is sent back to WhatsApp.
-                      </small>
-                    </div>
-                  ) : !visible.length ? (
-                    <div className="empty-state">
-                      <CheckCheck size={30} />
-                      <h3>{query ? 'No matching tasks' : 'You’re all caught up'}</h3>
-                      <p>
-                        {query
-                          ? 'Try a different word or another conversation.'
-                          : 'You’re all caught up here. New actions will appear as your chats continue.'}
-                      </p>
-                    </div>
-                  ) : (
-                    (
-                      [
-                        'ready',
-                        'needs_info',
-                        'waiting',
-                        'reported_done',
-                      ] satisfies Task['triage_state'][]
-                    ).map((group) => {
-                      const groupTasks = visible.filter((t) => t.triage_state === group);
-                      if (!groupTasks.length) return null;
-                      return (
-                        <div className="task-group" key={group}>
-                          <div className="group-heading">
-                            <span className={`group-dot ${group}`} />
-                            <h2>
-                              {group === 'ready'
-                                ? filter === 'done'
-                                  ? 'Completed'
-                                  : 'Up next'
-                                : stateLabel[group]}
-                            </h2>
-                            <span>{groupTasks.length}</span>
-                          </div>
-                          {groupTasks.map((t) => (
-                            <div
-                              className={`task-row ${selectedTask?.id === t.id ? 'selected' : ''} ${t.done ? 'done' : ''}`}
-                              key={t.id}
-                            >
-                              <button
-                                className="check-button"
-                                aria-label={t.done ? `Reopen: ${t.title}` : `Complete: ${t.title}`}
-                                aria-pressed={t.done}
-                                disabled={pendingTickIds.has(t.id)}
-                                onClick={() => void tick(t)}
-                              >
-                                {t.done ? <CircleCheck size={19} /> : <Circle size={19} />}
-                              </button>
-                              <button
-                                className="task-row-content"
-                                aria-label={`Open task: ${t.title}`}
-                                onClick={() => selectTask(t.reference)}
-                              >
-                                <span className="task-title">{t.title}</span>
-                                <span className="task-row-sub">
-                                  <span className="task-reference">{t.reference}</span>
-                                  <span aria-hidden="true">·</span>
-                                  <span>{conversationName(t, data.messages, config)}</span>
-                                </span>
-                              </button>
-                              <ChevronRight className="row-chevron" size={14} />
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <div className="list-footer">
-                  <div>
-                    <span className={`live-dot ${!online || data.status.error ? 'warning' : ''}`} />
-                    {!online
-                      ? 'Reconnecting…'
-                      : data.status.error
-                        ? 'Needs attention'
-                        : data.status.syncing || data.status.pending
-                          ? 'Updating tasks…'
-                          : data.demo
-                            ? 'Sample workspace'
-                            : 'Up to date'}
-                  </div>
-                  <span>
-                    {data.status.last_poll
-                      ? 'Last checked ' + time(data.status.last_poll)
-                      : 'Ready when you are'}
-                  </span>
-                </div>
-              </section>
-              <aside className={`inspector ${selected ? 'has-selection' : ''}`}>
-                <div className="inspector-heading">
-                  <span>
-                    {selectedTask
-                      ? conversationName(selectedTask, data.messages, config)
-                      : 'Task details'}
-                  </span>
-                  {selected ? (
-                    <button
-                      className="icon-btn"
-                      aria-label="Close task details"
-                      onClick={() => selectTask(null)}
-                    >
-                      <X size={16} />
-                    </button>
-                  ) : (
-                    <MessageSquare size={15} />
-                  )}
-                </div>
-                {selectedTask ? (
-                  <TaskDetail
-                    key={selectedTask.id}
-                    task={selectedTask}
-                    tasks={data.tasks}
-                    onMerged={(evidence) => {
-                      refreshGate.current.invalidate();
-                      setData((current) => ({
-                        ...current,
-                        tasks: [
-                          ...current.tasks.filter(
-                            (task) => task.id !== selectedTask.id && task.id !== evidence.task.id,
-                          ),
-                          {
-                            ...evidence.task,
-                            done: pendingTicks.current.get(evidence.task.id) ?? evidence.task.done,
-                          },
-                        ],
-                        messages: [
-                          ...new Map(
-                            [...current.messages, ...evidence.messages].map((message) => [
-                              message.id,
-                              message,
-                            ]),
-                          ).values(),
-                        ].sort((a, b) => a.timestamp - b.timestamp),
-                      }));
-                      selectTask(evidence.task.reference, { replace: true });
-                      void refresh();
-                    }}
-                    tab={taskLocation.tab}
-                    onTabChange={(tab) => selectTask(selectedTask.reference, { tab })}
-                    messages={data.messages}
-                    config={config}
-                    onTick={() => void tick(selectedTask)}
-                    ticking={pendingTickIds.has(selectedTask.id)}
-                    onSaved={() => void refresh()}
-                    notify={setNotice}
-                  />
-                ) : (
-                  <div className="inspector-empty">
-                    <span className="focus-art">
-                      <FileText size={26} />
-                      <span>
-                        <Sparkles size={12} />
-                      </span>
-                    </span>
-                    <h3>{loaded && selected ? 'Task not found' : 'Your next move, in focus.'}</h3>
-                    <p>
-                      {loaded && selected
-                        ? 'This task link is no longer available. Choose another task from the list.'
-                        : 'Select a task to see the next steps, your notes, and the conversation behind it.'}
-                    </p>
-                    <div className="quiet-divider" />
-                    <div className="inspector-tip">
-                      <Command size={15} />
-                      <p>
-                        Press <kbd>⌘ K</kbd> to find a task
-                        <br />
-                        without losing your place.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </aside>
-            </div>
-          </>
-        )}
-        <input
-          ref={file}
-          type="file"
-          accept=".json"
-          hidden
-          onChange={async (e) => {
-            const input = e.target,
-              imported = input.files?.[0];
-            if (!imported) return;
-            try {
-              await api('import', OkSchema, JSON.parse(await imported.text()));
-              await refresh();
-              setNotice('Task ticks imported');
-            } catch (err) {
-              setNotice(errorMessage(err));
-            } finally {
-              input.value = '';
-            }
-          }}
-        />
-        {notice && (
-          <div className="toast" role="status">
-            <CircleCheck size={16} />
-            <span>{notice}</span>
-            <button
-              className="icon-btn"
-              aria-label="Dismiss notification"
-              onClick={() => setNotice('')}
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-      </main>
+  const openTask = (task: Task, expanded = true) => {
+    taskReturnFocus.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    updateLocation({ task: task.reference, tab: 'overview', expanded });
+  };
+  const closeTask = () =>
+    updateLocation(
+      location.view === 'conversations'
+        ? { expanded: false }
+        : { task: null, expanded: false, tab: 'overview' },
+    );
+  const onMerged = (evidence: TaskEvidence) => {
+    if (!selectedTask) return;
+    refreshGate.current.invalidate();
+    setData((current) => ({
+      ...current,
+      tasks: [
+        ...current.tasks.filter(
+          (task) => task.id !== selectedTask.id && task.id !== evidence.task.id,
+        ),
+        {
+          ...evidence.task,
+          done: pendingTicks.current.get(evidence.task.id) ?? evidence.task.done,
+        },
+      ],
+      messages: [
+        ...new Map(
+          [...current.messages, ...evidence.messages].map((message) => [message.id, message]),
+        ).values(),
+      ].sort((a, b) => a.timestamp - b.timestamp),
+    }));
+    updateLocation({ task: evidence.task.reference }, { replace: true });
+    void refresh();
+  };
+  const detail = selectedTask ? (
+    <TaskDetail
+      key={selectedTask.id}
+      task={selectedTask}
+      tasks={data.tasks}
+      messages={data.messages}
+      chats={chats}
+      tab={location.view === 'conversations' ? 'overview' : location.tab}
+      onTabChange={(tab) => {
+        const sourceChats = new Set(
+          data.messages
+            .filter((message) => selectedTask.source_ids.includes(message.id))
+            .map((message) => `${message.sessionId}\0${message.chatId}`),
+        );
+        updateLocation({
+          tab,
+          ...(location.view === 'conversations' ? { expanded: false } : {}),
+          ...(tab === 'sources' && location.view === 'conversations' && sourceChats.size > 1
+            ? { view: 'tasks', chat: null, filter: selectedTask.done ? 'done' : 'open' }
+            : {}),
+        });
+      }}
+      onTick={() => void tick(selectedTask)}
+      ticking={pendingTickIds.has(selectedTask.id)}
+      onSaved={() => void refresh()}
+      onMerged={onMerged}
+      notify={setNotice}
+    />
+  ) : (
+    <div className="inspector-empty">
+      <Link2 size={27} />
+      <h2>{loaded && location.task ? 'Task not found' : 'A next step, with context.'}</h2>
+      <p>
+        {loaded && location.task
+          ? 'This task link is no longer available. Choose another task.'
+          : 'Choose a linked task to see its next steps and completion criteria.'}
+      </p>
     </div>
   );
-}
-
-function conversationName(task: Task, messages: Message[], config: PublicSettings | null) {
-  const conversations = new Set(
-    messages
-      .filter((message) => task.source_ids.includes(message.id))
-      .map((message) => `${message.sessionId}\0${message.chatId}`),
+  const inspectorHeading = (
+    <div className="inspector-heading">
+      <div>
+        <Link2 size={15} />
+        <span>
+          {selectedTask
+            ? `Linked to ${selectedTask.source_ids.length} ${selectedTask.source_ids.length === 1 ? 'message' : 'messages'}`
+            : 'Task details'}
+          {selectedTask && <small>{conversationName(selectedTask, data.messages, chats)}</small>}
+        </span>
+      </div>
+      <button
+        className="icon-btn"
+        aria-label="Close task details"
+        onClick={() =>
+          location.view === 'conversations' && !narrow
+            ? updateLocation({ task: null, tab: 'overview' })
+            : closeTask()
+        }
+      >
+        <X size={17} />
+      </button>
+    </div>
   );
-  if (conversations.size > 1) return `${conversations.size} conversations`;
-  const source = messages.find((message) => task.source_ids.includes(message.id));
-  return (
-    config?.settings.chats.find(
-      (conversation) =>
-        conversation.chatId === source?.chatId && conversation.sessionId === source?.sessionId,
-    )?.name ?? task.scope
+  const inspector = !narrow ? (
+    <aside className="inspector" aria-label="Task details">
+      {inspectorHeading}
+      {detail}
+    </aside>
+  ) : null;
+  const navigation = (
+    <>
+      <button className="brand" onClick={() => navigate('conversations')}>
+        chat2tasks
+      </button>
+      <nav aria-label="Workspace">
+        <button
+          className={`nav-item ${location.view === 'conversations' ? 'active' : ''}`}
+          aria-current={location.view === 'conversations' ? 'page' : undefined}
+          onClick={() => navigate('conversations')}
+        >
+          <MessageCircle size={22} />
+          <span>Conversations</span>
+        </button>
+        <button
+          className={`nav-item ${location.view === 'tasks' ? 'active' : ''}`}
+          aria-current={location.view === 'tasks' ? 'page' : undefined}
+          onClick={() => navigate('tasks')}
+        >
+          <Inbox size={22} />
+          <span>All tasks</span>
+        </button>
+        <button className="nav-item" onClick={openSearch}>
+          <Search size={22} />
+          <span>Search</span>
+        </button>
+      </nav>
+      <div className="sidebar-bottom">
+        <button
+          className={`nav-item ${location.view === 'activity' ? 'active' : ''}`}
+          onClick={() => navigate('activity')}
+        >
+          <Activity size={21} />
+          <span>Activity</span>
+        </button>
+        <button
+          className={`nav-item ${location.view === 'settings' || location.view === 'connections' ? 'active' : ''}`}
+          onClick={() => navigate('settings')}
+        >
+          <Settings2 size={21} />
+          <span>Settings</span>
+        </button>
+        <span
+          className={`workspace-presence ${!online || data.status.error ? 'warning' : ''}`}
+          title={
+            !online
+              ? 'Workspace server unreachable'
+              : (data.status.error ??
+                (data.demo ? 'Sample workspace' : 'Workspace server available'))
+          }
+        >
+          <span className="owner-avatar">Y</span>
+          <span className="sr-only">
+            {!online ? 'Server unavailable' : data.demo ? 'Sample workspace' : 'Server available'}
+          </span>
+        </span>
+      </div>
+    </>
   );
-}
-
-function TaskDetail({
-  task,
-  tasks,
-  onMerged,
-  tab,
-  onTabChange,
-  messages,
-  config,
-  onTick,
-  ticking,
-  onSaved,
-  notify,
-}: {
-  task: Task;
-  tasks: Task[];
-  onMerged: (evidence: TaskEvidence) => void;
-  tab: TaskTab;
-  onTabChange: (tab: TaskTab) => void;
-  messages: Message[];
-  config: PublicSettings | null;
-  onTick: () => void;
-  ticking: boolean;
-  onSaved: () => void;
-  notify: (text: string) => void;
-}) {
-  const [remark, setRemark] = useState(task.own_remark),
-    [saving, setSaving] = useState(false),
-    [handoff, setHandoff] = useState(false);
-  const sources = messages.filter((m) => task.source_ids.includes(m.id));
-  async function save() {
-    setSaving(true);
-    try {
-      await api('remark', OkSchema, { id: task.id, remark });
-      onSaved();
-      notify('Your note is saved');
-    } catch (e) {
-      notify(errorMessage(e));
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function prepare() {
-    setHandoff(true);
-    try {
-      if (remark !== task.own_remark) {
-        await api('remark', OkSchema, { id: task.id, remark });
-        onSaved();
-      }
-      const file = await api('handoff', z.object({ filename: z.string(), content: z.string() }), {
-        id: task.id,
-      });
-      download(file.filename, file.content, 'text/markdown');
-      notify('Handoff prepared and downloaded');
-    } catch (e) {
-      notify(errorMessage(e));
-    } finally {
-      setHandoff(false);
-    }
-  }
-  return (
-    <div className="detail-body">
-      <div className="detail-scroll">
-        <div className="task-reference-bar">
-          <span className="task-reference">{task.reference}</span>
-          <button
-            className="text-button"
-            aria-label="Copy task link"
-            onClick={async () => {
+  const navigationTrigger = (
+    <Dialog.Trigger className="icon-btn mobile-toggle" aria-label="Open navigation">
+      <MenuIcon size={21} />
+    </Dialog.Trigger>
+  );
+  const questions = data.questions
+    .filter((question) => {
+      if (location.view !== 'conversations') return true;
+      const message = data.messages.find((item) => item.id === question.message_id);
+      return chat && message?.chatId === chat.chatId && message.sessionId === chat.sessionId;
+    })
+    .map((question) => (
+      <div className="question-card" key={question.id}>
+        <h3>{question.question}</h3>
+        <p>{data.messages.find((message) => message.id === question.message_id)?.body}</p>
+        <div className="form-inline">
+          <select
+            aria-label="Choose the completed task"
+            defaultValue=""
+            onChange={async (event) => {
+              if (!event.target.value) return;
               try {
-                await navigator.clipboard.writeText(taskUrl(task.reference, tab));
-                notify('Task link copied');
-              } catch {
-                notify('Could not copy the task link. Copy the address from your browser.');
+                await api('resolve', OkSchema, { id: question.id, task_id: event.target.value });
+                await refresh();
+              } catch (error) {
+                setNotice(errorMessage(error));
               }
             }}
           >
-            <Copy size={14} /> Copy link
+            <option value="" disabled>
+              Choose the completed task…
+            </option>
+            {data.tasks
+              .filter((task) => {
+                const message = data.messages.find((item) => item.id === question.message_id);
+                return (
+                  message &&
+                  task.source_ids.some((id) =>
+                    data.messages.some(
+                      (source) =>
+                        source.id === id &&
+                        source.chatId === message.chatId &&
+                        source.sessionId === message.sessionId,
+                    ),
+                  )
+                );
+              })
+              .map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
+          </select>
+          <button
+            className="text-button"
+            onClick={async () => {
+              try {
+                await api('resolve', OkSchema, { id: question.id, task_id: null });
+                await refresh();
+              } catch (error) {
+                setNotice(errorMessage(error));
+              }
+            }}
+          >
+            Dismiss
           </button>
         </div>
-        <h2 className={task.done ? 'task-done-title' : ''}>{task.title}</h2>
-        {task.triage_state !== 'ready' && (
-          <div className="detail-status">
-            <span className={`group-dot ${task.triage_state}`} />
-            {task.done ? 'Completed' : stateLabel[task.triage_state]}
-          </div>
-        )}
-        {tab === 'overview' ? (
-          <>
-            <p className="task-note">{task.note}</p>
-            {task.action_steps.length > 0 && (
-              <section className="detail-section">
-                <h3>Next steps</h3>
-                <ol className="steps">
-                  {task.action_steps.map((s, i) => (
-                    <li key={i}>{s}</li>
-                  ))}
-                </ol>
-              </section>
+      </div>
+    ));
+  return (
+    <>
+      <Dialog.Root open={mobileMenu} onOpenChange={setMobileMenu}>
+        <div className="app">
+          <aside className="sidebar">{navigation}</aside>
+          <main className="workspace">
+            {location.view !== 'conversations' && (
+              <header className="topbar">
+                {navigationTrigger}
+                <span>{viewTitle}</span>
+                <span className="topbar-status">
+                  {data.demo
+                    ? 'Sample workspace'
+                    : !online
+                      ? 'Reconnecting…'
+                      : data.status.error
+                        ? 'Needs attention'
+                        : data.status.syncing
+                          ? 'Analysing messages…'
+                          : 'Your workspace'}
+                </span>
+              </header>
             )}
-            {task.blocking_question && (
-              <div className="blocker">
-                <CircleDot size={15} />
-                <p>{task.blocking_question}</p>
+            {data.status.error && (
+              <div className="inline-alert">
+                <TriangleAlert size={17} />
+                <p>{data.status.error}</p>
+                <button className="text-button" onClick={() => navigate('activity')}>
+                  View activity
+                </button>
               </div>
             )}
-            <section className="detail-section source-preview">
-              <h3>From the conversation</h3>
-              {sources[0] && (
-                <blockquote>
-                  <p>{sources[0].body || 'Image attachment'}</p>
-                  <cite>
-                    {conversationName(task, messages, config)} · {time(sources[0].timestamp)}
-                  </cite>
-                </blockquote>
-              )}
-              <button className="text-button" onClick={() => onTabChange('sources')}>
-                <ArrowUpRight size={16} /> View conversation
-                {sources.length > 1 ? ` (${sources.length})` : ''}
-              </button>
-            </section>
-            <details className="detail-section note-section detail-options">
-              <summary>Notes &amp; details</summary>
-              <h3 className="note-label">Your note</h3>
-              <textarea
-                aria-label="Your note"
-                placeholder="A thought, a link, something to remember…"
-                maxLength={4000}
-                value={remark}
-                onChange={(e) => setRemark(e.target.value)}
-                rows={3}
-              />
-              <button
-                className="text-button"
-                disabled={saving || remark === task.own_remark}
-                onClick={() => void save()}
-              >
-                {saving ? 'Saving…' : 'Save note'}
-                <Check size={12} />
-              </button>
-
-              <p className="detail-scope">
-                {task.scope}
-                {task.priority === 'high' ? ' · High priority' : ''}
-              </p>
-              {task.done_when.length > 0 && (
-                <>
-                  <h3>You’re done when</h3>
-                  <ul className="criteria">
-                    {task.done_when.map((criterion) => (
-                      <li key={criterion}>{criterion}</li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              <div className="secondary-actions">
-                <button
-                  className="button secondary"
-                  disabled={handoff}
-                  onClick={() => void prepare()}
-                >
-                  {handoff ? (
-                    <LoaderCircle size={14} className="spin" />
-                  ) : (
-                    <ArrowUpRight size={14} />
-                  )}
-                  Handoff
+            {!online && (
+              <div className="inline-alert" role="alert">
+                <TriangleAlert size={17} />
+                <p>
+                  {loaded
+                    ? 'Reconnecting to your workspace. Showing saved data.'
+                    : 'Couldn’t reach your workspace. Retrying automatically.'}
+                </p>
+                <button className="text-button" onClick={() => void refresh()}>
+                  Try again
                 </button>
+              </div>
+            )}
+            {!config && configError && online && (
+              <div className="inline-alert" role="alert">
+                <TriangleAlert size={17} />
+                <p>Couldn’t load your conversations and settings. {configError}</p>
+                <button className="text-button" onClick={() => void refreshConfig()}>
+                  Reload settings
+                </button>
+              </div>
+            )}
+            {location.view === 'conversations' ? (
+              <ConversationWorkspace
+                chats={chats}
+                messages={data.messages}
+                tasks={data.tasks}
+                chat={chat}
+                selectedTask={selectedTask}
+                sourceOnly={location.tab === 'sources'}
+                loaded={loaded && !!config}
+                onSelectChat={(id) =>
+                  updateLocation({ chat: id, task: null, tab: 'overview', expanded: false })
+                }
+                onSelectTask={(task) => openTask(task, false)}
+                onOpenTask={(task) => openTask(task)}
+                onSourceMode={(sourceOnly) =>
+                  updateLocation({ tab: sourceOnly ? 'sources' : 'overview' })
+                }
+                onManage={() => navigate('connections')}
+                navigationTrigger={navigationTrigger}
+                inspector={selectedTask || location.task ? inspector : null}
+                questions={questions}
+              />
+            ) : location.view === 'tasks' ? (
+              <TaskQueue
+                tasks={data.tasks}
+                messages={data.messages}
+                chats={chats}
+                location={location}
+                selectedTask={selectedTask}
+                pending={pendingTickIds}
+                syncing={data.status.syncing}
+                search={search}
+                onLocation={updateLocation}
+                onSelectTask={openTask}
+                onTick={(task) => void tick(task)}
+                onSync={() => void sync()}
+                onExport={() => download('chat2tasks-export.json', JSON.stringify(data, null, 2))}
+                onImport={() => file.current?.click()}
+                inspector={inspector}
+                questions={questions}
+              />
+            ) : location.view === 'activity' ? (
+              <ActivityView data={data} online={online} onSync={() => void sync()} />
+            ) : (
+              <div className="settings-shell">
+                <nav className="settings-navigation" aria-label="Settings sections">
+                  <button
+                    className={location.view === 'settings' ? 'selected' : ''}
+                    onClick={() => navigate('settings')}
+                  >
+                    Models & automation
+                  </button>
+                  <button
+                    className={location.view === 'connections' ? 'selected' : ''}
+                    onClick={() => navigate('connections')}
+                  >
+                    Connections
+                  </button>
+                </nav>
+                {config ? (
+                  <SettingsPanel
+                    key={location.view}
+                    tab={location.view === 'connections' ? 'chats' : 'models'}
+                    config={config}
+                    onSave={(next) => {
+                      setConfig(next);
+                      void refresh();
+                    }}
+                    notify={setNotice}
+                  />
+                ) : (
+                  <p className="empty-copy">Loading settings…</p>
+                )}
+              </div>
+            )}
+            <input
+              ref={file}
+              type="file"
+              accept=".json"
+              hidden
+              onChange={async (event) => {
+                const input = event.target,
+                  imported = input.files?.[0];
+                if (!imported) return;
+                try {
+                  await api('import', OkSchema, JSON.parse(await imported.text()));
+                  await refresh();
+                  setNotice('Task ticks imported');
+                } catch (error) {
+                  setNotice(errorMessage(error));
+                } finally {
+                  input.value = '';
+                }
+              }}
+            />
+            {notice && (
+              <div className="toast" role="status">
+                <CheckCircle2 size={17} />
+                <span>{notice}</span>
                 <button
                   className="icon-btn"
-                  aria-label="Copy raw task context"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(
-                        JSON.stringify({ task, source_messages: sources }, null, 2),
-                      );
-                      notify('Task context copied');
-                    } catch {
-                      notify('Clipboard unavailable. Use Export workspace from the task menu.');
-                    }
-                  }}
+                  aria-label="Dismiss notification"
+                  onClick={() => setNotice('')}
                 >
-                  <Copy size={15} />
+                  <X size={15} />
                 </button>
               </div>
-              <TaskMerge
-                task={task}
-                tasks={tasks}
-                dirty={saving || ticking || remark !== task.own_remark}
-                onMerged={onMerged}
-                notify={notify}
-              />
-              {task.merged_from.length > 0 && (
-                <section className="merge-history">
-                  <h3>Merged TODOs</h3>
-                  {task.merged_from.map((source) => (
-                    <div key={source.id}>
-                      <p>
-                        <strong>{source.reference}</strong> · {source.title}
-                      </p>
-                      {source.own_remark && <blockquote>{source.own_remark}</blockquote>}
-                    </div>
-                  ))}
-                </section>
-              )}
-              <p className="updated-note">Updated {time(task.updated)}</p>
-            </details>
-          </>
-        ) : (
-          <div className="source-list">
-            <button className="text-button" onClick={() => onTabChange('overview')}>
-              Back to task
-            </button>
-            <p className="source-intro">
-              The messages behind this task. Dates use your local timezone.
-            </p>
-            {sources.map((m) => (
-              <MessageCard
-                key={m.id}
-                message={m}
-                name={
-                  config?.settings.chats.find(
-                    (c) => c.chatId === m.chatId && c.sessionId === m.sessionId,
-                  )?.name ?? 'Contact'
-                }
-                allMessages={messages}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="detail-actions">
-        <button
-          className={`button ${task.done ? 'secondary' : 'primary'}`}
-          disabled={ticking}
-          onClick={onTick}
-        >
-          {task.done ? 'Reopen task' : 'Mark Complete'}
-        </button>
-      </div>
-    </div>
-  );
-}
-function MessageCard({
-  message: m,
-  name,
-  allMessages,
-}: {
-  message: Message;
-  name: string;
-  allMessages: Message[];
-}) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <article className={`message-card ${m.direction}`} id={`message-${m.id}`}>
-      <div className="message-heading">
-        <span className="tiny-avatar">{m.direction === 'outgoing' ? 'Y' : name.slice(0, 1)}</span>
-        <strong>{m.direction === 'outgoing' ? 'You' : name}</strong>
-        <time>{time(m.timestamp)}</time>
-      </div>
-      {m.reply_to_wa_id && (
-        <blockquote>
-          {m.reply_quote ||
-            allMessages.find((p) => p.id === m.reply_to_id)?.body ||
-            'Quoted attachment'}
-        </blockquote>
-      )}
-      <p>{m.body || '[Attachment without a caption]'}</p>
-      {m.browser_source && (
-        <p className="browser-source-label">
-          Captured selection · {m.browser_source.title} · WhatsApp Web
-        </p>
-      )}
-      {m.type === 'image' &&
-        (failed ? (
-          <div className="image-unavailable">
-            <TriangleAlert size={15} />
-            <span>The original image is unavailable from OpenWA.</span>
-          </div>
-        ) : (
-          <a href={`/api/media?id=${encodeURIComponent(m.id)}`} target="_blank" rel="noreferrer">
-            <img
-              src={`/api/media?id=${encodeURIComponent(m.id)}`}
-              alt={`Attachment from ${name}, ${time(m.timestamp)}`}
-              loading="lazy"
-              onError={() => setFailed(true)}
-            />
-          </a>
-        ))}
-      {m.image_reading && (
-        <details>
-          <summary>What AI could read</summary>
-          {m.image_reading.observations.map((text, i) => (
-            <p key={i}>{text}</p>
-          ))}
-          {m.image_reading.uncertainties.map((text, i) => (
-            <p className="uncertainty" key={i}>
-              {text}
-            </p>
-          ))}
-        </details>
-      )}
-    </article>
-  );
-}
-function ActivityView({ data, onSync }: { data: Snapshot; onSync: () => void }) {
-  return (
-    <div className="settings-page">
-      <div className="eyebrow">YOUR WORKSPACE, AT A GLANCE</div>
-      <h1>Quietly keeping up.</h1>
-      <p className="page-description">See what’s happening between conversations and tasks.</p>
-      <div className="activity-grid">
-        <section className="settings-card">
-          <span className="card-icon">
-            <Zap size={20} />
-          </span>
-          <h2>{data.status.phase}</h2>
-          <p>
-            {data.status.error ??
-              'Messages arrive through signed webhooks. Your trigger settings decide when task analysis runs.'}
-          </p>
-          <button className="button secondary" onClick={onSync}>
-            Run now <ArrowUpRight size={14} />
-          </button>
-        </section>
-        <section className="settings-card">
-          <span className="card-icon">
-            <Sparkles size={20} />
-          </span>
-          <h2>{data.usage.calls.toLocaleString()} AI calls</h2>
-          <p>
-            {data.usage.totalTokens.toLocaleString()} tokens recorded. Provider billing and
-            subscription limits are managed by your provider.
-          </p>
-          <span className="label">{data.usage.model}</span>
-        </section>
-      </div>
-      {data.status.last_decision && (
-        <section className="settings-card">
-          <h2>Last trigger decision · {data.status.last_decision.choice}</h2>
-          <p>{data.status.last_decision.reason}</p>
-          <span className="label">{data.status.last_decision.connection}</span>
-        </section>
-      )}
-      <section className="settings-card">
-        <h2>Recent conversation</h2>
-        {[...data.messages]
-          .reverse()
-          .slice(0, 12)
-          .map((m) => (
-            <div className="activity-row" key={m.id}>
-              <MessageSquare size={15} />
-              <div>
-                <strong>{m.direction === 'outgoing' ? 'You' : 'Incoming message'}</strong>
-                <p>{m.body || `[${m.type}]`}</p>
+            )}
+          </main>
+          <Dialog.Portal>
+            <Dialog.Backdrop className="modal-backdrop navigation-backdrop" />
+            <Dialog.Viewport className="navigation-viewport">
+              <Dialog.Popup className="navigation-popup">
+                <Dialog.Title className="sr-only">Workspace navigation</Dialog.Title>
+                <Dialog.Close className="icon-btn navigation-close" aria-label="Close navigation">
+                  <X size={20} />
+                </Dialog.Close>
+                {navigation}
+              </Dialog.Popup>
+            </Dialog.Viewport>
+          </Dialog.Portal>
+        </div>
+      </Dialog.Root>
+      <Dialog.Root
+        open={narrow && !!location.task && (location.view === 'tasks' || location.expanded)}
+        onOpenChange={(open) => {
+          if (!open) closeTask();
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Backdrop className="task-dialog-backdrop" />
+          <Dialog.Viewport className="task-dialog-viewport">
+            <Dialog.Popup
+              className="task-dialog inspector"
+              finalFocus={() =>
+                taskReturnFocus.current?.isConnected
+                  ? taskReturnFocus.current
+                  : document.querySelector<HTMLElement>(
+                      '.task-search input, .thread-back, .conversation-rail-heading button',
+                    )
+              }
+            >
+              <Dialog.Title className="sr-only">Task details</Dialog.Title>
+              <Dialog.Description className="sr-only">
+                Review this task, its evidence, and completion criteria.
+              </Dialog.Description>
+              <div className="inspector-heading">
+                <Dialog.Close className="text-button" aria-label="Close task details">
+                  <ArrowLeft size={18} />
+                  {location.view === 'conversations' ? 'Conversation' : 'All tasks'}
+                </Dialog.Close>
+                <span>{selectedTask?.reference ?? 'Task details'}</span>
               </div>
-              <time>{time(m.timestamp)}</time>
-            </div>
-          ))}
-        {!data.messages.length && (
-          <p>Your first messages will appear after you activate a conversation.</p>
-        )}
-      </section>
-      <div className="privacy-strip">
-        <ShieldCheck size={16} />
-        <p>
-          Conversations stay on your server. Activated chats are sent to the model connection you
-          choose.
-        </p>
-      </div>
-    </div>
+              {detail}
+            </Dialog.Popup>
+          </Dialog.Viewport>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </>
   );
 }
 export function errorMessage(error: unknown) {
