@@ -134,7 +134,7 @@ export const TaskTriageUpdateSchema = TaskTriageSchema.safeExtend({
   id: text,
   expected_revision: z.string().regex(/^[a-f0-9]{64}$/),
 });
-export const TaskSchema = z.object({
+const TaskBaseSchema = z.object({
   id: text,
   reference: z.string().regex(/^TODO-\d{3,}$/),
   title: text,
@@ -151,6 +151,34 @@ export const TaskSchema = z.object({
   triage_state: z.enum(['ready', 'needs_info', 'waiting', 'reported_done']).default('ready'),
   blocking_question: z.string().nullable().default(null),
 });
+export const TaskSchema = TaskBaseSchema.extend({
+  merged_from: z
+    .array(
+      TaskBaseSchema.pick({
+        id: true,
+        reference: true,
+        title: true,
+        note: true,
+        own_remark: true,
+        done: true,
+        source_ids: true,
+      }),
+    )
+    .default([]),
+});
+export const TaskEvidenceSchema = z.object({
+  task: TaskSchema,
+  messages: z.array(MessageSchema),
+  revision: z.string(),
+});
+export const TaskMergeSchema = z
+  .object({
+    source_id: text,
+    target_id: text,
+    source_revision: z.string().regex(/^[a-f0-9]{64}$/),
+    target_revision: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 export const DecisionSchema = z
   .object({
     message_id: text,
@@ -201,6 +229,7 @@ export type Profile = z.infer<typeof ProfileSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
 export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
 export type Task = z.infer<typeof TaskSchema>;
+export type TaskEvidence = z.infer<typeof TaskEvidenceSchema>;
 export type TaskChange = z.infer<typeof TaskChangeSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;

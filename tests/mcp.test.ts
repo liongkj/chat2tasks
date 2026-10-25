@@ -201,6 +201,7 @@ test('an MCP client reads evidence, images and conversations, then saves bounded
     const {
       id: _id,
       reference: _reference,
+      merged_from: _merged,
       created: _created,
       updated: _updated,
       done: _done,

@@ -1,4 +1,5 @@
 import { useInputModality } from '../../src/shared/useInputModality.js';
+import { matchesTaskQuery } from '../../src/shared/tasks.js';
 import { Menu } from '@base-ui/react/menu';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -248,7 +249,7 @@ function App() {
       (t) =>
         t.done === showDone &&
         (!chatFilter || t.chatIds.includes(chatFilter)) &&
-        (t.reference + ' ' + t.title + ' ' + t.scope).toLowerCase().includes(search.toLowerCase()),
+        matchesTaskQuery(t, search),
     ) ?? [];
   const destinationChat =
     state?.chats.find((chat) => chat.id === captureChat && chat.enabled)?.id ??
@@ -463,8 +464,10 @@ function App() {
                           <strong>{task.title}</strong>
                           <span>
                             {task.reference} ·{' '}
-                            {state?.chats.find((chat) => task.chatIds.includes(chat.id))?.name ??
-                              task.scope}
+                            {task.chatIds.length > 1
+                              ? `${task.chatIds.length} conversations`
+                              : (state?.chats.find((chat) => task.chatIds.includes(chat.id))
+                                  ?.name ?? task.scope)}
                           </span>
                           {task.triage_state === 'needs_info' && <small>Needs a detail</small>}
                         </button>

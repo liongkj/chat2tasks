@@ -131,10 +131,7 @@ export class Companion {
     };
   }
   task(id: string) {
-    const snapshot = this.store.snapshot(),
-      task = snapshot.tasks.find((t) => t.id === id);
-    if (!task) throw new CompanionError(404, 'Task not found');
-    return { task, messages: snapshot.messages.filter((m) => task.source_ids.includes(m.id)) };
+    return this.store.taskEvidence(id);
   }
   capture(deviceId: string, input: z.infer<typeof CaptureSchema>) {
     const chat = this.store.settings().chats.find((c) => c.id === input.chatId);

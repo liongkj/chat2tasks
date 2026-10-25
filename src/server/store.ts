@@ -3,10 +3,13 @@ import { createHash, createCipheriv, createDecipheriv, randomBytes } from 'node:
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { matchesTaskIdentifier } from '../shared/tasks.js';
 import {
   MessageSchema,
   TaskSchema,
   TaskTriageUpdateSchema,
+  TaskMergeSchema,
+  DecisionSchema,
   SettingsSchema,
   StatusSchema,
   QuestionSchema,
@@ -53,7 +56,14 @@ const legacySchema = z.object({
   model: z.string().optional(),
 });
 
-export class TaskTriageError extends Error {}
+export class TaskTriageError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode = 400,
+  ) {
+    super(message);
+  }
+}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -73,6 +83,8 @@ export class Store {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000;
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,scope TEXT NOT NULL,note TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL);
       CREATE TABLE IF NOT EXISTS task_references(number INTEGER PRIMARY KEY AUTOINCREMENT,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE);
+      CREATE TABLE IF NOT EXISTS task_merges(source_id TEXT PRIMARY KEY REFERENCES tasks(id),target_id TEXT NOT NULL REFERENCES tasks(id),created REAL NOT NULL,source_ids TEXT NOT NULL,CHECK(source_id<>target_id));
+      CREATE INDEX IF NOT EXISTS task_merges_target ON task_merges(target_id);
       CREATE TRIGGER IF NOT EXISTS assign_task_reference AFTER INSERT ON tasks BEGIN
         INSERT INTO task_references(task_id) VALUES(NEW.id);
       END;
@@ -329,12 +341,9 @@ export class Store {
       for (const t of changes) {
         const sources = t.source_ids.map((id) => messages.get(id));
         const first = sources[0];
-        if (
-          !first ||
-          sources.some((m) => !m || m.chatId !== first.chatId || m.sessionId !== first.sessionId)
-        )
+        if (!first || sources.some((m) => !m))
           throw new Error('A task must cite evidence from one supplied conversation');
-        const identity =
+        const requestedIdentity =
           t.id ??
           hash([
             first.sessionId,
@@ -342,10 +351,27 @@ export class Store {
             [...t.source_ids].sort()[0],
             t.title.toLocaleLowerCase(),
           ]);
+        const redirect = this.db
+          .prepare('SELECT target_id AS id FROM task_merges WHERE source_id=?')
+          .get(requestedIdentity);
+        const identity = redirect ? IdRow.parse(redirect).id : requestedIdentity;
         const existing = this.db.prepare('SELECT id FROM tasks WHERE id=?').get(identity);
+        const ownerLinked = this.db
+          .prepare('SELECT source_id FROM task_merges WHERE target_id=? LIMIT 1')
+          .get(identity);
+        if (
+          !ownerLinked &&
+          sources.some((m) => m?.chatId !== first.chatId || m?.sessionId !== first.sessionId)
+        )
+          throw new Error('A task must cite evidence from one supplied conversation');
         if (t.id && !existing) throw new Error('Unknown task ID');
-        if (existing && !this.taskInChat(identity, first))
+        if (existing && sources.some((m) => !m || !this.taskInChat(identity, m)))
           throw new Error('Cannot update a task from another conversation');
+        if (redirect) {
+          for (const id of t.source_ids)
+            this.db.prepare('INSERT OR IGNORE INTO sources VALUES(?,?)').run(identity, id);
+          continue;
+        }
         const timestamp = now();
         this.db
           .prepare(
@@ -375,17 +401,81 @@ export class Store {
       )
       .all(id)
       .map((r) => MessageSchema.parse(JSON.parse(PayloadRow.parse(r).payload)));
-    return (
-      sources.length > 0 &&
-      sources.every((m) => m.sessionId === message.sessionId && m.chatId === message.chatId)
-    );
+    return sources.some((m) => m.sessionId === message.sessionId && m.chatId === message.chatId);
+  }
+  private taskId(identifier: string) {
+    const row = this.db
+      .prepare(
+        "SELECT t.id FROM tasks t JOIN task_references ref ON ref.task_id=t.id WHERE t.id=? OR 'TODO-' || printf('%03d',ref.number)=?",
+      )
+      .get(identifier, identifier.toUpperCase());
+    if (!row) throw new TaskTriageError('Task not found', 404);
+    return IdRow.parse(row).id;
+  }
+  mergeTasks(input: z.infer<typeof TaskMergeSchema>) {
+    const value = TaskMergeSchema.parse(input);
+    return this.transaction(() => {
+      const sourceId = this.taskId(value.source_id);
+      const requestedTarget = this.taskId(value.target_id);
+      const target = this.taskEvidence(requestedTarget);
+      if (sourceId === requestedTarget || sourceId === target.task.id)
+        throw new TaskTriageError('A TODO cannot be merged into itself');
+      const existing = this.db
+        .prepare('SELECT target_id AS id FROM task_merges WHERE source_id=?')
+        .get(sourceId);
+      if (existing) {
+        if (IdRow.parse(existing).id !== target.task.id)
+          throw new TaskTriageError(
+            'This TODO was already merged into a different destination. Reload it before continuing.',
+            409,
+          );
+        return target;
+      }
+      const source = this.taskEvidence(sourceId);
+      if (source.revision !== value.source_revision || target.revision !== value.target_revision)
+        throw new TaskTriageError(
+          'A TODO changed while the merge was being prepared. Try again after reading the updated tasks.',
+          409,
+        );
+      this.db
+        .prepare(
+          'INSERT OR IGNORE INTO sources(task_id,message_id) SELECT ?,message_id FROM sources WHERE task_id=?',
+        )
+        .run(target.task.id, sourceId);
+      this.db.prepare('DELETE FROM sources WHERE task_id=?').run(sourceId);
+      this.db
+        .prepare('UPDATE task_merges SET target_id=? WHERE target_id=?')
+        .run(target.task.id, sourceId);
+      this.db
+        .prepare('INSERT INTO task_merges VALUES(?,?,?,?)')
+        .run(sourceId, target.task.id, now(), JSON.stringify(source.task.source_ids));
+      this.db.prepare('UPDATE tasks SET updated=? WHERE id=?').run(now(), target.task.id);
+      for (const row of this.db
+        .prepare("SELECT id,payload FROM completion_questions WHERE status='pending'")
+        .all()) {
+        const question = DecisionSchema.parse(JSON.parse(PayloadRow.parse(row).payload));
+        if (!question.task_ids.includes(sourceId)) continue;
+        question.task_ids = [
+          ...new Set(question.task_ids.map((id) => (id === sourceId ? target.task.id : id))),
+        ];
+        this.db
+          .prepare('UPDATE completion_questions SET payload=? WHERE id=?')
+          .run(JSON.stringify(question), IdRow.parse(row).id);
+      }
+      return this.taskEvidence(target.task.id);
+    });
+  }
+  private assertNotMerged(id: string) {
+    if (this.db.prepare('SELECT source_id FROM task_merges WHERE source_id=?').get(id))
+      throw new TaskTriageError(
+        'This TODO was merged. Open its destination before changing it.',
+        409,
+      );
   }
   taskEvidence(id: string) {
     const snapshot = this.snapshot();
-    const task = snapshot.tasks.find(
-      (item) => item.id === id || item.reference === id.toUpperCase(),
-    );
-    if (!task) throw new TaskTriageError('Task not found');
+    const task = snapshot.tasks.find((item) => matchesTaskIdentifier(item, id));
+    if (!task) throw new TaskTriageError('Task not found', 404);
     const messages = snapshot.messages.filter((message) => task.source_ids.includes(message.id));
     return { task, messages, revision: hash({ task, messages }) };
   }
@@ -411,6 +501,7 @@ export class Store {
     });
   }
   tick(id: string, done: boolean) {
+    this.assertNotMerged(id);
     if (!this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
       throw new Error('Task not found');
     const timestamp = now();
@@ -422,6 +513,7 @@ export class Store {
       .run(id, Number(done), timestamp);
   }
   remark(id: string, remark: string) {
+    this.assertNotMerged(id);
     if (!this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
       throw new Error('Task not found');
     this.db.prepare('INSERT OR REPLACE INTO task_remarks VALUES(?,?,?)').run(id, remark, now());
@@ -549,7 +641,7 @@ export class Store {
     });
     const tasks = this.db
       .prepare(
-        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id ORDER BY t.created,t.id",
+        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,t.id",
       )
       .all()
       .map((row) => {
@@ -559,6 +651,18 @@ export class Store {
         return TaskSchema.parse({
           ...row,
           ...z.record(z.string(), z.unknown()).parse(detail),
+          merged_from: this.db
+            .prepare(
+              "SELECT t.id,'TODO-' || printf('%03d',ref.number) reference,t.title,t.note,m.source_ids,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM task_merges m JOIN tasks t ON t.id=m.source_id JOIN task_references ref ON ref.task_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id WHERE m.target_id=? ORDER BY m.created,t.id",
+            )
+            .all(id)
+            .map((source) => ({
+              ...source,
+              done: Boolean(source.done),
+              source_ids: z
+                .array(z.string())
+                .parse(JSON.parse(z.string().parse(source.source_ids))),
+            })),
           done: Boolean(row.done),
           source_ids: this.db
             .prepare('SELECT message_id FROM sources WHERE task_id=?')

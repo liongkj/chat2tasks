@@ -3,11 +3,11 @@ import staticFiles from '@fastify/static';
 import { timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { Store } from './store.js';
+import { Store, TaskTriageError } from './store.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
-import { SettingsUpdateSchema, TaskSchema } from '../shared/schema.js';
+import { SettingsUpdateSchema, TaskSchema, TaskMergeSchema } from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
@@ -86,6 +86,8 @@ server.addHook('onRequest', async (request, reply) => {
     return reply.code(403).send({ error: 'Invalid request origin or content type' });
 });
 server.setErrorHandler((error, request, reply) => {
+  if (error instanceof TaskTriageError)
+    return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof CompanionError)
     return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof z.ZodError)
@@ -131,6 +133,10 @@ await server.register(async (receiver) => {
   });
 });
 server.get('/api/state', () => store.snapshot());
+server.get('/api/tasks/:id', (request) =>
+  store.taskEvidence(z.object({ id: z.string() }).parse(request.params).id),
+);
+server.post('/api/tasks/merge', (request) => store.mergeTasks(TaskMergeSchema.parse(request.body)));
 server.get('/api/settings', () => store.publicSettings());
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
