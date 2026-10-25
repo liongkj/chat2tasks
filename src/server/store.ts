@@ -317,9 +317,15 @@ export class Store {
   }
   cache(messages: Message[]) {
     this.transaction(() => {
-      for (const m of messages)
-        this.db.prepare('INSERT OR REPLACE INTO messages VALUES(?,?)').run(m.id, JSON.stringify(m));
+      for (const m of messages) this.upsertMessage(m);
     });
+  }
+  upsertMessage(message: Message) {
+    this.db
+      .prepare(
+        'INSERT INTO messages(id,payload) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',
+      )
+      .run(message.id, JSON.stringify(message));
   }
   pending(messages: Message[]) {
     const seen = new Map(

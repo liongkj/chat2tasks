@@ -3,7 +3,8 @@ import { TaskTriageSchema, type Task } from '../shared/schema.js';
 
 export type TaskTab = 'overview' | 'sources';
 export type TaskFilter = 'open' | 'all' | 'done' | Task['triage_state'];
-export type WorkspaceView = 'conversations' | 'tasks' | 'connections' | 'settings' | 'activity';
+export type WorkspaceView =
+  'conversations' | 'tasks' | 'threads' | 'connections' | 'settings' | 'activity';
 export type WorkspaceLocation = {
   view: WorkspaceView;
   chat: string | null;
@@ -12,6 +13,7 @@ export type WorkspaceLocation = {
   filter: TaskFilter;
   query: string;
   expanded: boolean;
+  message?: string | null;
 };
 
 function readLocation(): WorkspaceLocation {
@@ -23,12 +25,14 @@ function readLocation(): WorkspaceLocation {
     view:
       view === 'conversations' ||
       view === 'tasks' ||
+      view === 'threads' ||
       view === 'connections' ||
       view === 'settings' ||
       view === 'activity'
         ? view
         : 'tasks',
     chat: params.get('chat'),
+    message: params.get('message'),
     task: params.get('task'),
     tab: params.get('context') === 'conversation' ? 'sources' : 'overview',
     filter: status === 'done' || status === 'all' ? status : state.success ? state.data : 'open',
@@ -41,6 +45,7 @@ function locationUrl(location: WorkspaceLocation) {
   const url = new URL(window.location.href);
   const values = {
     view: location.view,
+    message: location.view === 'conversations' ? (location.message ?? null) : null,
     chat: location.chat,
     task: location.task,
     context: location.task && location.tab === 'sources' ? 'conversation' : null,
@@ -60,7 +65,7 @@ function locationUrl(location: WorkspaceLocation) {
 }
 
 export function taskUrl(reference: string | null, tab: TaskTab = 'overview') {
-  return locationUrl({ ...readLocation(), task: reference, tab });
+  return locationUrl({ ...readLocation(), task: reference, tab, message: null });
 }
 
 export function useWorkspaceLocation() {

@@ -39,7 +39,9 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
         </span>
         <div>
           <h2>Chrome companion</h2>
-          <p>Your tasks, beside WhatsApp Web. Pair a browser with this workspace.</p>
+          <p>
+            Quiet TODO links and topic threads in WhatsApp Web. Pair a browser with this workspace.
+          </p>
         </div>
       </div>
       <ol className="companion-steps">
@@ -49,16 +51,22 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
           </a>
           <p>
             Unzip it. Open <strong>chrome://extensions</strong>, enable Developer mode, choose{' '}
-            <strong>Load unpacked</strong>, and select the unzipped folder.
+            <strong>Load unpacked</strong>, and select the unzipped folder. For Edge, use{' '}
+            <strong>edge://extensions</strong>.
           </p>
         </li>
         <li>
           <p>
             Pin Chat2Tasks in Chrome. Open its side panel, enter this server’s address, and paste a
-            pairing code below.
+            pairing code below. Allow access to WhatsApp Web, then refresh that tab to see Chats and
+            Threads.
           </p>
         </li>
       </ol>
+      <p className="muted">
+        Updating an existing installation? Replace the files in its current extension folder, reload
+        the extension, and refresh WhatsApp Web. Keeping the folder preserves its pairing.
+      </p>
       <div className="connection-actions">
         <button className="button secondary" disabled={busy} onClick={() => void createCode()}>
           {busy ? <LoaderCircle className="spin" size={14} /> : <Link2 size={14} />} Create pairing

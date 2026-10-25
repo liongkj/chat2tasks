@@ -1,0 +1,372 @@
+.t-workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+  background: #fff;
+  color: #24272b;
+  color-scheme: light;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  isolation: isolate;
+}
+.t-workspace * {
+  box-sizing: border-box;
+}
+.t-workspace button,
+.t-workspace input,
+.t-workspace select {
+  font: inherit;
+}
+.t-workspace button {
+  cursor: pointer;
+}
+.t-workspace button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.t-workspace button:focus-visible,
+.t-workspace input:focus-visible,
+.t-workspace select:focus-visible {
+  outline: 2px solid #555c65;
+  outline-offset: 3px;
+}
+.t-rail {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 var(--thread-rail-width, 290px);
+  min-height: 0;
+  border-right: 1px solid #e4e6e8;
+  background: #fff;
+}
+.t-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 20px 4px;
+}
+.t-rail h1 {
+  font-size: 20px;
+  letter-spacing: -0.4px;
+  margin: 0;
+  flex: 1;
+}
+.t-scope {
+  margin: 4px 20px 16px;
+  color: #626970;
+  font-size: 12px;
+}
+.t-search {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border: 1px solid #dedfe2;
+  border-radius: 6px;
+  min-width: 0;
+  color: inherit;
+  background: #fff;
+}
+.t-topics {
+  flex: 1;
+  overflow: auto;
+}
+.t-topic {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid #ededee;
+  padding: 17px 20px;
+  color: inherit;
+}
+.t-topic:hover {
+  background: #f7f7f7;
+}
+.t-topic[aria-pressed='true'] {
+  background: #ededee;
+  box-shadow: inset 2px 0 #34383d;
+}
+.t-topic strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.t-topic small {
+  display: block;
+  font-size: 12px;
+  color: #636a72;
+  margin-top: 4px;
+}
+.t-other {
+  flex: 0 0 auto;
+  border-top: 1px solid #e4e6e8;
+}
+.t-discussion {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  background: #f6f5f2;
+}
+.t-heading {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #e4e6e8;
+  padding: 20px 28px;
+  min-height: 90px;
+}
+.t-heading > div:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.t-heading h2 {
+  font-size: 20px;
+  line-height: 1.3;
+  letter-spacing: -0.4px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.t-heading p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: #636a72;
+  overflow-wrap: anywhere;
+}
+.t-task-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.t-text {
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #505962;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-size: 12px;
+  white-space: normal;
+}
+.t-back {
+  display: none;
+}
+.t-messages {
+  overflow: auto;
+  flex: 1;
+  padding: 24px 30px 44px;
+  scrollbar-gutter: stable;
+}
+.t-source {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 860px;
+  margin: 24px auto 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #dcdedc;
+}
+.t-message-group:first-child .t-source {
+  margin-top: 0;
+}
+.t-source strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.t-source button {
+  flex-shrink: 0;
+}
+.t-message {
+  max-width: 760px;
+  width: fit-content;
+  min-width: 200px;
+  margin: 8px max(0px, calc((100% - 860px) / 2)) 8px;
+  border: 1px solid #e3e4e1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 10px 14px;
+  overflow-wrap: anywhere;
+}
+.t-message.outgoing {
+  margin-left: auto;
+  background: #eaf2e6;
+}
+.t-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #5c656a;
+  font-size: 11px;
+}
+.t-message-meta time {
+  margin-left: auto;
+}
+.t-move {
+  font-size: 11px;
+  margin-left: 6px;
+}
+.t-body {
+  white-space: pre-wrap;
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.t-message blockquote {
+  border-left: 2px solid #858f87;
+  margin: 6px 0;
+  padding: 6px 10px;
+  background: #00000005;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.t-image {
+  display: block;
+  max-width: 100%;
+  max-height: 600px;
+  object-fit: contain;
+  margin-top: 10px;
+}
+.t-attachment {
+  margin-top: 8px;
+}
+.t-attachment p {
+  font-size: 12px;
+}
+.t-move-form {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #d6dcd4;
+  min-width: min(280px, 100%);
+}
+.t-move-form label {
+  display: block;
+  font-size: 12px;
+  margin: 8px 0;
+}
+.t-move-form select,
+.t-move-form input {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #bdc2c5;
+  border-radius: 4px;
+  background: #fff;
+  color: #24272b;
+  margin-top: 5px;
+}
+.t-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+.t-button {
+  padding: 9px 14px;
+  background: #303439;
+  border: 1px solid #303439;
+  border-radius: 5px;
+  color: #fff;
+  font-weight: 600;
+}
+.t-progress,
+.t-error,
+.t-notice {
+  padding: 10px 24px;
+  margin: 0;
+  background: #fff;
+  border-bottom: 1px solid #e4e6e8;
+  font-size: 13px;
+}
+.t-error {
+  color: #8b332b;
+}
+.t-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.t-notice button {
+  margin-left: auto;
+}
+.t-empty {
+  padding: 28px 20px;
+  color: #636a72;
+  font-size: 13px;
+}
+.t-empty h3 {
+  color: #303439;
+}
+@media (max-width: 760px) {
+  .t-workspace {
+    height: 100%;
+    width: 100%;
+  }
+  .t-rail {
+    flex: 1;
+  }
+  .t-discussion {
+    display: none;
+  }
+  .t-workspace[data-detail='true'] .t-rail {
+    display: none;
+  }
+  .t-workspace[data-detail='true'] .t-discussion {
+    display: flex;
+  }
+  .t-back {
+    display: inline-block;
+    flex: 0 0 auto;
+  }
+  .t-heading {
+    padding: 14px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .t-heading h2 {
+    font-size: 18px;
+  }
+  .t-task-links {
+    width: 100%;
+    padding-left: 0;
+  }
+  .t-messages {
+    padding: 12px 14px 28px;
+  }
+  .t-message {
+    min-width: 0;
+    max-width: 94%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .t-source {
+    gap: 10px;
+  }
+  .t-source button {
+    max-width: 55%;
+    text-align: right;
+  }
+  .t-message-meta {
+    flex-wrap: wrap;
+  }
+  .t-move {
+    min-height: 24px;
+  }
+  .t-topic {
+    padding: 18px 20px;
+  }
+  .t-text {
+    min-height: 28px;
+  }
+}
+.t-message-meta .t-time {
+  margin-left: auto;
+  font-size: 11px;
+}

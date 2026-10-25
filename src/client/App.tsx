@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Link2,
+  ListTree,
   Menu as MenuIcon,
   MessageCircle,
   SquareCheck,
@@ -25,6 +26,7 @@ import {
 import { matchesTaskIdentifier, matchesTaskQuery } from '../shared/tasks.js';
 import { api, download, OkSchema } from './api.js';
 import { ConversationWorkspace } from './ConversationWorkspace.js';
+import { ThreadsPage } from './ThreadsPage.js';
 import { conversationName, messagesForChat, tasksForMessages } from './conversations.js';
 import { ActivityView } from './Activity.js';
 import { SettingsPanel } from './Settings.js';
@@ -208,6 +210,7 @@ export function App() {
     setMobileMenu(false);
     updateLocation({
       view,
+      message: null,
       task: null,
       tab: 'overview',
       expanded: false,
@@ -247,11 +250,13 @@ export function App() {
       ? 'Connections'
       : location.view === 'conversations'
         ? 'Conversations'
-        : location.view === 'tasks'
-          ? taskFilterLabel[location.filter]
-          : location.view === 'settings'
-            ? 'Settings'
-            : 'Activity';
+        : location.view === 'threads'
+          ? 'Threads'
+          : location.view === 'tasks'
+            ? taskFilterLabel[location.filter]
+            : location.view === 'settings'
+              ? 'Settings'
+              : 'Activity';
   useEffect(() => {
     document.title = `Chat2Tasks — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
   }, [viewTitle, chat, location.view]);
@@ -306,7 +311,7 @@ export function App() {
       element: document.activeElement instanceof HTMLElement ? document.activeElement : null,
       reference: task.reference,
     };
-    updateLocation({ task: task.reference, tab: 'overview', expanded });
+    updateLocation({ task: task.reference, tab: 'overview', expanded, message: null });
   };
   const closeTask = () =>
     updateLocation(
@@ -429,6 +434,14 @@ export function App() {
         }}
       />
       <div className="sidebar-bottom">
+        <button
+          className={`nav-item ${location.view === 'threads' ? 'active' : ''}`}
+          aria-current={location.view === 'threads' ? 'page' : undefined}
+          onClick={() => navigate('threads')}
+        >
+          <ListTree size={16} />
+          <span>Threads</span>
+        </button>
         <button
           className={`nav-item ${location.view === 'conversations' ? 'active' : ''}`}
           aria-current={location.view === 'conversations' ? 'page' : undefined}
@@ -630,9 +643,16 @@ export function App() {
                 chat={chat}
                 selectedTask={selectedTask}
                 sourceOnly={location.tab === 'sources'}
+                selectedMessageId={location.message}
                 loaded={loaded && !!config}
                 onSelectChat={(id) =>
-                  updateLocation({ chat: id, task: null, tab: 'overview', expanded: false })
+                  updateLocation({
+                    chat: id,
+                    task: null,
+                    tab: 'overview',
+                    expanded: false,
+                    message: null,
+                  })
                 }
                 onSelectTask={(task) => openTask(task, false)}
                 onOpenTask={(task) => openTask(task)}
@@ -662,6 +682,27 @@ export function App() {
                 inspector={inspector}
                 questions={questions}
                 navigationTrigger={navigationTrigger}
+              />
+            ) : location.view === 'threads' ? (
+              <ThreadsPage
+                onOpenTask={(task) =>
+                  updateLocation({
+                    view: 'tasks',
+                    task: task.reference,
+                    message: null,
+                    expanded: false,
+                  })
+                }
+                onOpenSource={(message) =>
+                  updateLocation({
+                    view: 'conversations',
+                    chat: message.conversationId,
+                    task: null,
+                    tab: 'overview',
+                    expanded: false,
+                    message: message.id,
+                  })
+                }
               />
             ) : location.view === 'activity' ? (
               <ActivityView data={data} online={online} onSync={() => void sync()} />

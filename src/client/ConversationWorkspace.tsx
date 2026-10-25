@@ -24,6 +24,7 @@ export function ConversationWorkspace({
   chat,
   selectedTask,
   sourceOnly,
+  selectedMessageId,
   loaded,
   onSelectChat,
   onSelectTask,
@@ -40,6 +41,7 @@ export function ConversationWorkspace({
   chat: Chat | undefined;
   selectedTask: Task | undefined;
   sourceOnly: boolean;
+  selectedMessageId?: string | null;
   loaded: boolean;
   onSelectChat: (id: string | null) => void;
   onSelectTask: (task: Task) => void;
@@ -77,12 +79,18 @@ export function ConversationWorkspace({
     previousChat.current = chat?.id ?? null;
   }, [chat?.id]);
   useEffect(() => {
+    if (selectedMessageId) {
+      thread.current
+        ?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(selectedMessageId)}"]`)
+        ?.scrollIntoView({ block: 'center' });
+      return;
+    }
     if (!selectedTask) return;
     const linked = [
       ...(thread.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []),
     ].find((element) => selectedTask.source_ids.includes(element.dataset.messageId ?? ''));
     linked?.scrollIntoView({ block: 'center' });
-  }, [chat?.id, selectedTask?.id, sourceOnly]);
+  }, [chat?.id, selectedTask?.id, sourceOnly, selectedMessageId, messages.length]);
   return (
     <div className={`conversation-layout ${chat ? 'conversation-open' : ''}`}>
       <section className="conversation-rail" aria-label="Followed conversations">
@@ -252,7 +260,7 @@ export function ConversationWorkspace({
                       message={message}
                       name={chat.name}
                       allMessages={messages}
-                      highlighted={selectedIds.has(message.id)}
+                      highlighted={selectedIds.has(message.id) || selectedMessageId === message.id}
                       continuation={
                         !!previous &&
                         !annotations.has(previous.id) &&
