@@ -110,13 +110,11 @@ export const MessageSchema = z.object({
   browser_source: z.object({ url: z.url(), title: z.string(), capturedAt: z.number() }).optional(),
   entity_link: z.object({ plant: z.string(), basis: z.string() }).optional(),
 });
-export const TaskChangeSchema = z
+export const TaskTriageSchema = z
   .object({
-    id: z.string().nullable(),
     title: text,
     scope: text,
     note: text,
-    source_ids: z.array(text).min(1),
     action_steps: z.array(text).min(1).max(8),
     done_when: z.array(text).min(1).max(8),
     priority: z.enum(['high', 'normal', 'low']),
@@ -128,6 +126,14 @@ export const TaskChangeSchema = z
     (t) => t.triage_state !== 'needs_info' || Boolean(t.blocking_question?.trim()),
     'A blocked task needs a concrete question',
   );
+export const TaskChangeSchema = TaskTriageSchema.safeExtend({
+  id: z.string().nullable(),
+  source_ids: z.array(text).min(1),
+});
+export const TaskTriageUpdateSchema = TaskTriageSchema.safeExtend({
+  id: text,
+  expected_revision: z.string().regex(/^[a-f0-9]{64}$/),
+});
 export const TaskSchema = z.object({
   id: text,
   title: text,

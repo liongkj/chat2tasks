@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   MessageSchema,
   TaskSchema,
+  TaskTriageUpdateSchema,
   SettingsSchema,
   StatusSchema,
   QuestionSchema,
@@ -51,6 +52,8 @@ const legacySchema = z.object({
   openwa_api_key_file: z.string().optional(),
   model: z.string().optional(),
 });
+
+export class TaskTriageError extends Error {}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -365,6 +368,34 @@ export class Store {
       sources.length > 0 &&
       sources.every((m) => m.sessionId === message.sessionId && m.chatId === message.chatId)
     );
+  }
+  taskEvidence(id: string) {
+    const snapshot = this.snapshot();
+    const task = snapshot.tasks.find((item) => item.id === id);
+    if (!task) throw new TaskTriageError('Task not found');
+    const messages = snapshot.messages.filter((message) => task.source_ids.includes(message.id));
+    return { task, messages, revision: hash({ task, messages }) };
+  }
+  triageTask(input: z.infer<typeof TaskTriageUpdateSchema>) {
+    const update = TaskTriageUpdateSchema.parse(input);
+    return this.transaction(() => {
+      const current = this.taskEvidence(update.id);
+      if (current.revision !== update.expected_revision)
+        throw new TaskTriageError(
+          'Task or source evidence changed. Read the task again before triage.',
+        );
+      this.db
+        .prepare('UPDATE tasks SET title=?,scope=?,note=?,updated=? WHERE id=?')
+        .run(update.title, update.scope, update.note, now(), update.id);
+      const { action_steps, done_when, priority, triage_state, blocking_question } = update;
+      this.db
+        .prepare('INSERT OR REPLACE INTO triage VALUES(?,?)')
+        .run(
+          update.id,
+          JSON.stringify({ action_steps, done_when, priority, triage_state, blocking_question }),
+        );
+      return this.taskEvidence(update.id);
+    });
   }
   tick(id: string, done: boolean) {
     if (!this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
