@@ -125,6 +125,7 @@ export function App() {
     if (!loaded || !config || narrow) return;
     if (location.task) return;
     if (location.view === 'conversations') {
+      if (location.message) return;
       const key = `${location.view}:${location.chat ?? ''}`;
       if (initialized.current === key) return;
       initialized.current = key;
@@ -152,6 +153,7 @@ export function App() {
     location.view,
     location.chat,
     location.task,
+    location.message,
     location.filter,
     location.query,
     chat,

@@ -9,6 +9,7 @@ export function MessageCard({
   name,
   allMessages,
   highlighted = false,
+  focused = false,
   continuation = false,
   compact = false,
 }: {
@@ -16,6 +17,7 @@ export function MessageCard({
   name: string;
   allMessages: Message[];
   highlighted?: boolean;
+  focused?: boolean;
   continuation?: boolean;
   compact?: boolean;
 }) {
@@ -23,7 +25,7 @@ export function MessageCard({
   const author = message.direction === 'outgoing' ? 'You' : `From ${name}`;
   return (
     <article
-      className={`message-card ${message.direction} ${highlighted ? 'linked-evidence' : ''} ${continuation ? 'continuation' : ''} ${compact ? 'compact' : ''}`}
+      className={`message-card ${message.direction} ${highlighted || focused ? 'linked-evidence' : ''} ${continuation ? 'continuation' : ''} ${compact ? 'compact' : ''}`}
       id={`message-${message.id}`}
       data-message-id={message.id}
     >
@@ -42,9 +44,9 @@ export function MessageCard({
               {message.timestamp ? time(message.timestamp) : 'Time unavailable'}
             </time>
           )}
-          {highlighted && (
+          {(highlighted || focused) && (
             <span className="evidence-indicator">
-              <Link2 size={12} /> Task evidence
+              <Link2 size={12} /> {highlighted ? 'Task evidence' : 'Original message'}
             </span>
           )}
         </div>
