@@ -340,10 +340,32 @@ a {
   overflow-wrap: anywhere;
 }
 .task-row-sub {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
   font-size: 14px;
   margin-top: 5px;
+}
+.task-reference {
+  display: inline-block;
+  color: var(--muted);
+  border: 1px solid #dedee5;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.task-reference-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 .row-chevron {
   color: var(--muted);

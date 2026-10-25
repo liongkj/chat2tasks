@@ -245,9 +245,9 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark Complete', exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('mobile-detail.png') });
-    const toast = await page.locator('.toast').evaluateAll(
-      (elements) => elements[0]?.getBoundingClientRect().toJSON() ?? null,
-    );
+    const toast = await page
+      .locator('.toast')
+      .evaluateAll((elements) => elements[0]?.getBoundingClientRect().toJSON() ?? null);
     const complete = await page
       .getByRole('button', { name: 'Mark Complete', exact: true })
       .boundingBox();
@@ -256,6 +256,86 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('TODO links restore the selected task and source view through refresh and browser history', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const [first, second] = snapshot.tasks.filter((task) => !task.done);
+  const completed = snapshot.tasks.find((task) => task.done);
+  if (!first || !second || !completed)
+    throw Error('The sample needs two open tasks and one completed task');
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1080, height: 1058 },
+    httpCredentials: { username: 'admin', password },
+    permissions: ['clipboard-read', 'clipboard-write'],
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '?from=shared-link');
+    await page.getByRole('button', { name: `Open task: ${first.title}`, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp('task=' + first.reference));
+    await page.getByRole('button', { name: `Open task: ${second.title}`, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp('task=' + second.reference));
+    await page.reload();
+    await expect(page.getByRole('heading', { name: second.title, exact: true })).toBeVisible();
+    await expect(page.locator('.task-row.selected .task-reference')).toHaveText(second.reference);
+    await expect(page.locator('.task-reference-bar .task-reference')).toHaveText(second.reference);
+    expect(new URL(page.url()).searchParams.get('from')).toBe('shared-link');
+    await page.getByRole('button', { name: 'Copy task link', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(page.url());
+
+    await page.getByRole('button', { name: 'View conversation', exact: true }).click();
+    await expect(page).toHaveURL(/context=conversation/);
+    await page.reload();
+    await expect(page.locator('.message-card').first()).toBeVisible();
+    await page.goBack();
+    await expect(
+      page.getByRole('button', { name: 'View conversation', exact: true }),
+    ).toBeVisible();
+    expect(new URL(page.url()).searchParams.has('context')).toBe(false);
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: first.title, exact: true })).toBeVisible();
+    await page.goForward();
+    await expect(page.getByRole('heading', { name: second.title, exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Close task details' }).click();
+    expect(new URL(page.url()).searchParams.has('task')).toBe(false);
+    expect(new URL(page.url()).searchParams.has('context')).toBe(false);
+    await expect(page.getByRole('heading', { name: second.title, exact: true })).not.toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: second.title, exact: true })).toBeVisible();
+
+    await page.goto(base + '?task=' + completed.reference);
+    await expect(page.getByRole('heading', { name: completed.title, exact: true })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Completed', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.locator('.task-row.selected .task-reference')).toHaveText(
+      completed.reference,
+    );
+    await page.goto(base + '?task=' + second.id + '&context=conversation');
+    await expect(page).toHaveURL(new RegExp('task=' + second.reference));
+    await expect(page.locator('.message-card').first()).toBeVisible();
+    await page.getByLabel('Search tasks', { exact: true }).fill(second.reference.toLowerCase());
+    await expect(page.locator('.task-row')).toHaveCount(1);
+
+    await page.goto(base + '?task=TODO-999999');
+    await expect(page.getByRole('heading', { name: 'Task not found', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: first.title, exact: true })).not.toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(base + '?task=' + second.reference);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: second.title, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Copy task link', exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({ path: test.info().outputPath('todo-link-mobile.png') });
   } finally {
     await context.close();
     await browser.close();

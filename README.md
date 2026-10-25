@@ -21,6 +21,12 @@ OpenWA is a separate prerequisite. Point Chat2Tasks at an existing compatible Op
 
 The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGIN=http://127.0.0.1:YOUR_PORT`.
 
+## Task references and links
+
+Each task has a permanent reference such as **TODO-001**, shown as a tag in the task list and details. References remain the same when tasks are edited, completed, or reordered. Existing workspaces receive references automatically without changing their tasks or completion records. Search by reference in the workspace, Chrome companion, or MCP tools.
+
+Selecting a task updates the address to `?task=TODO-001`. Refreshing, sharing the address, or using browser Back/Forward restores the selection. **Copy link** in task details copies the current task link. Conversation links also preserve `context=conversation`, and links using older internal task IDs still work. A link to a completed task opens it in the completed list; an unknown reference shows **Task not found**.
+
 ## Chrome companion
 
 The optional Manifest V3 extension keeps your tasks beside WhatsApp Web using the same server, model connections, and processing queue. It can search and complete tasks, save notes, activate or pause followed conversations, and request **Find tasks now** from its options menu. Expand a task to see its steps and source; **View conversation in workspace** opens that specific task's original messages. Use **Notes & details** for notes and completion criteria, and **Filter tasks** for search and conversation filters. To capture text, select it in WhatsApp Web, right-click **Capture selection in Chat2Tasks**, then review the text and choose its destination conversation before saving. It does not scrape conversation history or send WhatsApp replies.

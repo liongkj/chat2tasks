@@ -136,9 +136,22 @@ test('an MCP client reads evidence, images and conversations, then saves bounded
     assert.ok(high.items.every((task) => task.priority === 'high'));
     const task = open.items[0];
     assert.ok(task);
+    const byReference = PageSchema.parse(
+      (
+        await client.callTool({
+          name: 'list_tasks',
+          arguments: { query: task.reference.toLowerCase() },
+        })
+      ).structuredContent,
+    );
+    assert.deepEqual(
+      byReference.items.map((item) => item.id),
+      [task.id],
+    );
     f.store.remark(task.id, 'Owner note stays private to this field');
     const evidence = EvidenceSchema.parse(
-      (await client.callTool({ name: 'get_task', arguments: { id: task.id } })).structuredContent,
+      (await client.callTool({ name: 'get_task', arguments: { id: task.reference } }))
+        .structuredContent,
     );
     assert.deepEqual(
       evidence.messages.map((message) => message.id).sort(),
@@ -187,6 +200,7 @@ test('an MCP client reads evidence, images and conversations, then saves bounded
     assert.equal(block.data, bytes.toString('base64'));
     const {
       id: _id,
+      reference: _reference,
       created: _created,
       updated: _updated,
       done: _done,
@@ -196,7 +210,7 @@ test('an MCP client reads evidence, images and conversations, then saves bounded
     } = evidence.task;
     const input = {
       ...details,
-      id: task.id,
+      id: task.reference,
       expected_revision: evidence.revision,
       priority: 'low',
       triage_state: 'needs_info',

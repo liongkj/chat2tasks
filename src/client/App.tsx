@@ -40,6 +40,7 @@ import {
 } from '../shared/schema.js';
 import { api, download, OkSchema, time } from './api.js';
 import { SettingsPanel } from './Settings.js';
+import { taskUrl, useTaskLocation, type TaskTab } from './taskLocation.js';
 
 type View = 'tasks' | 'chats' | 'models' | 'activity';
 const empty: Snapshot = {
@@ -60,14 +61,14 @@ const stateLabel = {
 export function App() {
   useInputModality();
   const [data, setData] = useState(empty),
-    [config, setConfig] = useState<PublicSettings | null>(null);
+    [config, setConfig] = useState<PublicSettings | null>(null),
+    [loaded, setLoaded] = useState(false);
+  const { location: taskLocation, selectTask } = useTaskLocation();
+  const selected = taskLocation.task;
   const [view, setView] = useState<View>('tasks'),
     [filter, setFilter] = useState<'open' | 'all' | 'done'>('open');
   const [query, setQuery] = useState(''),
-    [chat, setChat] = useState<string | null>(null),
-    [selected, setSelected] = useState<string | null>(() =>
-      new URLSearchParams(window.location.search).get('task'),
-    );
+    [chat, setChat] = useState<string | null>(null);
   const [notice, setNotice] = useState(''),
     [online, setOnline] = useState(true),
     [mobileMenu, setMobileMenu] = useState(false),
@@ -75,6 +76,7 @@ export function App() {
   const search = useRef<HTMLInputElement>(null),
     file = useRef<HTMLInputElement>(null);
   const initialSelection = useRef(false);
+  const restoredSelection = useRef<string | null>(null);
   const refreshGate = useRef(new RefreshGate());
   const pendingTicks = useRef(new Map<string, boolean>());
   const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
@@ -90,6 +92,7 @@ export function App() {
           return pending === undefined ? task : { ...task, done: pending };
         }),
       });
+      setLoaded(true);
       setOnline(true);
     } catch {
       if (refreshGate.current.accept(ticket)) setOnline(false);
@@ -121,14 +124,14 @@ export function App() {
         search.current?.focus();
       }
       if (event.key === 'Escape') {
-        setSelected(null);
+        selectTask(null);
         setMobileMenu(false);
         setShowMenu(false);
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, []);
+  }, [selectTask]);
   const navigate = (next: View) => {
     setView(next);
     setMobileMenu(false);
@@ -152,7 +155,9 @@ export function App() {
     .filter(
       (t) =>
         (filter === 'all' || t.done === (filter === 'done')) &&
-        `${t.title} ${t.scope} ${t.note}`.toLowerCase().includes(query.toLowerCase()),
+        `${t.reference} ${t.title} ${t.scope} ${t.note}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
     )
     .sort(
       (a, b) =>
@@ -160,16 +165,35 @@ export function App() {
         Number(b.priority === 'high') - Number(a.priority === 'high') ||
         b.updated - a.updated,
     );
-  const selectedTask = data.tasks.find((t) => t.id === selected);
+  const selectedTask = data.tasks.find(
+    (t) => t.id === selected || t.reference === selected?.toUpperCase(),
+  );
   useEffect(() => {
-    if (initialSelection.current || !visible.length) return;
+    if (initialSelection.current || !loaded || !visible.length) return;
     initialSelection.current = true;
+    if (!selected && window.matchMedia('(min-width: 1024px)').matches)
+      selectTask(visible[0]?.reference ?? null, { replace: true });
+  }, [visible, selected, loaded, selectTask]);
+  useEffect(() => {
+    if (!selected) {
+      restoredSelection.current = null;
+      return;
+    }
+    if (!loaded || !selectedTask || restoredSelection.current === selected) return;
+    restoredSelection.current = selected;
+    setView('tasks');
+    if (filter !== 'all' && selectedTask.done !== (filter === 'done'))
+      setFilter(selectedTask.done ? 'done' : 'open');
+    if (!scoped.some((task) => task.id === selectedTask.id)) setChat(null);
     if (
-      !data.tasks.some((task) => task.id === selected) &&
-      window.matchMedia('(min-width: 1024px)').matches
+      !`${selectedTask.reference} ${selectedTask.title} ${selectedTask.scope} ${selectedTask.note}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
     )
-      setSelected(visible[0]?.id ?? null);
-  }, [visible, selected, data.tasks]);
+      setQuery('');
+    if (selected !== selectedTask.reference)
+      selectTask(selectedTask.reference, { tab: taskLocation.tab, replace: true });
+  }, [selected, selectedTask, loaded, filter, scoped, query, taskLocation.tab, selectTask]);
   async function tick(task: Task) {
     if (pendingTicks.current.has(task.id)) return;
     const done = !task.done;
@@ -258,7 +282,7 @@ export function App() {
             onClick={() => {
               setChat(null);
               setFilter('open');
-              setSelected(null);
+              selectTask(null);
               navigate('tasks');
             }}
           >
@@ -279,7 +303,7 @@ export function App() {
             onClick={() => {
               setChat(null);
               setFilter('done');
-              setSelected(null);
+              selectTask(null);
               navigate('tasks');
             }}
           >
@@ -386,7 +410,7 @@ export function App() {
                         className={filter === value ? 'selected' : ''}
                         onClick={() => {
                           setFilter(value);
-                          setSelected(null);
+                          selectTask(null);
                         }}
                       >
                         {label}
@@ -399,7 +423,7 @@ export function App() {
                       value={chat ?? ''}
                       onChange={(event) => {
                         setChat(event.target.value || null);
-                        setSelected(null);
+                        selectTask(null);
                       }}
                     >
                       <option value="">All conversations</option>
@@ -587,7 +611,7 @@ export function App() {
                           </div>
                           {groupTasks.map((t) => (
                             <div
-                              className={`task-row ${selected === t.id ? 'selected' : ''} ${t.done ? 'done' : ''}`}
+                              className={`task-row ${selectedTask?.id === t.id ? 'selected' : ''} ${t.done ? 'done' : ''}`}
                               key={t.id}
                             >
                               <button
@@ -602,10 +626,12 @@ export function App() {
                               <button
                                 className="task-row-content"
                                 aria-label={`Open task: ${t.title}`}
-                                onClick={() => setSelected(t.id)}
+                                onClick={() => selectTask(t.reference)}
                               >
                                 <span className="task-title">{t.title}</span>
                                 <span className="task-row-sub">
+                                  <span className="task-reference">{t.reference}</span>
+                                  <span aria-hidden="true">·</span>
                                   <span>{conversationName(t, data.messages, config)}</span>
                                 </span>
                               </button>
@@ -637,18 +663,18 @@ export function App() {
                   </span>
                 </div>
               </section>
-              <aside className={`inspector ${selectedTask ? 'has-selection' : ''}`}>
+              <aside className={`inspector ${selected ? 'has-selection' : ''}`}>
                 <div className="inspector-heading">
                   <span>
                     {selectedTask
                       ? conversationName(selectedTask, data.messages, config)
                       : 'Task details'}
                   </span>
-                  {selectedTask ? (
+                  {selected ? (
                     <button
                       className="icon-btn"
                       aria-label="Close task details"
-                      onClick={() => setSelected(null)}
+                      onClick={() => selectTask(null)}
                     >
                       <X size={16} />
                     </button>
@@ -660,6 +686,8 @@ export function App() {
                   <TaskDetail
                     key={selectedTask.id}
                     task={selectedTask}
+                    tab={taskLocation.tab}
+                    onTabChange={(tab) => selectTask(selectedTask.reference, { tab })}
                     messages={data.messages}
                     config={config}
                     onTick={() => void tick(selectedTask)}
@@ -675,10 +703,11 @@ export function App() {
                         <Sparkles size={12} />
                       </span>
                     </span>
-                    <h3>Your next move, in focus.</h3>
+                    <h3>{loaded && selected ? 'Task not found' : 'Your next move, in focus.'}</h3>
                     <p>
-                      Select a task to see the next steps, your notes, and the conversation behind
-                      it.
+                      {loaded && selected
+                        ? 'This task link is no longer available. Choose another task from the list.'
+                        : 'Select a task to see the next steps, your notes, and the conversation behind it.'}
                     </p>
                     <div className="quiet-divider" />
                     <div className="inspector-tip">
@@ -745,6 +774,8 @@ function conversationName(task: Task, messages: Message[], config: PublicSetting
 
 function TaskDetail({
   task,
+  tab,
+  onTabChange,
   messages,
   config,
   onTick,
@@ -753,6 +784,8 @@ function TaskDetail({
   notify,
 }: {
   task: Task;
+  tab: TaskTab;
+  onTabChange: (tab: TaskTab) => void;
   messages: Message[];
   config: PublicSettings | null;
   onTick: () => void;
@@ -760,13 +793,7 @@ function TaskDetail({
   onSaved: () => void;
   notify: (text: string) => void;
 }) {
-  const [tab, setTab] = useState<'overview' | 'sources'>(() => {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('task') === task.id && params.get('context') === 'conversation'
-        ? 'sources'
-        : 'overview';
-    }),
-    [remark, setRemark] = useState(task.own_remark),
+  const [remark, setRemark] = useState(task.own_remark),
     [saving, setSaving] = useState(false),
     [handoff, setHandoff] = useState(false);
   const sources = messages.filter((m) => task.source_ids.includes(m.id));
@@ -803,6 +830,23 @@ function TaskDetail({
   return (
     <div className="detail-body">
       <div className="detail-scroll">
+        <div className="task-reference-bar">
+          <span className="task-reference">{task.reference}</span>
+          <button
+            className="text-button"
+            aria-label="Copy task link"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(taskUrl(task.reference, tab));
+                notify('Task link copied');
+              } catch {
+                notify('Could not copy the task link. Copy the address from your browser.');
+              }
+            }}
+          >
+            <Copy size={14} /> Copy link
+          </button>
+        </div>
         <h2 className={task.done ? 'task-done-title' : ''}>{task.title}</h2>
         {task.triage_state !== 'ready' && (
           <div className="detail-status">
@@ -839,7 +883,7 @@ function TaskDetail({
                   </cite>
                 </blockquote>
               )}
-              <button className="text-button" onClick={() => setTab('sources')}>
+              <button className="text-button" onClick={() => onTabChange('sources')}>
                 <ArrowUpRight size={16} /> View conversation
                 {sources.length > 1 ? ` (${sources.length})` : ''}
               </button>
@@ -913,7 +957,7 @@ function TaskDetail({
           </>
         ) : (
           <div className="source-list">
-            <button className="text-button" onClick={() => setTab('overview')}>
+            <button className="text-button" onClick={() => onTabChange('overview')}>
               Back to task
             </button>
             <p className="source-intro">
