@@ -76,8 +76,8 @@
   background: var(--accent-wash);
 }
 .card-icon.green {
-  color: var(--green);
-  background: #e7f3eb;
+  color: var(--accent);
+  background: var(--accent-wash);
 }
 .label {
   display: inline-flex;
@@ -85,7 +85,7 @@
   gap: 5px;
   padding: 3px 8px;
   border-radius: 5px;
-  background: #eeeef2;
+  background: var(--hover);
   color: var(--muted);
   font-size: 14px;
 }
@@ -94,12 +94,12 @@
   color: var(--accent);
 }
 .label.amber {
-  background: #fff2d4;
-  color: #785200;
+  background: var(--warning-wash);
+  color: var(--warning);
 }
 .green-label {
-  background: #e7f3eb;
-  color: #216d3d;
+  background: var(--accent-wash);
+  color: var(--accent);
 }
 .label-button {
   white-space: nowrap;
@@ -146,7 +146,7 @@
   gap: 8px;
   align-items: center;
   padding: 0 12px;
-  border: 1px solid #a9a9b0;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
 }
 .secret-input input {
@@ -223,7 +223,7 @@
   height: 28px;
   min-width: 44px;
   border-radius: 20px;
-  background: #8a8a93;
+  background: var(--muted);
   padding: 3px;
 }
 .toggle > span {
@@ -236,7 +236,7 @@
   transition: transform 150ms var(--ease-out);
 }
 .toggle.on {
-  background: var(--green);
+  background: var(--accent);
 }
 .toggle.on > span {
   transform: translateX(16px);
@@ -293,7 +293,7 @@
 }
 code {
   font-size: 14px;
-  background: #eeeef2;
+  background: var(--hover);
   padding: 2px 4px;
   border-radius: 3px;
   overflow-wrap: anywhere;
