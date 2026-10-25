@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
+import { z } from 'zod';
 import { Store } from '../src/server/store.js';
 import { Threads } from '../src/server/threads.js';
 import { Threading } from '../src/server/threading.js';
@@ -132,22 +133,91 @@ test('the model must give every supplied message one valid destination using sho
     );
     const existing = f.threads.snapshot().threads[0];
     assert.ok(existing);
-    const contract = threadPlanContract(['b', 'c'], [existing.id]);
+    const contract = threadPlanContract(['b', 'c'], [existing]);
     assert.deepEqual([...contract.messageKeys.values()], ['m1', 'm2']);
     assert.deepEqual([...contract.threadKeys.values()], ['t1']);
     const response = {
-      threads: [{ id: 't1', title: 'PBI capacity' }],
-      assignments: { m1: 0, m2: null },
+      assignments: { m1: { kind: 'thread', id: 't1' }, m2: { kind: 'other' } },
     };
     for (const invalid of [
-      { ...response, assignments: { m1: 0 } },
-      { ...response, assignments: { ...response.assignments, invented: 0 } },
-      { ...response, assignments: { m1: 1, m2: null } },
-      { ...response, threads: [{ id: 'invented', title: 'PBI capacity' }] },
+      { assignments: { m1: response.assignments.m1 } },
+      { assignments: { ...response.assignments, invented: { kind: 'other' } } },
+      { assignments: { ...response.assignments, m1: { kind: 'new' } } },
+      { assignments: { ...response.assignments, m1: { kind: 'thread', id: 'invented' } } },
     ])
       assert.throws(() => contract.parse(invalid));
     f.threads.apply(contract.parse(response), f.messages.slice(1));
     assert.deepEqual(f.threads.snapshot().threads[0]?.messageIds.sort(), ['a', 'b']);
+    assert.equal(f.threads.pending().length, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test('named destinations keep capacity evidence separate from weekly-model evidence', () => {
+  const f = fixture();
+  try {
+    const contract = threadPlanContract(
+      f.messages.map((m) => m.id),
+      [],
+    );
+    f.threads.apply(
+      contract.parse({
+        assignments: {
+          m1: { kind: 'new', title: 'PBI capacity' },
+          m2: { kind: 'new', title: 'PBI capacity' },
+          m3: { kind: 'new', title: 'PBI weekly model' },
+        },
+      }),
+      f.messages,
+    );
+    const snapshot = f.threads.snapshot();
+    const title = (id: string) => snapshot.threads.find((t) => t.messageIds.includes(id))?.title;
+    assert.equal(title('a'), 'PBI capacity');
+    assert.equal(title('b'), 'PBI capacity');
+    assert.equal(title('c'), 'PBI weekly model');
+  } finally {
+    f.close();
+  }
+});
+
+test('obsolete automatic grouping is refreshed while a manual correction stays pinned', () => {
+  const f = fixture();
+  try {
+    f.threads.apply(
+      {
+        threads: [{ id: null, title: 'Old topic', messageIds: ['a', 'b'] }],
+        otherMessageIds: ['c'],
+      },
+      f.messages,
+    );
+    const source = f.threads.snapshot().messages.find((m) => m.id === 'b');
+    assert.ok(source);
+    const correction = f.threads.move({
+      messageId: 'b',
+      expectedRevision: source.groupingRevision,
+      target: { kind: 'new', title: 'Chosen capacity topic' },
+    });
+    f.store.db
+      .prepare("UPDATE thread_memberships SET digest='obsolete' WHERE message_id IN ('a','b')")
+      .run();
+    assert.deepEqual(
+      f.threads.pending().map((m) => m.id),
+      ['a'],
+    );
+    const original = f.messages[0];
+    assert.ok(original);
+    f.threads.apply(
+      {
+        threads: [{ id: null, title: 'Correct capacity topic', messageIds: ['a'] }],
+        otherMessageIds: [],
+      },
+      [original],
+    );
+    assert.equal(
+      f.threads.snapshot().messages.find((m) => m.id === 'b')?.threadId,
+      correction.threadId,
+    );
     assert.equal(f.threads.pending().length, 0);
   } finally {
     f.close();
@@ -317,15 +387,18 @@ test('organisation checkpoints model responses and requires a manual retry after
         response.end();
         return;
       }
-      const active = new Set(
-        f.store
-          .settings()
-          .chats.filter((c) => c.enabled)
-          .map((c) => c.id),
-      );
-      const pending = f.threads.pending().filter((m) => active.has(m.conversationId)),
-        existing = f.threads.snapshot().threads[0];
-      const grouped = pending.filter((m) => m.id !== 'c');
+      const requestBody = z
+        .object({ messages: z.array(z.object({ content: z.string() })) })
+        .parse(JSON.parse(payload));
+      const inputLine = requestBody.messages.at(-1)?.content.split('\n').at(-1);
+      assert.ok(inputLine);
+      const input = z
+        .object({
+          EXISTING_THREADS: z.array(z.object({ id: z.string() })),
+          MESSAGES_TO_GROUP: z.array(z.object({ id: z.string(), body: z.string() })),
+        })
+        .parse(JSON.parse(inputLine));
+      const existing = input.EXISTING_THREADS[0];
       beforeReply();
       response.setHeader('Content-Type', 'application/json');
       response.end(
@@ -334,11 +407,15 @@ test('organisation checkpoints model responses and requires a manual retry after
             {
               message: {
                 content: JSON.stringify({
-                  threads: grouped.length
-                    ? [{ id: existing ? 't1' : null, title: 'PBI capacity' }]
-                    : [],
                   assignments: Object.fromEntries(
-                    pending.map((m, i) => [`m${i + 1}`, m.id === 'c' ? null : 0]),
+                    input.MESSAGES_TO_GROUP.map((m) => [
+                      m.id,
+                      m.body === 'Weekly model did not trigger'
+                        ? { kind: 'other' }
+                        : existing
+                          ? { kind: 'thread', id: existing.id }
+                          : { kind: 'new', title: 'PBI capacity' },
+                    ]),
                   ),
                 }),
               },

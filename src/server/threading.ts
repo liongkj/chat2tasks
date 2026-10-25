@@ -82,16 +82,18 @@ export class Threading {
         this.threads.status({ kind: 'running', remaining: pending.length });
         const snapshot = this.threads.snapshot();
         const active = new Set(snapshot.chats.filter((c) => c.enabled).map((c) => c.id));
+        const pendingIds = new Set(pending.map((m) => m.id));
+        const currentMessages = snapshot.messages.filter(
+          (m) => active.has(m.conversationId) && !pendingIds.has(m.id),
+        );
         const context = snapshot.threads
-          .filter((t) =>
-            snapshot.messages.some((m) => m.threadId === t.id && active.has(m.conversationId)),
-          )
+          .filter((t) => currentMessages.some((m) => m.threadId === t.id))
           .slice(0, 200)
           .map((t) => ({
             id: t.id,
             title: t.title,
-            recentMessages: snapshot.messages
-              .filter((m) => m.threadId === t.id && active.has(m.conversationId))
+            recentMessages: currentMessages
+              .filter((m) => m.threadId === t.id)
               .slice(-2)
               .map((m) => ({
                 conversationId: m.conversationId,
@@ -101,7 +103,7 @@ export class Threading {
           }));
         const contract = threadPlanContract(
           batch.map((m) => m.id),
-          context.map((t) => t.id),
+          context,
         );
         const prompt = await readFile('prompts/threads.txt', 'utf8');
         const plan = contract.parse(
