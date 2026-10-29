@@ -143,6 +143,10 @@ const TaskBaseSchema = z.object({
   created: z.number(),
   updated: z.number(),
   done: z.boolean(),
+  resolution: z
+    .object({ kind: z.enum(['filtered', 'reply']), reason: z.string() })
+    .nullable()
+    .default(null),
   source_ids: z.array(z.string()),
   own_remark: z.string().default(''),
   action_steps: z.array(z.string()).default([]),

@@ -524,6 +524,33 @@ export class Store {
       throw new Error('Task not found');
     this.db.prepare('INSERT OR REPLACE INTO task_remarks VALUES(?,?,?)').run(id, remark, now());
   }
+  filterNotTask(id: string, expectedRevision: string) {
+    return this.transaction(() => {
+      const current = this.taskEvidence(id);
+      if (
+        current.revision !== expectedRevision ||
+        current.task.done ||
+        current.task.own_remark ||
+        current.task.merged_from.length
+      )
+        return false;
+      // A manual completion or reopening remains authoritative on later reviews.
+      if (this.db.prepare('SELECT task_id FROM completion WHERE task_id=?').get(id)) return false;
+      this.tick(id, true);
+      this.db
+        .prepare(
+          'INSERT INTO completion_events(task_id,message_id,kind,reason,created) VALUES(?,?,?,?,?)',
+        )
+        .run(
+          id,
+          null,
+          'filtered',
+          'The conversation did not contain an actionable request.',
+          now(),
+        );
+      return true;
+    });
+  }
   pendingReplies(messages: Message[]) {
     const since = z.number().parse(this.metaValue('auto_completion_since'));
     return messages.filter((m) => {
@@ -537,7 +564,7 @@ export class Store {
       );
     });
   }
-  decide(decisions: Decision[], batch: Message[], started: number) {
+  decide(decisions: Decision[], batch: Message[], started: number, recheck = false) {
     if (
       decisions.length !== batch.length ||
       new Set(decisions.map((d) => d.message_id)).size !== batch.length
@@ -567,7 +594,12 @@ export class Store {
         const row = this.db
           .prepare('SELECT digest FROM completion_seen WHERE message_id=?')
           .get(m.id);
-        if (row && z.object({ digest: z.string() }).parse(row).digest === fingerprint(m)) continue;
+        if (
+          row &&
+          z.object({ digest: z.string() }).parse(row).digest === fingerprint(m) &&
+          (!recheck || d.action !== 'complete')
+        )
+          continue;
         this.db
           .prepare(
             "UPDATE completion_questions SET status='superseded' WHERE message_id=? AND status='pending'",
@@ -652,11 +684,26 @@ export class Store {
       .all()
       .map((row) => {
         const id = IdRow.parse(row).id,
-          triage = this.db.prepare('SELECT payload FROM triage WHERE task_id=?').get(id);
+          triage = this.db.prepare('SELECT payload FROM triage WHERE task_id=?').get(id),
+          lastResolution = this.db
+            .prepare(
+              `SELECT e.kind,e.reason FROM completion_events e JOIN completion c ON c.task_id=e.task_id WHERE e.task_id=? AND c.done=1 AND e.created>=c.updated ORDER BY e.id DESC LIMIT 1`,
+            )
+            .get(id),
+          resolution = lastResolution
+            ? z.object({ kind: z.string(), reason: z.string().nullable() }).parse(lastResolution)
+            : null;
         const detail: unknown = triage ? JSON.parse(PayloadRow.parse(triage).payload) : {};
         return TaskSchema.parse({
           ...row,
           ...z.record(z.string(), z.unknown()).parse(detail),
+          resolution:
+            resolution && ['filtered', 'auto', 'confirmed'].includes(resolution.kind)
+              ? {
+                  kind: resolution.kind === 'filtered' ? 'filtered' : 'reply',
+                  reason: resolution.reason ?? '',
+                }
+              : null,
           merged_from: this.db
             .prepare(
               "SELECT t.id,'TODO-' || printf('%03d',ref.number) reference,t.title,t.note,m.source_ids,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM task_merges m JOIN tasks t ON t.id=m.source_id JOIN task_references ref ON ref.task_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id WHERE m.target_id=? ORDER BY m.created,t.id",

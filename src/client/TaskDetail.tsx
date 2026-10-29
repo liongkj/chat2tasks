@@ -29,7 +29,11 @@ export function TaskState({ task }: { task: Task }) {
       ) : (
         <Circle size={10} />
       )}
-      {task.done ? 'Completed' : stateLabel[task.triage_state]}
+      {task.done
+        ? task.resolution?.kind === 'filtered'
+          ? 'Not a task'
+          : 'Completed'
+        : stateLabel[task.triage_state]}
     </span>
   );
 }
@@ -366,7 +370,11 @@ export function TaskDetail({
             {ticking
               ? 'Saving…'
               : task.done
-                ? 'You marked this complete.'
+                ? task.resolution?.kind === 'filtered'
+                  ? 'Filtered as not a task. You can reopen it.'
+                  : task.resolution?.kind === 'reply'
+                    ? 'Resolved from your reply. You can reopen it.'
+                    : 'You marked this complete.'
                 : 'Completion is your call.'}
           </span>
         )}

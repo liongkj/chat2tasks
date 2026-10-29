@@ -565,8 +565,9 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                     ))}
                   </select>
                   <small>
-                    OpenAI Decisions, Jev, Codex, or another configured connection. Low confidence
-                    and decision errors run the task model so evidence is retained.
+                    OpenAI Decisions, Jev, Codex, or another configured connection. This connection
+                    also reviews task candidates and proposed completions. Uncertain results keep
+                    work visible or ask for confirmation.
                   </small>
                 </div>
               )}

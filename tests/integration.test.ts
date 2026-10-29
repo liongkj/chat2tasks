@@ -51,11 +51,28 @@ test('active chats alone reach OpenWA and the selected model; paused chats do no
       assert.equal(request.headers.authorization, 'Bearer provider-fixture-key');
       let raw = '';
       for await (const chunk of request) raw += String(chunk);
-      const body = z.object({ model: z.string() }).parse(JSON.parse(raw));
+      const body = z
+        .object({ model: z.string(), messages: z.array(z.object({ content: z.unknown() })) })
+        .parse(JSON.parse(raw));
       assert.equal(body.model, 'fixture-model');
+      const review = String(body.messages[1]?.content).startsWith('Evaluate each named question');
       response.end(
         JSON.stringify({
-          choices: [{ message: { content: JSON.stringify({ changes: [change] }) } }],
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(
+                  review
+                    ? {
+                        answers: [
+                          { name: 'candidate_0', type: 'choice', choice: 'keep', confidence: 0.99 },
+                        ],
+                      }
+                    : { changes: [change] },
+                ),
+              },
+            },
+          ],
           usage: { total_tokens: 12 },
         }),
       );
@@ -96,7 +113,7 @@ test('active chats alone reach OpenWA and the selected model; paused chats do no
     await sync.run();
     assert.equal(store.snapshot().status.error, null);
     assert.equal(store.snapshot().tasks.length, 1);
-    assert.equal(store.snapshot().usage.calls, 2);
+    assert.equal(store.snapshot().usage.calls, 3);
     assert.ok(requests.some((path) => path.includes('chatId=active')));
     assert.ok(!requests.some((path) => path.includes('paused')));
     const count = requests.length;

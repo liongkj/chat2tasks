@@ -469,7 +469,11 @@ function App() {
                               : (state?.chats.find((chat) => task.chatIds.includes(chat.id))
                                   ?.name ?? task.scope)}
                           </span>
-                          {task.triage_state === 'needs_info' && <small>Needs a detail</small>}
+                          {task.done && task.resolution?.kind === 'filtered' ? (
+                            <small>Not a task · reopen if needed</small>
+                          ) : !task.done && task.triage_state === 'needs_info' ? (
+                            <small>Needs a detail</small>
+                          ) : null}
                         </button>
                         {detail?.task.id === task.id ? (
                           <button

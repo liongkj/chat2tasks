@@ -5,12 +5,45 @@ import {
   ImageReadingSchema,
   TaskChangeSchema,
   type Chat,
+  type Message,
   type Profile,
+  type Task,
 } from '../shared/schema.js';
 import { Store, now } from './store.js';
 import { OpenWA } from './openwa.js';
 import { callModel } from './ai.js';
-import { decideTrigger, GateSchema } from './decisions.js';
+import {
+  decideTrigger,
+  GateSchema,
+  reviewTaskCandidates,
+  reviewExistingTasks,
+  reviewCompletions,
+} from './decisions.js';
+
+// Manual review rechecks replies near an open task's sources, including native replies
+// to those sources, even when the older message was already classified.
+export function historicalReplies(messages: Message[], tasks: Task[]) {
+  const sourceIds = new Set(tasks.filter((task) => !task.done).flatMap((task) => task.source_ids));
+  const waIds = new Set(
+    messages
+      .filter((message) => sourceIds.has(message.id))
+      .map((message) => message.waMessageId)
+      .filter(Boolean),
+  );
+  const nearby = new Set<string>();
+  for (const [index, message] of messages.entries()) {
+    if (sourceIds.has(message.id))
+      for (const next of messages.slice(index, index + 13)) nearby.add(next.id);
+  }
+  return messages.filter(
+    (message) =>
+      message.direction === 'outgoing' &&
+      !message.browser_source &&
+      (nearby.has(message.id) ||
+        Boolean(message.reply_to_id && sourceIds.has(message.reply_to_id)) ||
+        Boolean(message.reply_to_wa_id && waIds.has(message.reply_to_wa_id))),
+  );
+}
 
 export class Sync {
   running = false;
@@ -184,12 +217,26 @@ export class Sync {
     this.store.cache(messages);
     const pending = this.store.pending(messages),
       replies = this.store.pendingReplies(messages);
+    const initialTasks = manual
+      ? this.store
+          .snapshot()
+          .tasks.filter(
+            (task) =>
+              !task.done &&
+              task.source_ids.some((id) => messages.some((message) => message.id === id)),
+          )
+      : [];
+    const historical = manual
+      ? historicalReplies(messages, initialTasks).filter(
+          (message) => !replies.some((reply) => reply.id === message.id),
+        )
+      : [];
     this.store.status({
       last_poll: now(),
       pending: pending.length + replies.length,
       syncing: false,
     });
-    if (!pending.length && !replies.length) {
+    if (!pending.length && !replies.length && !(manual && initialTasks.length)) {
       this.store.status({ phase: 'Everything is up to date', debouncing: false });
       return 'done';
     }
@@ -293,12 +340,24 @@ export class Sync {
       ids = new Set(messages.map((m) => m.id));
     const tasks = snapshot.tasks.filter((t) => t.source_ids.some((id) => ids.has(id)));
     const required = new Set(tasks.flatMap((t) => t.source_ids));
-    for (const m of [...pending, ...replies]) if (m.reply_to_id) required.add(m.reply_to_id);
+    for (const m of [...pending, ...replies, ...historical])
+      if (m.reply_to_id) required.add(m.reply_to_id);
+    for (const m of historical) {
+      const index = messages.findIndex((item) => item.id === m.id);
+      for (const neighbor of messages.slice(Math.max(0, index - 5), index + 2))
+        required.add(neighbor.id);
+    }
     const recent = new Set(messages.slice(-80).map((message) => message.id));
     const context = snapshot.messages.filter(
       (message) => required.has(message.id) || recent.has(message.id),
     );
     const batch = messages.filter((m) => pending.some((p) => p.id === m.id)).slice(0, 80);
+    const trigger = this.store.settings().trigger;
+    const reviewProfile =
+      trigger.mode === 'automatic' && trigger.decisionProfileId
+        ? (this.store.settings().profiles.find((p) => p.id === trigger.decisionProfileId) ??
+          profile)
+        : profile;
     if (batch.length) {
       this.store.status({ phase: `Finding next actions in ${chat.name}` });
       const candidate = z
@@ -336,13 +395,49 @@ export class Sync {
         changes = reviewed.changes;
       }
       if (!this.active(chat)) return 'done';
+      changes = await reviewTaskCandidates(this.store, reviewProfile, changes, [
+        ...context,
+        ...batch,
+      ]);
+      if (!this.active(chat)) return 'done';
       this.store.apply(changes, batch, context);
     }
-    if (replies.length) {
+    if (manual && initialTasks.length) {
+      this.store.status({ phase: `Reviewing existing tasks in ${chat.name}` });
+      const filtered = await reviewExistingTasks(this.store, reviewProfile, initialTasks, context);
+      if (!this.active(chat)) return 'done';
+      for (const item of filtered) this.store.filterNotTask(item.id, item.revision);
+    }
+    const replyBatches = [
+      ...(replies.length ? [{ part: replies.slice(0, 40), recheck: false }] : []),
+      ...Array.from({ length: Math.ceil(historical.length / 40) }, (_, index) => ({
+        part: historical.slice(index * 40, (index + 1) * 40),
+        recheck: true,
+      })),
+    ];
+    for (const { part, recheck } of replyBatches) {
       if (!this.active(chat)) return 'done';
       this.store.status({ phase: `Matching completion replies in ${chat.name}` });
-      const started = now(),
-        part = replies.slice(0, 40);
+      const started = now();
+      const openTasks = this.store
+        .snapshot()
+        .tasks.filter((t) => !t.done && t.source_ids.some((id) => ids.has(id)));
+      if (!openTasks.length) {
+        this.store.decide(
+          part.map((message) => ({
+            message_id: message.id,
+            action: 'none',
+            task_ids: [],
+            evidence_quote: '',
+            reason: 'No open task in this conversation',
+            question: null,
+          })),
+          part,
+          started,
+          recheck,
+        );
+        continue;
+      }
       const result = z.object({ decisions: z.array(DecisionSchema) }).parse(
         await callModel(
           this.store,
@@ -351,16 +446,23 @@ export class Sync {
             JSON.stringify({
               REPLIES_TO_CLASSIFY: part,
               CONVERSATION: context,
-              TASKS: this.store
-                .snapshot()
-                .tasks.filter((t) => t.source_ids.some((id) => ids.has(id))),
+              TASKS: openTasks,
             }),
           'completion-schema.json',
           'completion matching',
         ),
       );
       if (!this.active(chat)) return 'done';
-      this.store.decide(result.decisions, part, started);
+      const decisions = await reviewCompletions(
+        this.store,
+        reviewProfile,
+        result.decisions,
+        part,
+        openTasks,
+        context,
+      );
+      if (!this.active(chat)) return 'done';
+      this.store.decide(decisions, part, started, recheck);
     }
     this.store.status({
       last_extract: now(),
