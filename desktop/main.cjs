@@ -3,7 +3,7 @@ const { spawn } = require('node:child_process');
 const { access, mkdir, readFile, rename } = require('node:fs/promises');
 const { createServer } = require('node:net');
 const { join } = require('node:path');
-const { workspaceGatewayMode } = require('./gateway-mode.cjs');
+const { workspaceGatewayLaunch } = require('./gateway-mode.cjs');
 
 app.setName('Chat2Tasks');
 if (process.env.CHAT2TASKS_DATA_DIR) app.setPath('userData', process.env.CHAT2TASKS_DATA_DIR);
@@ -16,7 +16,8 @@ let window,
   gatewayPort,
   serverPort,
   selectedImport,
-  gatewayMode = 'local';
+  gatewayMode = 'local',
+  resumeSessions = false;
 let quitting = false;
 const resources = app.isPackaged ? process.resourcesPath : process.cwd();
 const runtime = app.isPackaged ? join(resources, 'runtime') : process.cwd();
@@ -112,7 +113,7 @@ async function startGateway() {
       PORT: String(gatewayPort),
       LOG_LEVEL: 'error',
       UPDATE_CHECK_ENABLED: 'false',
-      AUTO_START_SESSIONS: 'true',
+      AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
       SSRF_ALLOWED_HOSTS: '127.0.0.1',
       PUPPETEER_EXECUTABLE_PATH: browser,
       PUPPETEER_ARGS: '--disable-gpu',
@@ -124,7 +125,7 @@ async function startGateway() {
 async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
-  gatewayMode = workspaceGatewayMode(workspace);
+  ({ mode: gatewayMode, resumeSessions } = workspaceGatewayLaunch(workspace));
   if (gatewayMode === 'remote') {
     await stop(gateway);
     gateway = undefined;

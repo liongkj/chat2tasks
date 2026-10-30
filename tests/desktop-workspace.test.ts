@@ -8,8 +8,8 @@ import { Store } from '../src/server/store.js';
 import { configureDesktopGateway } from '../src/server/desktop.js';
 
 const require = createRequire(import.meta.url);
-const { workspaceGatewayMode } = require('../desktop/gateway-mode.cjs') as {
-  workspaceGatewayMode(path: string): 'local' | 'remote';
+const { workspaceGatewayLaunch } = require('../desktop/gateway-mode.cjs') as {
+  workspaceGatewayLaunch(path: string): { mode: 'local' | 'remote'; resumeSessions: boolean };
 };
 const { replaceWorkspace } = require('../desktop/workspace-replace.cjs') as {
   replaceWorkspace(options: {
@@ -116,7 +116,16 @@ test('switching WhatsApp servers keeps each server’s chats and credentials sep
       secrets: { 'remote-openwa': 'remote-key' },
       removeSecrets: [],
     });
-    assert.equal(workspaceGatewayMode(join(root, 'workspace')), 'remote');
+    assert.deepEqual(workspaceGatewayLaunch(join(root, 'workspace')), {
+      mode: 'remote',
+      resumeSessions: false,
+    });
+    store.setMeta('desktop_setup_complete', true);
+    assert.deepEqual(workspaceGatewayLaunch(join(root, 'workspace')), {
+      mode: 'remote',
+      resumeSessions: true,
+    });
+    store.setMeta('desktop_setup_complete', false);
     await configureDesktopGateway(store, { ...environment, DESKTOP_GATEWAY_MODE: 'remote' });
     assert.equal(store.settings().openwaUrl, 'http://127.0.0.1:3456');
     assert.equal(store.secret('openwa'), 'remote-key');

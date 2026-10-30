@@ -180,6 +180,32 @@ try {
   assert.equal(config.settings.desktopGateway.activeMode, 'remote');
   assert.equal((await (await preview.fetch('/api/state')).json()).tasks.length, 8);
   assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  imported = await preview.request({ action: 'import', path: transfer, passphrase });
+  assert.equal(imported.ok, true, imported.error);
+  assert.equal(imported.gatewayMode, 'local');
+  assert.equal(imported.resumeSessions, false);
+  assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  config = await (await preview.fetch('/api/settings')).json();
+  response = await preview.fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        ...config.settings,
+        desktopGateway: {
+          ...config.settings.desktopGateway,
+          mode: 'remote',
+          remoteUrl: 'http://127.0.0.1:1',
+        },
+      },
+      secrets: { 'remote-openwa': 'fictional-key' },
+      removeSecrets: [],
+    }),
+  });
+  assert.equal(response.status, 200);
+  await preview.stop();
+  preview = await start(false);
+  config = await (await preview.fetch('/api/settings')).json();
   response = await preview.fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -196,6 +222,7 @@ try {
   await preview.stop();
   preview = await start(false);
   assert.equal(preview.ready.gatewayMode, 'local');
+  assert.equal(preview.ready.resumeSessions, false);
   assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
   process.stdout.write(
     'Bun sample, workspace transfer, and local/remote server switching passed.\n',

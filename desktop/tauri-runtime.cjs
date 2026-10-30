@@ -5,7 +5,7 @@ const { createServer } = require('node:net');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { replaceWorkspace } = require('./workspace-replace.cjs');
-const { workspaceGatewayMode } = require('./gateway-mode.cjs');
+const { workspaceGatewayLaunch } = require('./gateway-mode.cjs');
 
 const resources = process.env.C2T_TAURI_RESOURCES;
 const data = process.env.C2T_TAURI_DATA;
@@ -37,7 +37,8 @@ let gateway,
   server,
   gatewayPort,
   serverPort,
-  gatewayMode = 'local';
+  gatewayMode = 'local',
+  resumeSessions = false;
 let stopping = false;
 
 function cleanEnv() {
@@ -111,7 +112,7 @@ async function startGateway() {
       PORT: String(gatewayPort),
       LOG_LEVEL: testDiagnostics ? 'info' : 'error',
       UPDATE_CHECK_ENABLED: 'false',
-      AUTO_START_SESSIONS: 'true',
+      AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
       ENGINE_TYPE: 'whatsapp-web.js',
       SSRF_ALLOWED_HOSTS: '127.0.0.1',
       PUPPETEER_EXECUTABLE_PATH: browser,
@@ -125,7 +126,7 @@ async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
   if (!demo) {
-    gatewayMode = workspaceGatewayMode(workspace);
+    ({ mode: gatewayMode, resumeSessions } = workspaceGatewayLaunch(workspace));
     if (gatewayMode === 'remote') {
       await stop(gateway);
       gateway = undefined;
@@ -205,7 +206,9 @@ async function main() {
     origin: `http://127.0.0.1:${serverPort}`,
     token,
     demo,
-    ...(testDiagnostics ? { gatewayMode, localGatewayRunning: Boolean(gateway) } : {}),
+    ...(testDiagnostics
+      ? { gatewayMode, localGatewayRunning: Boolean(gateway), resumeSessions }
+      : {}),
   });
 }
 let queue = Promise.resolve();
@@ -233,7 +236,7 @@ input.on('line', (line) => {
         runImport,
         onError: testDiagnostics ? (error) => console.error(error.stack) : undefined,
       });
-      report(result);
+      report({ ...result, ...(testDiagnostics ? { gatewayMode, resumeSessions } : {}) });
     })
     .catch(() => report({ ok: false, error: 'The request could not be completed.' }));
 });
