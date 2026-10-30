@@ -17,14 +17,20 @@ const root = await mkdtemp(join(tmpdir(), 'chat2tasks-tauri-offline-'));
 
 async function start(demo) {
   const data = join(root, demo ? 'sample' : 'preview');
+  let diagnostics = '';
   const child = spawn(bun, [supervisor], {
     env: {
       ...process.env,
       C2T_TAURI_RESOURCES: resources,
       C2T_TAURI_DATA: data,
       C2T_TAURI_DEMO: demo ? '1' : '0',
+      C2T_TAURI_TEST_DIAGNOSTICS: '1',
     },
-    stdio: ['pipe', 'pipe', 'ignore'],
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    diagnostics = (diagnostics + chunk).slice(-16000);
   });
   const lines = createInterface({ input: child.stdout });
   const iterator = lines[Symbol.asyncIterator]();
@@ -65,6 +71,12 @@ async function start(demo) {
     child.kill();
     clearTimeout(timeout);
     lines.close();
+    const key = await readFile(join(data, 'gateway', 'data', '.api-key'), 'utf8').catch(() => '');
+    if (key.trim()) diagnostics = diagnostics.replaceAll(key.trim(), '[redacted]');
+    diagnostics = diagnostics
+      .replace(/\b(?:sk-[\w-]+|gh[pousr]_[\w-]+)\b/g, '[redacted]')
+      .replace(/\b[\da-f]{32,}\b/gi, '[redacted]');
+    if (diagnostics) process.stderr.write(`Local startup diagnostics:\n${diagnostics}\n`);
     throw error;
   }
 }

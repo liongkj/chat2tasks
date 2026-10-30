@@ -9,6 +9,7 @@ const { replaceWorkspace } = require('./workspace-replace.cjs');
 const resources = process.env.C2T_TAURI_RESOURCES;
 const data = process.env.C2T_TAURI_DATA;
 const demo = process.env.C2T_TAURI_DEMO === '1';
+const testDiagnostics = process.env.C2T_TAURI_TEST_DIAGNOSTICS === '1';
 if (!resources || !data) throw new Error('The preview runtime is not configured.');
 
 const runtime = join(resources, 'runtime');
@@ -61,10 +62,10 @@ function freePort() {
     });
   });
 }
-async function ready(port, child) {
+async function ready(port, child, name) {
   for (let attempt = 0; attempt < 120; attempt++) {
     if (child.exitCode !== null || child.signalCode !== null)
-      throw new Error('A local service stopped.');
+      throw new Error(`${name} stopped.`);
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
         signal: AbortSignal.timeout(500),
@@ -73,7 +74,7 @@ async function ready(port, child) {
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error('A local service did not start.');
+  throw new Error(`${name} did not start.`);
 }
 async function stop(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -98,13 +99,13 @@ async function startGateway() {
   await access(browser);
   gateway = spawn(process.execPath, [join(gatewayRuntime, 'dist', 'main.js')], {
     cwd: gatewayData,
-    stdio: 'ignore',
+    stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
     windowsHide: true,
     env: {
       ...cleanEnv(),
       NODE_ENV: 'production',
       PORT: String(gatewayPort),
-      LOG_LEVEL: 'error',
+      LOG_LEVEL: testDiagnostics ? 'info' : 'error',
       UPDATE_CHECK_ENABLED: 'false',
       AUTO_START_SESSIONS: 'true',
       ENGINE_TYPE: 'whatsapp-web.js',
@@ -113,7 +114,7 @@ async function startGateway() {
       PUPPETEER_ARGS: '--disable-gpu',
     },
   });
-  await ready(gatewayPort, gateway);
+  await ready(gatewayPort, gateway, 'The WhatsApp gateway');
   await access(join(gatewayData, 'data', '.api-key'));
 }
 async function startServer() {
@@ -122,7 +123,7 @@ async function startServer() {
   const origin = `http://127.0.0.1:${serverPort}`;
   server = spawn(process.execPath, [join(runtime, 'dist', 'server', 'index.js')], {
     cwd: runtime,
-    stdio: 'ignore',
+    stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
     windowsHide: true,
     env: {
       ...cleanEnv(),
@@ -143,7 +144,7 @@ async function startServer() {
       CHAT2TASKS_TAURI_TOKEN: token,
     },
   });
-  await ready(serverPort, server);
+  await ready(serverPort, server, 'The app service');
 }
 function runImport(source, destination, passphrase) {
   return new Promise((resolve) => {
@@ -216,7 +217,8 @@ input.on('line', (line) => {
 input.once('close', () => void shutdown());
 process.once('SIGTERM', () => void shutdown());
 process.once('SIGINT', () => void shutdown());
-main().catch(() => {
+main().catch((error) => {
+  if (testDiagnostics) console.error(error.message);
   report({ type: 'error' });
   void shutdown();
 });
