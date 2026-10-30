@@ -18,7 +18,9 @@
     "build:extension": "vite build --config vite.extension.config.ts && node scripts/package-extension.mjs",
     "test:extension": "playwright test",
     "mac:prepare": "node scripts/prepare-macos.mjs",
-    "mac:package": "npm run build && npm run mac:prepare && electron-builder --config desktop/electron-builder.json --mac dir --publish never"
+    "mac:package": "npm run build && npm run mac:prepare && electron-builder --config desktop/electron-builder.json --mac dir --publish never",
+    "tauri:prepare": "npm run build && node scripts/prepare-tauri.mjs",
+    "tauri:build": "npm run tauri:prepare && tauri build"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -26,6 +28,7 @@
     "@fontsource-variable/dm-sans": "^5.3.0",
     "@fontsource-variable/manrope": "^5.3.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "@tauri-apps/api": "^2.12.4",
     "fastify": "^5.6.0",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
@@ -36,6 +39,7 @@
   "devDependencies": {
     "@openai/codex": "0.163.0",
     "@playwright/test": "^1.64.1",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/chrome": "^0.3.6",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.0",

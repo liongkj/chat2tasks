@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Copy, Download, Link2, LoaderCircle, ShieldCheck, Trash2 } from 'lucide-react';
 import { z } from 'zod';
 import { DevicesSchema, PairCodeSchema } from '../shared/companion.js';
-import { api, OkSchema, time } from './api.js';
+import { api, appFetch, OkSchema, time } from './api.js';
 import { errorMessage } from './App.js';
 
 export function CompanionSettings({ notify }: { notify: (message: string) => void }) {
@@ -31,6 +31,20 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
       notify(errorMessage(error));
     }
   }
+  async function downloadExtension() {
+    try {
+      const response = await appFetch('/downloads/chat2tasks-chrome.zip');
+      if (!response.ok) throw new Error('Could not download the extension.');
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'chat2tasks-chrome.zip';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }
   return (
     <section className="settings-card" id="chrome-companion">
       <div className="card-title">
@@ -46,9 +60,15 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
       </div>
       <ol className="companion-steps">
         <li>
-          <a className="text-button" href="/downloads/chat2tasks-chrome.zip" download>
-            <Download size={14} /> Download Chrome extension
-          </a>
+          {window.chat2tasksTauri ? (
+            <button className="text-button" onClick={() => void downloadExtension()}>
+              <Download size={14} /> Download Chrome extension
+            </button>
+          ) : (
+            <a className="text-button" href="/downloads/chat2tasks-chrome.zip" download>
+              <Download size={14} /> Download Chrome extension
+            </a>
+          )}
           <p>
             Unzip it. Open <strong>chrome://extensions</strong>, enable Developer mode, choose{' '}
             <strong>Load unpacked</strong>, and select the unzipped folder. For Edge, use{' '}

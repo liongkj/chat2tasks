@@ -30,7 +30,7 @@ import {
   type PublicSettings,
   type Settings,
 } from '../shared/schema.js';
-import { api, OkSchema } from './api.js';
+import { api, appFetch, OkSchema } from './api.js';
 import { errorMessage } from './App.js';
 import { CompanionSettings } from './CompanionSettings.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
@@ -700,7 +700,7 @@ function WorkspaceTransfer({
   async function downloadTransfer() {
     setBusy(true);
     try {
-      const response = await fetch('/api/workspace/transfer', {
+      const response = await appFetch('/api/workspace/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passphrase }),

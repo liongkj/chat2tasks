@@ -1,6 +1,7 @@
 export {};
 declare global {
   interface Window {
+    chat2tasksTauri?: { origin: string; token: string; demo: boolean };
     chat2tasksDesktop?: {
       chooseImport(): Promise<boolean>;
       importWorkspace(passphrase: string): Promise<{ ok: boolean; error?: string }>;

@@ -66,6 +66,19 @@ const origins = new Set([
   ...(process.env.PUBLIC_ORIGIN ? [new URL(process.env.PUBLIC_ORIGIN).origin] : []),
 ]);
 const allowedHosts = new Set([...origins].map((origin) => new URL(origin).host));
+const tauriOrigin = process.env.CHAT2TASKS_TAURI_ORIGIN;
+const tauriToken = process.env.CHAT2TASKS_TAURI_TOKEN;
+if (
+  (tauriOrigin || tauriToken) &&
+  (!tauriOrigin ||
+    !['tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'].includes(
+      tauriOrigin,
+    ) ||
+    !tauriToken ||
+    !/^[a-f0-9]{64}$/.test(tauriToken))
+)
+  throw new Error('Invalid Tauri workspace configuration.');
+if (tauriOrigin) origins.add(tauriOrigin);
 if (
   process.env.PUBLIC_ORIGIN &&
   !['localhost', '127.0.0.1'].includes(new URL(process.env.PUBLIC_ORIGIN).hostname) &&
@@ -92,6 +105,22 @@ server.addHook('onRequest', async (request, reply) => {
   if (request.url === '/api/health') return;
   if (request.url.startsWith('/api/companion/')) return;
   if (request.routeOptions.url === '/mcp') return;
+  if (tauriOrigin && request.headers.origin === tauriOrigin) {
+    reply.headers({
+      'Access-Control-Allow-Origin': tauriOrigin,
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-Chat2Tasks-Session',
+      'Access-Control-Max-Age': '600',
+      Vary: 'Origin',
+    });
+    if (request.method === 'OPTIONS') return reply.code(204).send();
+  }
+  if (tauriToken && request.url.startsWith('/api/')) {
+    const expected = Buffer.from(tauriToken);
+    const supplied = Buffer.from(String(request.headers['x-chat2tasks-session'] ?? ''));
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied))
+      return reply.code(403).send({ error: 'The workspace session is not authorized.' });
+  }
   const password = process.env.APP_PASSWORD;
   if (password) {
     const expected = Buffer.from(`Basic ${Buffer.from(`admin:${password}`).toString('base64')}`),

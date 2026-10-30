@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Chat2Tasks Preview",
+  "version": "0.1.0",
+  "identifier": "com.chat2tasks.tauri-preview",
+  "build": { "frontendDist": "../dist/client" },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:*; img-src 'self' data: blob:; base-uri 'none'; form-action 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../work/desktop/runtime/": "runtime/",
+      "../work/desktop/gateway/": "gateway/",
+      "../work/desktop/node/": "node/",
+      "../desktop/tauri-runtime.cjs": "tauri-runtime.cjs",
+      "../desktop/workspace-replace.cjs": "workspace-replace.cjs"
+    }
+  }
+}
