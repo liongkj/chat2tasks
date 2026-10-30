@@ -399,13 +399,19 @@ function ThreadImage({ id, onMedia }: { id: string; onMedia: (id: string) => Pro
       });
     }
   }
-  return state.kind === 'image' ? (
-    <img className="t-image" src={state.url} alt="Original image from this message" />
-  ) : (
-    <div className="t-attachment">
-      <button className="t-text" disabled={state.kind === 'loading'} onClick={() => void open()}>
-        {state.kind === 'loading' ? 'Loading image…' : 'View original image'}
-      </button>
+  return (
+    <div
+      className={
+        state.kind === 'image' || state.kind === 'loading' ? 't-image-frame' : 't-attachment'
+      }
+    >
+      {state.kind === 'image' ? (
+        <img className="t-image" src={state.url} alt="Original image from this message" />
+      ) : (
+        <button className="t-text" disabled={state.kind === 'loading'} onClick={() => void open()}>
+          {state.kind === 'loading' ? 'Loading image…' : 'View original image'}
+        </button>
+      )}
       {state.kind === 'error' && <p role="alert">{state.message}</p>}
     </div>
   );

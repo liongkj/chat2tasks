@@ -76,10 +76,14 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
   const [draft, setDraft] = useState(config.settings),
     [secrets, setSecrets] = useState<Record<string, string>>({}),
     [remove, setRemove] = useState<string[]>([]);
+  const [pendingChat, setPendingChat] = useState<{
+    id: string;
+    action: 'pausing' | 'resuming';
+  } | null>(null);
   const [saving, setSaving] = useState(false),
     [addingChat, setAddingChat] = useState(false),
     [addingModel, setAddingModel] = useState(false);
-  const [discovering, setDiscovering] = useState(false),
+  const [discovering, setDiscovering] = useState<'sessions' | 'chats' | null>(null),
     [sessionId, setSessionId] = useState(''),
     [sessions, setSessions] = useState<DiscoveredEntry[]>([]),
     [discovered, setDiscovered] = useState<{ sessionId: string; chats: DiscoveredEntry[] } | null>(
@@ -152,7 +156,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
     );
   }
   async function discover(session?: string) {
-    setDiscovering(true);
+    setDiscovering(session ? 'chats' : 'sessions');
     setDiscoveryError('');
     try {
       if (!(await save())) return;
@@ -180,7 +184,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
       setDiscoveryError(message);
       notify(message);
     } finally {
-      setDiscovering(false);
+      setDiscovering(null);
     }
   }
   async function toggle(chat: Chat) {
@@ -192,6 +196,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
         c.id === chat.id ? { ...c, enabled: !saved.enabled } : c,
       ),
     };
+    setPendingChat({ id: chat.id, action: saved.enabled ? 'pausing' : 'resuming' });
     setSaving(true);
     try {
       const updated = await api('settings', PublicSettingsSchema, {
@@ -210,6 +215,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
     } catch (error) {
       notify(errorMessage(error));
     } finally {
+      setPendingChat(null);
       setSaving(false);
     }
   }
@@ -365,15 +371,15 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
               </span>
               <button
                 className="button secondary"
-                disabled={discovering || !draft.openwaUrl || gatewayPending}
+                disabled={Boolean(discovering) || !draft.openwaUrl || gatewayPending}
                 onClick={() => void discover()}
               >
-                {discovering ? (
+                {discovering === 'sessions' ? (
                   <LoaderCircle size={14} className="spin" />
                 ) : (
                   <RefreshCw size={14} />
                 )}{' '}
-                Find sessions
+                {discovering === 'sessions' ? 'Finding sessions…' : 'Find sessions'}
               </button>
             </div>
           </section>
@@ -419,10 +425,11 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                 </div>
                 <button
                   className="button secondary"
-                  disabled={!sessionId || discovering}
+                  disabled={!sessionId || Boolean(discovering)}
                   onClick={() => void discover(sessionId)}
                 >
-                  Find chats <ChevronRight size={14} />
+                  {discovering === 'chats' ? 'Finding chats…' : 'Find chats'}{' '}
+                  <ChevronRight size={14} />
                 </button>
               </div>
             )}
@@ -479,10 +486,14 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                           })
                         }
                       />
-                      <p>
-                        {c.enabled
-                          ? 'Following this conversation'
-                          : 'Paused · saved tasks remain available'}
+                      <p aria-live="polite">
+                        {pendingChat?.id === c.id
+                          ? pendingChat.action === 'pausing'
+                            ? 'Pausing…'
+                            : 'Resuming…'
+                          : c.enabled
+                            ? 'Following this conversation'
+                            : 'Paused · saved tasks remain available'}
                       </p>
                       <small>{c.chatId}</small>
                     </div>
@@ -492,6 +503,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                     <button
                       className={`toggle ${c.enabled ? 'on' : ''}`}
                       role="switch"
+                      aria-busy={pendingChat?.id === c.id}
                       aria-checked={c.enabled}
                       aria-label={`Activate ${c.name}`}
                       disabled={saving || !config.settings.chats.some((chat) => chat.id === c.id)}
@@ -1182,8 +1194,8 @@ function ProfileCard({
                 }
               }}
             >
-              {loading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />} Load
-              models
+              {loading ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}{' '}
+              {loading ? 'Loading models…' : 'Load models'}
             </button>
           )}
           <button
@@ -1200,8 +1212,8 @@ function ProfileCard({
               }
             }}
           >
-            {testing ? <LoaderCircle size={14} className="spin" /> : <Zap size={14} />} Test
-            connection
+            {testing ? <LoaderCircle size={14} className="spin" /> : <Zap size={14} />}{' '}
+            {testing ? 'Testing connection…' : 'Test connection'}
           </button>
         </div>
       </div>
@@ -1230,7 +1242,7 @@ function ChatDialog({
   sessionId: string;
   onSessionChange: (id: string) => void;
   discovered: DiscoveredEntry[] | null;
-  discovering: boolean;
+  discovering: 'sessions' | 'chats' | null;
   discoveryError: string;
   canDiscover: boolean;
   onDiscoverSessions: () => Promise<void>;
@@ -1346,14 +1358,14 @@ function ChatDialog({
                         type="button"
                         className="button secondary"
                         onClick={() => void onDiscoverSessions()}
-                        disabled={discovering || !canDiscover}
+                        disabled={Boolean(discovering) || !canDiscover}
                       >
-                        {discovering ? (
+                        {discovering === 'sessions' ? (
                           <LoaderCircle size={14} className="spin" />
                         ) : (
                           <RefreshCw size={14} />
                         )}
-                        Find sessions
+                        {discovering === 'sessions' ? 'Finding sessions…' : 'Find sessions'}
                       </button>
                     </div>
                     {!canDiscover && (
@@ -1385,14 +1397,14 @@ function ChatDialog({
                         type="button"
                         className="button secondary"
                         onClick={() => void onDiscoverChats()}
-                        disabled={!sessionId || discovering || !canDiscover}
+                        disabled={!sessionId || Boolean(discovering) || !canDiscover}
                       >
-                        {discovering ? (
+                        {discovering === 'chats' ? (
                           <LoaderCircle size={14} className="spin" />
                         ) : (
                           <RefreshCw size={14} />
                         )}
-                        Find chats
+                        {discovering === 'chats' ? 'Finding chats…' : 'Find chats'}
                       </button>
                     </div>
                     {discovered?.length === 0 && <small>No chats found in this session.</small>}

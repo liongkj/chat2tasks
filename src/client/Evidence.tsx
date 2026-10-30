@@ -22,6 +22,7 @@ export function MessageCard({
   compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const [loadedImageId, setLoadedImageId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ id: string; url: string } | null>(null);
   const mediaPath = `/api/media?id=${encodeURIComponent(message.id)}`;
   useEffect(() => {
@@ -101,26 +102,35 @@ export function MessageCard({
             Captured selection · {message.browser_source.title} · WhatsApp Web
           </p>
         )}
-        {message.type === 'image' &&
-          (failed ? (
-            <div className="image-unavailable">
-              <TriangleAlert size={16} />
-              <span>The original image is unavailable from OpenWA.</span>
-            </div>
-          ) : imageUrl ? (
-            <a href={imageUrl} target="_blank" rel="noreferrer">
-              <img
-                src={imageUrl}
-                alt={`Attachment in ${name}, ${time(message.timestamp)}`}
-                loading="lazy"
-                onError={() => setFailed(true)}
-              />
-            </a>
-          ) : (
-            <p className="attachment-label" role="status">
-              Loading image…
-            </p>
-          ))}
+        {message.type === 'image' && (
+          <div className="image-preview">
+            {failed ? (
+              <div className="image-unavailable" role="status">
+                <TriangleAlert size={16} />
+                <span>The original image is unavailable from OpenWA.</span>
+              </div>
+            ) : (
+              <>
+                {loadedImageId !== message.id && (
+                  <p className="attachment-label" role="status">
+                    Loading image…
+                  </p>
+                )}
+                {imageUrl && (
+                  <a href={imageUrl} target="_blank" rel="noreferrer">
+                    <img
+                      src={imageUrl}
+                      alt={`Attachment in ${name}, ${time(message.timestamp)}`}
+                      loading="lazy"
+                      onLoad={() => setLoadedImageId(message.id)}
+                      onError={() => setFailed(true)}
+                    />
+                  </a>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {!compact && (
           <time
             dateTime={

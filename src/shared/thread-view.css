@@ -227,12 +227,22 @@
   font-size: 12px;
   white-space: pre-wrap;
 }
+.t-image-frame {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: min(600px, 70vh);
+  margin-top: 10px;
+  overflow: hidden;
+  background: #00000008;
+  color: var(--muted, #515154);
+  font-size: 12px;
+}
 .t-image {
   display: block;
   max-width: 100%;
-  max-height: 600px;
+  max-height: 100%;
   object-fit: contain;
-  margin-top: 10px;
 }
 .t-attachment {
   margin-top: 8px;

@@ -244,7 +244,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await expect(
       page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
     ).not.toBeVisible();
-    await expect(page.getByRole('button', { name: 'Reopen task', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled();
     expect(
       SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
         (task) => task.title === title,
@@ -915,6 +915,216 @@ test('manual merge moves evidence into an existing TODO and preserves notes, com
     );
     await page.screenshot({ path: test.info().outputPath('merged-todo.png') });
   } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('overview items stay in place while background activity changes', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 900 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    let working = false;
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const current = SnapshotSchema.parse(await response.json());
+      await route.fulfill({
+        response,
+        json: {
+          ...current,
+          status: {
+            ...current.status,
+            syncing: working,
+            debouncing: false,
+            phase: 'Checking sample messages',
+          },
+        },
+      });
+    });
+    await page.goto(base);
+    const grid = page.locator('.overview-grid');
+    await expect(grid).toBeVisible();
+    const before = await grid.boundingBox();
+    if (!before) throw Error('The sample overview grid is missing');
+    working = true;
+    await expect(page.getByText('Checking sample messages')).toBeVisible({ timeout: 10000 });
+    const during = await grid.boundingBox();
+    if (!during) throw Error('The sample overview grid is missing');
+    expect(during.y).toBeCloseTo(before.y, 0);
+    working = false;
+    await expect(page.getByText('Checking sample messages')).not.toBeVisible({ timeout: 10000 });
+    const after = await grid.boundingBox();
+    if (!after) throw Error('The sample overview grid is missing');
+    expect(after.y).toBeCloseTo(before.y, 0);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('a conversation switch shows its pending state until the server confirms', async () => {
+  const settings = PublicSettingsSchema.parse(await (await owner('settings')).json());
+  const chat = settings.settings.chats.find((item) => item.enabled);
+  if (!chat) throw Error('The sample needs a followed conversation');
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    reducedMotion: 'reduce',
+    httpCredentials: { username: 'admin', password },
+  });
+  let release = () => {};
+  try {
+    const page = await context.newPage();
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route('**/api/settings', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      await pending;
+      await route.fulfill({ status: 503, json: { error: 'Fictional save failed' } });
+    });
+    await page.goto(base);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'WhatsApp & chats', exact: true }).click();
+    const toggle = page.getByRole('switch', { name: `Activate ${chat.name}` });
+    const row = toggle.locator('..');
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await toggle.click();
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect(row).toContainText('Pausing…');
+    release();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'Fictional save failed' }),
+    ).toBeVisible();
+    await expect(toggle).toBeEnabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  } finally {
+    release();
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('reading position stays put when a different conversation receives a message', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const settings = PublicSettingsSchema.parse(await (await owner('settings')).json());
+  const chat = settings.settings.chats.find((item) =>
+    snapshot.tasks.some((task) =>
+      snapshot.messages.some(
+        (message) =>
+          task.source_ids.includes(message.id) &&
+          message.sessionId === item.sessionId &&
+          message.chatId === item.chatId,
+      ),
+    ),
+  );
+  const other = settings.settings.chats.find((item) => item.id !== chat?.id);
+  const task = snapshot.tasks.find((item) =>
+    snapshot.messages.some(
+      (message) =>
+        item.source_ids.includes(message.id) &&
+        message.sessionId === chat?.sessionId &&
+        message.chatId === chat?.chatId,
+    ),
+  );
+  const source = snapshot.messages.find((message) => task?.source_ids.includes(message.id));
+  if (!chat || !other || !task || !source)
+    throw Error('The sample needs two conversations and linked work');
+  const timestamp = Math.floor(Date.now() / 1000);
+  const longConversation = Array.from({ length: 24 }, (_, index) => ({
+    ...source,
+    id: `scroll-sample-${index}`,
+    waMessageId: `scroll-sample-${index}`,
+    sessionId: chat.sessionId,
+    chatId: chat.chatId,
+    body: 'A fictional message for testing reading position. '.repeat(7),
+    type: index === 22 ? 'image' : 'text',
+    timestamp: timestamp + index,
+  }));
+  const unrelated = {
+    ...source,
+    id: 'scroll-unrelated-message',
+    waMessageId: 'scroll-unrelated-message',
+    sessionId: other.sessionId,
+    chatId: other.chatId,
+    body: 'Unrelated incoming message',
+    type: 'text',
+    timestamp: timestamp + 100,
+  };
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 650 },
+    httpCredentials: { username: 'admin', password },
+  });
+  let releaseImage = () => {};
+  try {
+    const page = await context.newPage();
+    const imagePending = new Promise<void>((resolve) => {
+      releaseImage = resolve;
+    });
+    await page.route('**/api/media?*', async (route) => {
+      if (!route.request().url().includes('scroll-sample-22')) return route.continue();
+      await imagePending;
+      await route.fulfill({
+        contentType: 'image/png',
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      });
+    });
+    let includeUnrelated = false;
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const current = SnapshotSchema.parse(await response.json());
+      await route.fulfill({
+        response,
+        json: {
+          ...current,
+          messages: [
+            ...current.messages,
+            ...longConversation,
+            ...(includeUnrelated ? [unrelated] : []),
+          ],
+        },
+      });
+    });
+    await page.goto(base + '?view=conversations&chat=' + chat.id + '&task=' + task.reference);
+    const thread = page.locator('.thread-scroll');
+    await expect(thread.locator('.message-card')).toHaveCount(
+      snapshot.messages.filter(
+        (message) => message.sessionId === chat.sessionId && message.chatId === chat.chatId,
+      ).length + longConversation.length,
+    );
+    await thread.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    const readingPosition = await thread.evaluate((element) => element.scrollTop);
+    expect(readingPosition).toBeGreaterThan(300);
+    includeUnrelated = true;
+    await expect(
+      page.getByRole('button', { name: `Open conversation: ${other.name}` }),
+    ).toContainText('Unrelated incoming message', { timeout: 10000 });
+    expect(await thread.evaluate((element) => element.scrollTop)).toBeCloseTo(readingPosition, 0);
+
+    const image = thread.locator('[data-message-id="scroll-sample-22"]');
+    const nextMessage = thread.locator('[data-message-id="scroll-sample-23"]');
+    await image.scrollIntoViewIfNeeded();
+    await expect(image.getByText('Loading image…')).toBeVisible();
+    const beforeImage = await nextMessage.boundingBox();
+    if (!beforeImage) throw Error('The message after the sample image is missing');
+    releaseImage();
+    await expect(image.getByText('Loading image…')).not.toBeVisible();
+    const afterImage = await nextMessage.boundingBox();
+    if (!afterImage) throw Error('The message after the sample image is missing');
+    expect(afterImage.y).toBeCloseTo(beforeImage.y, 0);
+  } finally {
+    releaseImage();
     await context.close();
     await browser.close();
   }

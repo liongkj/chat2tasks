@@ -196,6 +196,7 @@ fn close_workspace_picker(window: tauri::WebviewWindow) -> Result<(), String> {
 fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app
         .get_webview_window("main")
+        .or_else(|| app.get_webview_window("connection"))
         .or_else(|| app.get_webview_window("remote"))
         .or_else(|| app.get_webview_window("workspace-picker"))
     {
@@ -204,23 +205,67 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
-fn show_remote_workspace(app: &tauri::AppHandle, address: &str) -> Result<(), String> {
-    let url = tauri::Url::parse(address)
-        .map_err(|_| "Invalid server address.")?
+fn remote_login_url(address: &str) -> Result<tauri::Url, String> {
+    tauri::Url::parse(address)
+        .map_err(|_| "Invalid server address.".to_string())?
         .join("desktop-sign-in")
-        .map_err(|_| "Invalid server address.")?;
+        .map_err(|_| "Invalid server address.".to_string())
+}
+
+#[tauri::command]
+fn retry_remote_workspace(app: tauri::AppHandle) -> Result<(), String> {
+    let WorkspaceTarget::Remote { url } = get_workspace_target(app.clone())? else {
+        return Err("Choose a server workspace first.".into());
+    };
+    app.get_webview_window("remote")
+        .ok_or("Could not retry the server workspace.")?
+        .navigate(remote_login_url(&url)?)
+        .map_err(|_| "Could not retry the server workspace.".into())
+}
+
+fn show_remote_workspace(app: &tauri::AppHandle, address: &str) -> Result<(), String> {
+    let url = remote_login_url(address)?;
     let origin = url.origin();
+    let loaded_origin = origin.clone();
     let hostname = url.host_str().unwrap_or("server").to_string();
     let title = format!("Chat2Tasks · {hostname}");
+    let connecting = WebviewWindowBuilder::new(
+        app,
+        "connection",
+        WebviewUrl::App("index.html?desktop=connecting".into()),
+    )
+    .title("Chat2Tasks · Connecting to server…")
+    .inner_size(1140.0, 800.0)
+    .min_inner_size(680.0, 580.0)
+    .build()
+    .map_err(|_| "Could not open the connection screen.".to_string())?;
+    let close_connecting = connecting.clone();
+    connecting.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = close_connecting.hide();
+        }
+    });
+
     let external = app.clone();
     let window = WebviewWindowBuilder::new(app, "remote", WebviewUrl::External(url))
         .title("Chat2Tasks · Connecting to server…")
         .inner_size(1140.0, 800.0)
         .min_inner_size(680.0, 580.0)
+        .visible(false)
         .on_navigation(move |url| url.origin() == origin)
         .on_page_load(move |window, payload| {
-            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                && payload.url().origin() == loaded_origin
+            {
                 let _ = window.set_title(&title);
+                if let Some(connecting) = window.app_handle().get_webview_window("connection") {
+                    if connecting.is_visible().unwrap_or(false) {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    let _ = connecting.destroy();
+                }
             }
         })
         .on_new_window(move |url, _| {
@@ -245,7 +290,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, get_workspace_target, set_workspace_target, close_workspace_picker])
+        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
             "settings" => {
