@@ -6,8 +6,12 @@ import { join } from 'node:path';
 import { Store, now } from '../src/server/store.js';
 import { OpenWA } from '../src/server/openwa.js';
 import { Sync } from '../src/server/sync.js';
-import { MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
-import { reviewTaskCandidates } from '../src/server/decisions.js';
+import { DecisionSchema, MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
+import {
+  reviewTaskCandidates,
+  reviewExistingTasks,
+  reviewCompletions,
+} from '../src/server/decisions.js';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-filter-'));
@@ -91,6 +95,81 @@ const answer = (content: unknown) =>
     }),
     { status: 200 },
   );
+
+test('decision reviews share only the evidence needed for the tasks being reviewed', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const t = now() - 120;
+    const parent = message('parent', 'For the export', 'incoming', t - 1);
+    const source = MessageSchema.parse({
+      ...message('source', 'What is the rate?', 'incoming', t),
+      reply_to_id: parent.id,
+    });
+    const reply = MessageSchema.parse({
+      ...message('reply', 'The rate is 10%', 'outgoing', t + 1),
+      reply_to_id: source.id,
+    });
+    const unrelated = message('unrelated', 'Private unrelated conversation', 'outgoing', t + 2);
+    const otherSource = message('other', 'Fix the export', 'incoming', t + 3);
+    const messages = [parent, source, reply, unrelated, otherSource];
+    f.store.cache(messages);
+    f.store.apply(
+      [change('Answer the rate question', source.id), change('Other task', otherSource.id)],
+      messages,
+    );
+    const tasks = f.store.snapshot().tasks;
+    const task = tasks.find((item) => item.title === 'Answer the rate question');
+    assert.ok(task);
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    const inputs: string[] = [];
+    globalThis.fetch = async (_url, options) => {
+      const request = JSON.parse(String(options?.body));
+      inputs.push(request.input);
+      return new Response(
+        JSON.stringify({
+          answers: request.questions.map((q: { name: string }) => ({
+            name: q.name,
+            type: 'choice',
+            choice: q.name.startsWith('completion_') ? 'supported' : 'keep',
+            confidence: 0.99,
+          })),
+        }),
+        { status: 200 },
+      );
+    };
+    await reviewTaskCandidates(
+      f.store,
+      judge,
+      [change('Answer the rate question', source.id)],
+      messages,
+    );
+    await reviewExistingTasks(f.store, judge, [task], messages);
+    await reviewCompletions(
+      f.store,
+      judge,
+      [
+        DecisionSchema.parse(completion(reply.id, task.id)),
+        DecisionSchema.parse({ ...completion(unrelated.id, task.id), action: 'none' }),
+      ],
+      [reply, unrelated],
+      tasks,
+      messages,
+    );
+    assert.equal(inputs.length, 3);
+    for (const input of inputs) {
+      assert.match(input, /What is the rate\?/);
+      assert.match(input, /For the export/);
+      assert.doesNotMatch(input, /Private unrelated conversation/);
+    }
+    assert.match(inputs[2] ?? '', /The rate is 10%/);
+    assert.doesNotMatch(inputs[2] ?? '', /Other task/);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
 
 test('new candidates are filtered only when the decision service identifies a non-task confidently', async () => {
   const f = fixture();
