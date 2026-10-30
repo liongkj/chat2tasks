@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import {
   ArrowUpRight,
@@ -23,6 +23,8 @@ import {
 import { z } from 'zod';
 import {
   PublicSettingsSchema,
+  AttentionPreferencesSchema,
+  type AttentionPreferences,
   type Chat,
   type Profile,
   type PublicSettings,
@@ -31,6 +33,7 @@ import {
 import { api, OkSchema } from './api.js';
 import { errorMessage } from './App.js';
 import { CompanionSettings } from './CompanionSettings.js';
+import { AttentionPreferencesEditor } from './AttentionPreferences.js';
 
 type Props = {
   tab: 'chats' | 'models';
@@ -620,6 +623,8 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
         </>
       )}
       {tab === 'models' && <CompanionSettings notify={notify} />}
+      {tab === 'models' && <AttentionSettings notify={notify} />}
+      {tab === 'models' && <WorkspaceTransfer notify={notify} />}
       <div className="settings-save-bottom">
         <button className="button primary" disabled={saving} onClick={() => void save()}>
           <Check size={14} />
@@ -628,6 +633,113 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
         <span>Changes are saved to this workspace.</span>
       </div>
     </div>
+  );
+}
+
+function AttentionSettings({ notify }: { notify: (text: string) => void }) {
+  const [value, setValue] = useState<AttentionPreferences | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void api('preferences', AttentionPreferencesSchema)
+      .then(setValue)
+      .catch((error) => notify(errorMessage(error)));
+  }, [notify]);
+  async function save() {
+    if (!value) return;
+    setBusy(true);
+    try {
+      setValue(await api('preferences', AttentionPreferencesSchema, value));
+      notify('Attention preferences saved.');
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="settings-card">
+      <div className="card-title">
+        <span className="card-icon">
+          <Sparkles size={20} />
+        </span>
+        <div>
+          <h2>What needs attention</h2>
+          <p>Choose how new conversation evidence is organized.</p>
+        </div>
+      </div>
+      {value && <AttentionPreferencesEditor value={value} onChange={setValue} />}
+      <div className="card-footer">
+        <span>Existing items and your corrections stay in place.</span>
+        <button className="button secondary" disabled={!value || busy} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save preferences'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function WorkspaceTransfer({ notify }: { notify: (text: string) => void }) {
+  const [passphrase, setPassphrase] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function downloadTransfer() {
+    setBusy(true);
+    try {
+      const response = await fetch('/api/workspace/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase }),
+      });
+      if (!response.ok) throw new Error('Could not create the workspace transfer.');
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'chat2tasks-workspace.c2t';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setPassphrase('');
+      notify('Encrypted workspace transfer downloaded.');
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="settings-card">
+      <div className="card-title">
+        <span className="card-icon green">
+          <ShieldCheck size={20} />
+        </span>
+        <div>
+          <h2>Move your workspace</h2>
+          <p>
+            Save tasks, notes, conversations, cached images and saved connection keys in an encrypted
+            file.
+          </p>
+        </div>
+      </div>
+      <div className="field">
+        <label htmlFor="transfer-passphrase">Create a passphrase</label>
+        <input
+          id="transfer-passphrase"
+          type="password"
+          autoComplete="new-password"
+          value={passphrase}
+          onChange={(event) => setPassphrase(event.target.value)}
+        />
+        <small>Use at least eight characters. You will need this passphrase on your Mac.</small>
+      </div>
+      <div className="card-footer">
+        <span>WhatsApp will need to be linked again on the new Mac.</span>
+        <button
+          className="button secondary"
+          disabled={busy || passphrase.length < 8}
+          onClick={() => void downloadTransfer()}
+        >
+          {busy ? 'Preparing…' : 'Download transfer'}
+        </button>
+      </div>
+    </section>
   );
 }
 

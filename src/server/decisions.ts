@@ -120,6 +120,7 @@ export async function decideTrigger(
   elapsed: number,
 ) {
   const state = {
+    owner_preferences: store.preferences(),
     new_messages: messages.map((m) => ({
       id: m.id,
       body: m.body.slice(0, 3000),
@@ -217,6 +218,15 @@ async function reviewChoices(
   questions: ReviewQuestion[],
 ) {
   if (!questions.length) return new Map<string, z.infer<typeof reviewAnswer>>();
+  const preferences = store.preferences();
+  questions = questions.map((question) => ({
+    ...question,
+    instructions:
+      question.instructions +
+      '\nOwner preferences: ' +
+      JSON.stringify(preferences) +
+      '. These are settings, not conversation evidence. Never invent an owner or request.',
+  }));
   const started = now();
   if (profile.kind !== 'decision') {
     const result = z
@@ -367,6 +377,7 @@ export async function reviewWaitCandidates(
   waits: WaitChange[],
   context: Message[],
 ) {
+  if (!store.preferences().trackWaiting) waits = waits.filter((wait) => wait.id !== null);
   const messages = new Map(context.map((message) => [message.id, message]));
   const results: (WaitChange | null)[] = Array.from({ length: waits.length }, () => null);
   for (let offset = 0; offset < waits.length; offset += 4) {
@@ -629,8 +640,10 @@ export async function reviewItemKinds(
               kind: kind.data,
               confidence: answer.confidence,
               needsOwnerReview:
-                (kind.data === 'question' || kind.data === 'action') &&
-                sources.every((source) => source?.type === 'image' && !source.body.trim()),
+                sources.every((source) => source?.type === 'image' && !source.body.trim()) &&
+                (kind.data === 'question' ||
+                  kind.data === 'action' ||
+                  store.preferences().screenshots === 'review'),
             };
         } catch {
           /* Keep an unclassified item visible when the reviewer fails. */
@@ -700,7 +713,12 @@ export async function reviewTaskCandidates(
       filterable.push({ task: updated, index });
   }
   const reviewedChanges = changes.map((task, index) => classified.get(index) ?? task);
-  if (!filterable.length) return reviewedChanges;
+  const keepForOwner = (task: TaskChange) =>
+    store.preferences().includeReminders ||
+    task.id !== null ||
+    task.kind !== 'reminder' ||
+    task.kind_suggestion != null;
+  if (!filterable.length) return reviewedChanges.filter(keepForOwner);
   try {
     const answers = await reviewChoices(
       store,
@@ -719,12 +737,13 @@ export async function reviewTaskCandidates(
       })),
     );
     return reviewedChanges.filter((task, index) => {
+      if (!keepForOwner(task)) return false;
       if (task.kind !== 'task' || task.kind_suggestion != null) return true;
       const answer = answers.get(`candidate_${index}`);
       return task.id !== null || answer?.choice !== 'not_task' || answer.confidence < 0.95;
     });
   } catch {
-    return reviewedChanges;
+    return reviewedChanges.filter(keepForOwner);
   }
 }
 

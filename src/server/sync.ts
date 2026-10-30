@@ -400,6 +400,7 @@ export class Sync {
             profile,
             (await prompt('triage')) +
               JSON.stringify({
+                OWNER_PREFERENCES: this.store.preferences(),
                 EXISTING_TASKS: tasks,
                 EXISTING_WAITS: existingWaits,
                 CONTEXT: context,
@@ -424,6 +425,7 @@ export class Sync {
               profile,
               (await prompt('review')) +
                 JSON.stringify({
+                  OWNER_PREFERENCES: this.store.preferences(),
                   CANDIDATES: { changes, waits },
                   MESSAGES: [...context, ...batch],
                 }),
@@ -498,7 +500,7 @@ export class Sync {
       ];
       if (!this.active(chat)) return 'done';
       for (const result of reviewed)
-        if (result.needs_review)
+        if (result.needs_review || this.store.preferences().resolveReplies === 'review')
           this.store.suggestWaitResponse(
             result.id,
             result.revision,

@@ -313,6 +313,97 @@ test('a question found only in an uncaptioned screenshot needs owner review', as
   }
 });
 
+test('the screenshot preference sends an uncaptioned operational alert to review', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    f.store.savePreferences({ ...f.store.preferences(), screenshots: 'review' });
+    const source = MessageSchema.parse({
+      ...message('image', '', 'incoming', now()),
+      type: 'image',
+      image_reading: {
+        message_id: 'image',
+        observations: ['A server disk is almost full'],
+        uncertainties: [],
+      },
+    });
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({
+          answers: body.questions.map((question: { name: string }) => ({
+            name: question.name,
+            type: 'choice',
+            choice: question.name === 'kind' ? 'task' : 'keep',
+            confidence: 0.99,
+          })),
+        }),
+        { status: 200 },
+      );
+    };
+    const [result] = await reviewTaskCandidates(
+      f.store,
+      judge,
+      [change('Check the disk', source.id)],
+      [source],
+    );
+    assert.equal(result?.kind_suggestion, 'task');
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('turning off reminders and waiting only suppresses new suggested items', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    f.store.savePreferences({
+      ...f.store.preferences(),
+      includeReminders: false,
+      trackWaiting: false,
+    });
+    const source = message('incoming', 'A status update', 'incoming', now() - 2);
+    const request = message('outgoing', 'Please send the report', 'outgoing', now() - 1);
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          answers: [{ name: 'kind', type: 'choice', choice: 'reminder', confidence: 0.99 }],
+        }),
+        { status: 200 },
+      );
+    const newReminders = await reviewTaskCandidates(
+      f.store,
+      judge,
+      [change('Status', source.id)],
+      [source],
+    );
+    assert.equal(newReminders.length, 0);
+    const newWaits = await reviewWaitCandidates(
+      f.store,
+      judge,
+      [
+        WaitChangeSchema.parse({
+          id: null,
+          expected: 'The report',
+          person: null,
+          task_id: null,
+          source_ids: [request.id],
+        }),
+      ],
+      [request],
+    );
+    assert.equal(newWaits.length, 0);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
 test('waiting-for extraction keeps uncertain requests reviewable and excludes answered or incoming requests', async () => {
   const f = fixture();
   const original = globalThis.fetch;

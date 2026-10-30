@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { matchesTaskIdentifier } from '../shared/tasks.js';
 import {
   MessageSchema,
+  AttentionPreferencesSchema,
   ItemKindSchema,
   GtdSchema,
   WaitInputSchema,
@@ -29,6 +30,7 @@ import {
   type SettingsUpdate,
   type Status,
   type Settings,
+  type AttentionPreferences,
 } from '../shared/schema.js';
 
 export const now = () => Date.now() / 1000;
@@ -256,6 +258,58 @@ export class Store {
   }
   setMeta(key: string, value: unknown) {
     this.db.prepare('INSERT OR REPLACE INTO meta VALUES(?,?)').run(key, JSON.stringify(value));
+  }
+  preferences(): AttentionPreferences {
+    return AttentionPreferencesSchema.parse(this.metaValue('attention_preferences') ?? {});
+  }
+  savePreferences(value: unknown) {
+    const preferences = AttentionPreferencesSchema.parse(value);
+    this.setMeta('attention_preferences', preferences);
+    return preferences;
+  }
+  relinkConversation(id: string, sessionId: string) {
+    const settings = this.settings();
+    const chat = settings.chats.find((item) => item.id === id);
+    if (!chat) throw new Error('Conversation not found');
+    if (
+      settings.chats.some(
+        (item) => item.id !== id && item.sessionId === sessionId && item.chatId === chat.chatId,
+      )
+    )
+      throw new Error('This conversation is already connected');
+    if (chat.sessionId === sessionId) return;
+    const messages = this.messages().filter(
+      (message) => message.sessionId === chat.sessionId && message.chatId === chat.chatId,
+    );
+    this.transaction(() => {
+      for (const previous of messages) {
+        const updated = { ...previous, sessionId };
+        for (const [table, column] of [
+          ['processed', 'id'],
+          ['completion_seen', 'message_id'],
+        ]) {
+          const row = this.db
+            .prepare(`SELECT digest FROM ${table} WHERE ${column}=?`)
+            .get(previous.id);
+          if (row && z.object({ digest: z.string() }).parse(row).digest === fingerprint(previous))
+            this.db
+              .prepare(`UPDATE ${table} SET digest=? WHERE ${column}=?`)
+              .run(fingerprint(updated), previous.id);
+        }
+        this.upsertMessage(updated);
+      }
+      this.db.prepare('UPDATE app_settings SET payload=? WHERE id=1').run(
+        JSON.stringify({
+          ...settings,
+          chats: settings.chats.map((item) =>
+            item.id === id ? { ...item, sessionId, enabled: false } : item,
+          ),
+        }),
+      );
+      this.db
+        .prepare('DELETE FROM meta WHERE key=?')
+        .run('cursor:' + hash([sessionId, chat.chatId]));
+    });
   }
   status(values?: Partial<Status>): Status {
     const old = StatusSchema.parse(this.metaValue('app_status') ?? {});
@@ -917,6 +971,12 @@ export class Store {
     });
   }
   decide(decisions: Decision[], batch: Message[], started: number, recheck = false) {
+    if (this.preferences().resolveReplies === 'review')
+      decisions = decisions.map((decision) =>
+        decision.action === 'complete'
+          ? { ...decision, action: 'ask', question: 'Does this reply complete the item?' }
+          : decision,
+      );
     if (
       decisions.length !== batch.length ||
       new Set(decisions.map((d) => d.message_id)).size !== batch.length
