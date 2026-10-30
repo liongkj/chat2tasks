@@ -471,6 +471,8 @@ function App() {
                           </span>
                           {task.done && task.resolution?.kind === 'filtered' ? (
                             <small>Not a task · reopen if needed</small>
+                          ) : task.done && task.resolution?.kind === 'reply' ? (
+                            <small>Resolved from your reply</small>
                           ) : !task.done && task.triage_state === 'needs_info' ? (
                             <small>Needs a detail</small>
                           ) : null}
