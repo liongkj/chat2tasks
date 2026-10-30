@@ -7,7 +7,7 @@ selected explicitly; the previous preview workspace is kept as a backup.
 The Tauri preview uses a bundled Bun runtime for its supervisor, app service, gateway and transfer
 process. The existing Electron build retains its Node runtime and separate data directory.
 
-On the target Mac or Windows machine, install Node 24, Bun 1.4.3, Rust and the project dependencies.
+On the target Mac or Windows machine, install Node 24, Bun 1.4.4 or newer, Rust and the project dependencies.
 Run `npm run tauri:stage` once to prepare the isolated runtime and browser, then run
 `npm run tauri:build -- --bundles app` on macOS or `npm run tauri:build -- --bundles nsis` on
 Windows. The staging step downloads dependencies; it does not use an existing app workspace.

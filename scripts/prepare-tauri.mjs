@@ -3,6 +3,9 @@ import { resolve } from 'node:path';
 
 const stage = resolve('work/tauri');
 if (!process.versions.bun) throw new Error('Run this preparation with Bun.');
+const [major, minor, patch] = process.versions.bun.split('.').map(Number);
+if (!(major > 1 || (major === 1 && (minor > 4 || (minor === 4 && patch >= 4)))))
+  throw new Error('Bun 1.4.4 or newer is required for reliable workspace transfers.');
 for (const name of ['runtime', 'gateway']) {
   try {
     await access(resolve(stage, name));
