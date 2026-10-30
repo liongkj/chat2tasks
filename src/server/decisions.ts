@@ -470,7 +470,9 @@ export async function reviewWaitResponses(
         (message) =>
           message.direction === 'incoming' &&
           (!candidateIds || candidateIds.has(message.id)) &&
-          Boolean(message.body.trim()) &&
+          (Boolean(message.body.trim()) ||
+            (direct(message) &&
+              ['image', 'document', 'video', 'audio', 'ptt'].includes(message.type))) &&
           requests.some(
             (request) =>
               request.sessionId === message.sessionId &&
@@ -482,6 +484,16 @@ export async function reviewWaitResponses(
       .sort((a, b) => Number(direct(b)) - Number(direct(a)) || a.timestamp - b.timestamp);
     let uncertain: (typeof results)[number] | undefined;
     for (const reply of replies) {
+      if (!reply.body.trim()) {
+        uncertain ??= {
+          id: wait.id,
+          revision: current.revision,
+          response_id: reply.id,
+          response_fingerprint: fingerprint(reply),
+          needs_review: true,
+        };
+        continue;
+      }
       try {
         const answers = await reviewChoices(
           store,

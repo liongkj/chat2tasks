@@ -504,6 +504,34 @@ test('manual review can resolve an outstanding wait even when no tasks are open'
   }
 });
 
+test('an attachment-only reply to a request is held for review instead of being missed', async () => {
+  const f = fixture();
+  try {
+    const request = message('request', 'Please send the PDF', 'outgoing', now() - 2);
+    const reply = MessageSchema.parse({
+      ...message('reply', '', 'incoming', now() - 1),
+      type: 'document',
+      reply_to_id: request.id,
+    });
+    f.store.cache([request, reply]);
+    const wait = f.store.createWait({
+      expected: 'The PDF',
+      person: null,
+      task_id: null,
+      source_ids: [request.id],
+    });
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    const reviewed = await reviewWaitResponses(f.store, judge, [wait], [request, reply]);
+    assert.equal(reviewed.length, 1);
+    assert.equal(reviewed[0]?.response_id, reply.id);
+    assert.equal(reviewed[0]?.needs_review, true);
+    assert.equal(f.store.waitEvidence(wait.id).wait.state, 'waiting');
+  } finally {
+    f.close();
+  }
+});
+
 test('an outgoing request is saved to Waiting for after decision review', async () => {
   const f = fixture();
   const original = globalThis.fetch;
