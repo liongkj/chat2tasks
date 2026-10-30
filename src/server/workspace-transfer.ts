@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, posix } from 'node:path';
 import { backup } from 'node:sqlite';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
@@ -34,7 +34,7 @@ async function mediaFiles(dir: string) {
     const entries = await readdir(join(dir, 'media'), { withFileTypes: true });
     return entries
       .filter((entry) => entry.isFile() && /^[a-f0-9]{64}\.bin$/.test(entry.name))
-      .map((entry) => join('media', entry.name));
+      .map((entry) => posix.join('media', entry.name));
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
     throw error;
@@ -176,7 +176,15 @@ export async function importWorkspace(source: string, destination: string, passp
       restored.close();
     }
     await rename(staged, destination);
-  } finally {
-    await rm(staged, { recursive: true, force: true });
+  } catch (error) {
+    try {
+      await rm(staged, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Could not restore the workspace or remove its temporary files.',
+      );
+    }
+    throw error;
   }
 }

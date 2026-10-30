@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FileText, Link2, TriangleAlert } from 'lucide-react';
 import type { Message } from '../shared/schema.js';
-import { time } from './api.js';
+import { appFetch, time } from './api.js';
 import { clockTime } from './conversations.js';
 
 export function MessageCard({
@@ -22,6 +22,36 @@ export function MessageCard({
   compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const [preview, setPreview] = useState<{ id: string; url: string } | null>(null);
+  const mediaPath = `/api/media?id=${encodeURIComponent(message.id)}`;
+  useEffect(() => {
+    if (!window.chat2tasksTauri || message.type !== 'image') return;
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    setFailed(false);
+    void appFetch(mediaPath, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error('Image unavailable');
+        return response.blob();
+      })
+      .then((blob) => {
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setPreview({ id: message.id, url: objectUrl });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFailed(true);
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [mediaPath, message.id, message.type]);
+  const imageUrl = window.chat2tasksTauri
+    ? preview?.id === message.id
+      ? preview.url
+      : null
+    : mediaPath;
   const author = message.direction === 'outgoing' ? 'You' : `From ${name}`;
   return (
     <article
@@ -77,19 +107,19 @@ export function MessageCard({
               <TriangleAlert size={16} />
               <span>The original image is unavailable from OpenWA.</span>
             </div>
-          ) : (
-            <a
-              href={`/api/media?id=${encodeURIComponent(message.id)}`}
-              target="_blank"
-              rel="noreferrer"
-            >
+          ) : imageUrl ? (
+            <a href={imageUrl} target="_blank" rel="noreferrer">
               <img
-                src={`/api/media?id=${encodeURIComponent(message.id)}`}
+                src={imageUrl}
                 alt={`Attachment in ${name}, ${time(message.timestamp)}`}
                 loading="lazy"
                 onError={() => setFailed(true)}
               />
             </a>
+          ) : (
+            <p className="attachment-label" role="status">
+              Loading image…
+            </p>
           ))}
         {!compact && (
           <time

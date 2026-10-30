@@ -30,7 +30,7 @@ import {
   type PublicSettings,
   type Settings,
 } from '../shared/schema.js';
-import { api, OkSchema } from './api.js';
+import { api, appFetch, OkSchema } from './api.js';
 import { errorMessage } from './App.js';
 import { CompanionSettings } from './CompanionSettings.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
@@ -189,8 +189,8 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
               <div>
                 <h2>OpenWA connection</h2>
                 <p>
-                  {window.chat2tasksDesktop
-                    ? 'Your WhatsApp connection runs on this Mac.'
+                  {window.chat2tasksDesktop || window.chat2tasksTauri
+                    ? 'Your WhatsApp connection runs on this computer.'
                     : 'Your WhatsApp session, connected to your own server.'}
                 </p>
               </div>
@@ -206,7 +206,7 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
                   onChange={(e) => setDraft({ ...draft, openwaUrl: e.target.value })}
                 />
                 <small>
-                  {window.chat2tasksDesktop
+                  {window.chat2tasksDesktop || window.chat2tasksTauri
                     ? 'This local address is managed by Chat2Tasks.'
                     : 'Use the address reachable from this Docker container.'}
                 </small>
@@ -216,7 +216,9 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
             <div className="card-footer">
               <span>
                 <ShieldCheck size={13} />{' '}
-                {window.chat2tasksDesktop ? 'Keys stay on this Mac.' : 'Keys stay on your server.'}
+                {window.chat2tasksDesktop || window.chat2tasksTauri
+                  ? 'Keys stay on this computer.'
+                  : 'Keys stay on your server.'}
               </span>
               <button
                 className="button secondary"
@@ -616,8 +618,8 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
           <div className="privacy-strip">
             <ShieldCheck size={18} />
             <p>
-              {window.chat2tasksDesktop
-                ? 'API keys are encrypted on this Mac and are not shown after saving. Conversations go only to your selected model connection. Use Move your workspace to create an encrypted backup.'
+              {window.chat2tasksDesktop || window.chat2tasksTauri
+                ? 'API keys are encrypted on this computer and are not shown after saving. Conversations go only to your selected model connection. Use Move your workspace to create an encrypted backup.'
                 : 'API keys are encrypted on your server and never sent back to this browser. Conversations go only to your selected model connection. Keep the data volume and its vault key backed up together.'}
             </p>
           </div>
@@ -700,7 +702,7 @@ function WorkspaceTransfer({
   async function downloadTransfer() {
     setBusy(true);
     try {
-      const response = await fetch('/api/workspace/transfer', {
+      const response = await appFetch('/api/workspace/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passphrase }),
@@ -743,10 +745,12 @@ function WorkspaceTransfer({
           value={passphrase}
           onChange={(event) => setPassphrase(event.target.value)}
         />
-        <small>Use at least eight characters. You will need this passphrase on your Mac.</small>
+        <small>
+          Use at least eight characters. You will need this passphrase on your new computer.
+        </small>
       </div>
       <div className="card-footer">
-        <span>WhatsApp will need to be linked again on the new Mac.</span>
+        <span>WhatsApp will need to be linked again on the new computer.</span>
         <button
           className="button secondary"
           disabled={busy || passphrase.length < 8}
@@ -758,7 +762,7 @@ function WorkspaceTransfer({
       {onImport && (
         <div className="workspace-import-option">
           <div>
-            <strong>Bring an existing workspace to this Mac</strong>
+            <strong>Bring an existing workspace to this computer</strong>
             <p>Choose an encrypted transfer from your other workspace.</p>
           </div>
           <button className="button secondary" onClick={onImport}>
@@ -939,8 +943,8 @@ function ProfileCard({
         <div className="codex-hint">
           <ShieldCheck size={16} />
           <p>
-            {window.chat2tasksDesktop ? (
-              'Your Codex sign-in is stored on this Mac. No API key is needed.'
+            {window.chat2tasksDesktop || window.chat2tasksTauri ? (
+              'Your Codex sign-in is stored on this computer. No API key is needed.'
             ) : (
               <>
                 Sign in to Codex inside the container once. Your session lives in the private{' '}

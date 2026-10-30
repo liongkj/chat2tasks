@@ -590,7 +590,7 @@ export function App() {
                 (data.demo
                   ? 'Sample workspace'
                   : window.chat2tasksDesktop
-                    ? 'Workspace on this Mac'
+                    ? 'Workspace on this computer'
                     : 'Workspace server available'))
           }
         >
@@ -605,7 +605,7 @@ export function App() {
                   : data.demo
                     ? 'Sample data'
                     : window.chat2tasksDesktop
-                      ? 'On this Mac'
+                      ? 'On this computer'
                       : 'Server available'}
             </small>
           </span>

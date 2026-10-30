@@ -50,13 +50,17 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
       DATA_DIR: join(dir, 'workspace'),
       DESKTOP_OPENWA_URL: `http://127.0.0.1:${address.port}`,
       DESKTOP_OPENWA_KEY_FILE: keyFile,
+      CHAT2TASKS_TAURI_ORIGIN: 'tauri://localhost',
+      CHAT2TASKS_TAURI_TOKEN: 'a'.repeat(64),
     },
   });
   let output = '';
   child.stdout.on('data', (data: Buffer) => (output += data.toString().slice(0, 8192)));
   child.stderr.on('data', (data: Buffer) => (output += data.toString().slice(0, 8192)));
   async function state() {
-    const response = await fetch(base + '/api/state');
+    const response = await fetch(base + '/api/state', {
+      headers: { Origin: 'tauri://localhost', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
+    });
     assert.equal(response.status, 200);
     return z
       .object({ status: z.object({ syncing: z.boolean(), phase: z.string() }) })
@@ -76,6 +80,37 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
     assert.ok(first, `the workspace should open before the gateway is ready: ${output}`);
     assert.equal(first.syncing, true);
     assert.match(first.phase, /Starting WhatsApp/);
+    const preflight = await fetch(base + '/api/state', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'tauri://localhost',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'x-chat2tasks-session',
+      },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    assert.equal((await fetch(base + '/api/state')).status, 403);
+    assert.equal(
+      (
+        await fetch(base + '/api/state', {
+          headers: { Origin: 'tauri://localhost', 'X-Chat2Tasks-Session': 'wrong' },
+        })
+      ).status,
+      403,
+    );
+    const authorized = await fetch(base + '/api/state', {
+      headers: { Origin: 'tauri://localhost', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
+    });
+    assert.equal(authorized.status, 200);
+    assert.equal(authorized.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    const untrusted = await fetch(base + '/api/state', {
+      headers: { Origin: 'https://example.invalid', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
+    });
+    assert.notEqual(
+      untrusted.headers.get('access-control-allow-origin'),
+      'https://example.invalid',
+    );
     gatewayReady = true;
     let ready = first;
     for (let attempt = 0; attempt < 100 && ready.syncing; attempt++) {

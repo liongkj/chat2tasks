@@ -1,0 +1,107 @@
+name: Windows Tauri preview
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-preview:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: npm ci
+      - run: npm run tauri:stage
+      - run: npm run tauri:prepare
+      - name: Block external network for the staged runtime
+        shell: pwsh
+        run: |
+          $bun = Join-Path $env:GITHUB_WORKSPACE 'work/tauri/bun/bun.exe'
+          if (-not (Test-Path $bun)) { throw 'The staged Bun runtime is missing.' }
+          New-NetFirewallRule -DisplayName "Chat2Tasks staged offline test $([guid]::NewGuid())" -Direction Outbound -Action Block -Program $bun | Out-Null
+      - name: Check the staged runtime offline across drives
+        env:
+          C2T_TEST_CROSS_DRIVE: '1'
+        run: node scripts/test-tauri-runtime.mjs
+      - run: npx tauri build --bundles nsis
+      - name: Install the preview on the test runner
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw 'The Windows installer was not created.' }
+          $previewDir = Join-Path $env:RUNNER_TEMP 'chat2tasks-preview'
+          $installer = Start-Process -FilePath $setup.FullName -ArgumentList @('/S', "/D=$previewDir") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
+          if (-not (Test-Path (Join-Path $previewDir 'chat2tasks-tauri.exe'))) { throw 'Installed app is missing.' }
+          "CHAT2TASKS_TAURI_TEST_RESOURCES=$previewDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CHAT2TASKS_TAURI_TEST_SUPERVISOR=$(Join-Path $previewDir 'tauri-runtime.cjs')" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Block external network for the installed preview
+        shell: pwsh
+        run: |
+          $previewDir = Join-Path $env:RUNNER_TEMP 'chat2tasks-preview'
+          $programs = @((Join-Path $previewDir 'chat2tasks-tauri.exe'), (Join-Path $previewDir 'bun/bun.exe'))
+          foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
+            if (-not $base) { continue }
+            $webview = Join-Path $base 'Microsoft/EdgeWebView/Application'
+            if (Test-Path $webview) {
+              $programs += @(Get-ChildItem $webview -Filter 'msedgewebview2.exe' -Recurse | ForEach-Object { $_.FullName })
+            }
+          }
+          foreach ($program in $programs | Select-Object -Unique) {
+            New-NetFirewallRule -DisplayName "Chat2Tasks offline test $([guid]::NewGuid())" -Direction Outbound -Action Block -Program $program | Out-Null
+          }
+      - name: Check sample, unlinked gateway and workspace transfer offline
+        run: node scripts/test-tauri-runtime.mjs
+      - name: Check the installed sample window
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName UIAutomationClient
+          $previewDir = Join-Path $env:RUNNER_TEMP 'chat2tasks-preview'
+          $app = Start-Process -FilePath (Join-Path $previewDir 'chat2tasks-tauri.exe') -ArgumentList '--sample' -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(90)
+            $found = $false
+            while ((Get-Date) -lt $deadline -and -not $found) {
+              $app.Refresh()
+              if ($app.HasExited) { throw 'The preview exited before its sample appeared.' }
+              $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $app.Id)
+              $window = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
+              if ($window) {
+                $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                $names = @($elements | ForEach-Object { $_.Current.Name })
+                $found = ($names -contains 'Overview') -and ($names | Where-Object { $_ -like '*Sample data*' })
+              }
+              if (-not $found) { Start-Sleep -Seconds 1 }
+            }
+            if (-not $found) { throw 'The sample Overview was not visible to Windows accessibility.' }
+            Write-Output 'Installed Windows preview displayed the fictional Overview.'
+          } finally {
+            if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+          }
+  windows-transfer:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: npm ci
+      - name: Check workspace transfer offline
+        shell: pwsh
+        run: |
+          $bun = (Get-Command bun).Source
+          New-NetFirewallRule -DisplayName "Chat2Tasks transfer offline test $([guid]::NewGuid())" -Direction Outbound -Action Block -Program $bun | Out-Null
+          bun test tests/workspace-transfer.test.ts tests/desktop-workspace.test.ts --timeout 30000
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -59,8 +59,8 @@ export function WorkspaceImport({
               file.
             </Dialog.Description>
             <p>
-              Your current Mac workspace will be saved as a backup. After import, you’ll review your
-              connections again.
+              Your current workspace on this computer will be saved as a backup. After import,
+              you’ll review your connections again.
             </p>
             <button
               className="button secondary"

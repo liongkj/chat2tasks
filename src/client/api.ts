@@ -1,6 +1,14 @@
 import { z } from 'zod';
+export function appFetch(path: string, init: RequestInit = {}) {
+  const tauri = window.chat2tasksTauri;
+  if (!tauri) return fetch(path, init);
+  if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Invalid workspace path.');
+  const headers = new Headers(init.headers);
+  headers.set('X-Chat2Tasks-Session', tauri.token);
+  return fetch(tauri.origin + path, { ...init, headers });
+}
 export async function api<T>(path: string, schema: z.ZodType<T>, body?: unknown): Promise<T> {
-  const response = await fetch(
+  const response = await appFetch(
     '/api/' + path,
     body === undefined
       ? {}
