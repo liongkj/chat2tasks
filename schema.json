@@ -26,7 +26,7 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["task", "question", "reminder"]
+            "enum": ["task", "action", "question", "reminder", "event", "reference"]
           },
           "action_steps": {
             "type": "array",
@@ -67,8 +67,23 @@
         ],
         "additionalProperties": false
       }
+    },
+    "waits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": ["string", "null"] },
+          "expected": { "type": "string" },
+          "person": { "type": ["string", "null"] },
+          "task_id": { "type": ["string", "null"] },
+          "source_ids": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "expected", "person", "task_id", "source_ids"],
+        "additionalProperties": false
+      }
     }
   },
-  "required": ["changes"],
+  "required": ["changes", "waits"],
   "additionalProperties": false
 }

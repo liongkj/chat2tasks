@@ -8,7 +8,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { useState, type ReactNode, type RefObject } from 'react';
+import { Fragment, useState, type ReactNode, type RefObject } from 'react';
 import type { Chat, Message, Task } from '../shared/schema.js';
 import { itemKindLabel } from '../shared/tasks.js';
 import { conversationName } from './conversations.js';
@@ -117,8 +117,8 @@ export function TaskQueue({
             <Search size={16} />
             <input
               ref={search}
-              aria-label="Search tasks"
-              placeholder="Search tasks"
+              aria-label="Search items"
+              placeholder="Search items"
               value={location.query}
               onChange={(event) =>
                 onLocation(
@@ -151,37 +151,58 @@ export function TaskQueue({
         </div>
         {questions}
         <div className="task-list">
-          {visible.map((task) => (
-            <div
-              key={task.id}
-              className={`task-row ${selectedTask?.id === task.id ? 'selected' : ''} ${task.done ? 'done' : ''}`}
-            >
-              <button
-                className="task-row-content"
-                data-task-reference={task.reference}
-                aria-label={`Open ${itemKindLabel[task.kind].toLowerCase()}: ${task.title}`}
-                aria-pressed={selectedTask?.id === task.id}
-                onClick={() => onSelectTask(task)}
-              >
-                <span className="task-row-meta">
-                  <span className="task-reference">{task.reference}</span>
-                  <span className="item-kind">{itemKindLabel[task.kind]}</span>
-                  <TaskState task={task} />
-                  {task.kind_suggestion && <span className="item-kind-review">Check category</span>}
-                </span>
-                <span className="task-title">{task.title}</span>
-                <span className="task-row-sub">
-                  <span>{conversationName(task, messages, chats)}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    {task.priority === 'high'
-                      ? 'High priority'
-                      : `${task.source_ids.length} linked ${task.source_ids.length === 1 ? 'message' : 'messages'}`}
-                  </span>
-                </span>
-              </button>
-            </div>
-          ))}
+          {visible.map((task, index) => {
+            const group =
+              location.kind === 'projects'
+                ? task.gtd.project
+                : location.kind === 'areas'
+                  ? task.gtd.area
+                  : null;
+            const previous = visible[index - 1];
+            const previousGroup =
+              location.kind === 'projects'
+                ? previous?.gtd.project
+                : location.kind === 'areas'
+                  ? previous?.gtd.area
+                  : null;
+            return (
+              <Fragment key={task.id}>
+                {group && group !== previousGroup && (
+                  <h2 className="task-group-heading">{group}</h2>
+                )}
+                <div
+                  className={`task-row ${selectedTask?.id === task.id ? 'selected' : ''} ${task.done ? 'done' : ''}`}
+                >
+                  <button
+                    className="task-row-content"
+                    data-task-reference={task.reference}
+                    aria-label={`Open ${itemKindLabel[task.kind].toLowerCase()}: ${task.title}`}
+                    aria-pressed={selectedTask?.id === task.id}
+                    onClick={() => onSelectTask(task)}
+                  >
+                    <span className="task-row-meta">
+                      <span className="task-reference">{task.reference}</span>
+                      <span className="item-kind">{itemKindLabel[task.kind]}</span>
+                      <TaskState task={task} />
+                      {task.kind_suggestion && (
+                        <span className="item-kind-review">Check category</span>
+                      )}
+                    </span>
+                    <span className="task-title">{task.title}</span>
+                    <span className="task-row-sub">
+                      <span>{conversationName(task, messages, chats)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        {task.priority === 'high'
+                          ? 'High priority'
+                          : `${task.source_ids.length} linked ${task.source_ids.length === 1 ? 'message' : 'messages'}`}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              </Fragment>
+            );
+          })}
           {loading && (
             <p className="empty-copy" role="status">
               Loading tasks…
@@ -192,10 +213,10 @@ export function TaskQueue({
               <CheckCircle2 size={28} />
               <h2>
                 {location.query
-                  ? 'No matching tasks'
+                  ? 'No matching items'
                   : location.filter === 'done'
-                    ? 'No completed tasks here yet'
-                    : 'No open tasks here'}
+                    ? 'No completed items here yet'
+                    : 'No open items here'}
               </h2>
               <p>
                 {location.query

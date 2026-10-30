@@ -1,6 +1,74 @@
-# Task desk design QA
+# GTD workspace design QA
 
 final result: passed
+
+## Evidence and state
+
+- Generated reference: `docs/qa/gtd-desk/concept.png`, 1487 × 1058 pixels.
+- Implemented Actions view: `docs/qa/gtd-desk/actions.png`, captured at a
+  1487 × 1058 CSS viewport, device scale factor 1, with the source message open.
+- Full-view and focused comparison: `docs/qa/gtd-desk/comparison.png`. The
+  comparison places both 1487 × 1058 source images side by side at the same
+  scale, followed by native-size crops of the detail pane. The comparison page
+  is 1280 × 945 pixels.
+- Additional implementation captures: `docs/qa/gtd-desk/overview.png` at
+  1487 × 1058 and `docs/qa/gtd-desk/waiting-mobile.png` at 390 × 844. Both
+  use device scale factor 1.
+- All implementation captures use a separate fictional demo database. The
+  generated concept contains five fictional actions; the implemented demo has
+  one. The concept depicts multi-step work, whereas the selected demo action is
+  one step and does not invent a checklist or attachments.
+
+## Findings and iteration
+
+- **Resolved P2, desktop proportions:** the first implementation retained the
+  old 350px queue at the reference width, starting the detail pane almost 100px
+  earlier than the concept. The queue now grows to 440px on wide screens and
+  the detail inset was adjusted. In the final capture the detail pane begins at
+  x=650, compared with approximately x=659 in the concept.
+- **Resolved P2, typography:** the original 12px navigation and 21px list heading
+  were noticeably smaller than the concept. Navigation is now 14px, the list
+  heading 24px, and the detail title 32px. The existing system sans font and
+  readable body copy remain consistent across views.
+- **Resolved P2, dashboard state:** after returning from Actions, the status
+  count reflected the previous category instead of all open items. The count
+  now reflects the dashboard's full context; the browser journey verifies it.
+- **Resolved P2, linked Someday work:** opening a parked linked item from
+  Waiting for now opens the Someday / Maybe view. The browser journey verifies
+  the destination and keeps the item linked.
+- No remaining actionable P0/P1/P2 findings were identified in the reviewed
+  flows. Minor differences include the number of demo rows, semantic icons,
+  and labels, and can be refined in a later design iteration.
+
+## Fidelity and behavior
+
+The three-column desktop structure, selected row, monochrome palette, source
+panel, dividers, and persistent completion action follow the generated concept.
+Overview is a separate dashboard because the owner chose Tasks as a list.
+The implementation displays real evidence and does not manufacture priority,
+ownership, steps, or files to match the concept. Standard Lucide icons are used;
+the concept has no required decorative imagery. Text and controls remain
+readable and within the phone viewport. The phone waiting detail shows its
+linked item, source, and state actions.
+
+The built-in browser was used to inspect Overview, Actions with source evidence,
+and Waiting for at desktop and phone sizes. The console contained no errors.
+The full test suite passed 71 tests; the existing browser suite passed nine
+unchanged journeys, and its two affected workspace/companion journeys passed on
+targeted reruns after the selector and layout changes. The final workspace
+rerun additionally verifies counts and Someday navigation. TypeScript and the
+production build passed. No production workspace data was used for visual QA.
+
+## Checklist
+
+- [x] Implement the generated work-desk layout with real, source-linked data.
+- [x] Keep Overview separate from Tasks, Actions, Questions, Reminders and Waiting for.
+- [x] Verify desktop and phone navigation, state changes, and linked work.
+- [x] Compare the reference and implementation together, then fix the identified differences.
+
+# Previous Task desk design QA (historical)
+
+Historical result: passed
 
 ## Selected target and captured state
 

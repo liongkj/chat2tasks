@@ -6,11 +6,18 @@ import { join } from 'node:path';
 import { Store, now } from '../src/server/store.js';
 import { OpenWA } from '../src/server/openwa.js';
 import { Sync } from '../src/server/sync.js';
-import { DecisionSchema, MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
+import {
+  DecisionSchema,
+  MessageSchema,
+  TaskChangeSchema,
+  WaitChangeSchema,
+} from '../src/shared/schema.js';
 import {
   reviewTaskCandidates,
   reviewExistingTasks,
   reviewCompletions,
+  reviewWaitCandidates,
+  reviewWaitResponses,
 } from '../src/server/decisions.js';
 
 function fixture() {
@@ -172,6 +179,49 @@ test('decision reviews share only the evidence needed for the tasks being review
   }
 });
 
+test('completion review does not send personal organization or notes to the decision provider', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const source = message('source', 'What is the rate?', 'incoming', now() - 2);
+    const reply = message('reply', 'The rate is 10%', 'outgoing', now() - 1);
+    f.store.cache([source, reply]);
+    f.store.apply([change('Rate question', source.id)], [source]);
+    const task = f.store.snapshot().tasks[0];
+    assert.ok(task);
+    f.store.remark(task.id, 'Private personal note');
+    f.store.setGtd(task.id, { project: 'Private project', area: 'Private area' });
+    const current = f.store.taskEvidence(task.id).task;
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    let input = '';
+    globalThis.fetch = async (_url, options) => {
+      input = JSON.parse(String(options?.body)).input;
+      return new Response(
+        JSON.stringify({
+          answers: [
+            { name: 'completion_0', type: 'choice', choice: 'supported', confidence: 0.99 },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    await reviewCompletions(
+      f.store,
+      judge,
+      [DecisionSchema.parse(completion(reply.id, task.id))],
+      [reply],
+      [current],
+      [source, reply],
+    );
+    assert.match(input, /What is the rate/);
+    assert.doesNotMatch(input, /Private personal note|Private project|Private area/);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
 test('questions and reminders are categorized and are not filtered as non-tasks', async () => {
   const f = fixture();
   const original = globalThis.fetch;
@@ -257,6 +307,275 @@ test('a question found only in an uncaptioned screenshot needs owner review', as
     );
     assert.equal(result?.kind, 'task');
     assert.equal(result?.kind_suggestion, 'question');
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('waiting-for extraction keeps uncertain requests reviewable and excludes answered or incoming requests', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const request = message('request', 'Please send the PDF', 'outgoing', now() - 3);
+    const answered = message('answered', 'Please send the figures', 'outgoing', now() - 2);
+    const incoming = message('incoming', 'Please send the agenda', 'incoming', now() - 1);
+    const candidates = [
+      WaitChangeSchema.parse({
+        id: null,
+        expected: 'PDF',
+        person: null,
+        task_id: null,
+        source_ids: [request.id],
+      }),
+      WaitChangeSchema.parse({
+        id: null,
+        expected: 'Figures',
+        person: null,
+        task_id: null,
+        source_ids: [answered.id],
+      }),
+      WaitChangeSchema.parse({
+        id: null,
+        expected: 'Unclear',
+        person: null,
+        task_id: null,
+        source_ids: [request.id],
+      }),
+      WaitChangeSchema.parse({
+        id: null,
+        expected: 'Agenda',
+        person: null,
+        task_id: null,
+        source_ids: [incoming.id],
+      }),
+    ];
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      const expected = JSON.parse(body.input).wait.expected;
+      return new Response(
+        JSON.stringify({
+          answers: [
+            {
+              name: 'waiting',
+              type: 'choice',
+              choice:
+                expected === 'Figures'
+                  ? 'not_waiting'
+                  : expected === 'Unclear'
+                    ? 'uncertain'
+                    : 'waiting',
+              confidence: 0.99,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    const result = await reviewWaitCandidates(f.store, judge, candidates, [
+      request,
+      answered,
+      incoming,
+    ]);
+    assert.deepEqual(
+      result.map((wait) => wait.expected),
+      ['PDF', 'Unclear'],
+    );
+    assert.equal(result[0]?.needs_review, false);
+    assert.equal(result[1]?.needs_review, true);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('a matching reply resolves only the wait while an unrelated reply is ignored', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const source = message('source', 'Please fix the export', 'incoming', now() - 5);
+    const request = message('request', 'Please send the PDF', 'outgoing', now() - 4);
+    const unrelated = message('unrelated', 'Lunch is ready', 'incoming', now() - 3);
+    const reply = MessageSchema.parse({
+      ...message('reply', 'Here is the PDF', 'incoming', now() - 2),
+      reply_to_id: request.id,
+    });
+    f.store.cache([source, request, unrelated, reply]);
+    f.store.apply([change('Fix the export', source.id)], [source]);
+    const task = f.store.snapshot().tasks[0];
+    assert.ok(task);
+    const wait = f.store.createWait({
+      expected: 'The PDF',
+      person: null,
+      task_id: task.id,
+      source_ids: [request.id],
+    });
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      const candidate = JSON.parse(body.input).reply.body;
+      return new Response(
+        JSON.stringify({
+          answers: [
+            {
+              name: 'response',
+              type: 'choice',
+              choice: candidate.includes('PDF') ? 'received' : 'not_received',
+              confidence: 0.99,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    const reviewed = await reviewWaitResponses(
+      f.store,
+      judge,
+      [wait],
+      [source, request, unrelated, reply],
+    );
+    assert.equal(reviewed.length, 1);
+    assert.equal(reviewed[0]?.response_id, reply.id);
+    assert.equal(reviewed[0]?.needs_review, false);
+    const result = reviewed[0];
+    assert.ok(result);
+    f.store.cache([{ ...reply, body: 'I will send it later' }]);
+    assert.equal(
+      f.store.autoReceiveWait(
+        result.id,
+        result.revision,
+        result.response_id,
+        result.response_fingerprint,
+      ),
+      false,
+    );
+    f.store.cache([reply]);
+    assert.equal(
+      f.store.autoReceiveWait(
+        result.id,
+        result.revision,
+        result.response_id,
+        result.response_fingerprint,
+      ),
+      true,
+    );
+    assert.equal(f.store.waitEvidence(wait.id).wait.state, 'received');
+    assert.equal(f.store.taskEvidence(task.id).task.done, false);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('manual review can resolve an outstanding wait even when no tasks are open', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const request = message('request', 'Please send the PDF', 'outgoing', now() - 120);
+    const reply = MessageSchema.parse({
+      ...message('reply', 'Here is the PDF', 'incoming', now() - 110),
+      reply_to_id: request.id,
+    });
+    f.store.cache([request, reply]);
+    f.store.apply([], [request, reply]);
+    const wait = f.store.createWait({
+      expected: 'The PDF',
+      person: null,
+      task_id: null,
+      source_ids: [request.id],
+    });
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          answers: [{ name: 'response', type: 'choice', choice: 'received', confidence: 0.99 }],
+        }),
+        { status: 200 },
+      );
+    f.store.queueChat('chat', 0, false, true);
+    await f.sync.run(['chat']);
+    assert.equal(f.store.status().error, null);
+    assert.equal(f.store.waitEvidence(wait.id).wait.state, 'received');
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('an outgoing request is saved to Waiting for after decision review', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const request = message('request', 'Please send me the PDF', 'outgoing', now());
+    f.store.cache([request]);
+    const wait = {
+      id: null,
+      expected: 'The PDF',
+      person: null,
+      task_id: null,
+      source_ids: [request.id],
+    };
+    globalThis.fetch = async (url) =>
+      String(url).includes('/chat/completions')
+        ? answer({ changes: [], waits: [wait] })
+        : new Response(
+            JSON.stringify({
+              answers: [{ name: 'waiting', type: 'choice', choice: 'waiting', confidence: 0.99 }],
+            }),
+            { status: 200 },
+          );
+    f.store.queueChat('chat', 0, false, true);
+    await f.sync.run(['chat']);
+    assert.equal(f.store.status().error, null);
+    assert.equal(f.store.snapshot().waiting_for[0]?.expected, 'The PDF');
+    assert.equal(f.store.snapshot().waiting_for[0]?.needs_review, false);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('a newly discovered wait checks an earlier unlinked reply before presenting it as outstanding', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const request = message('request', 'Please send the PDF', 'outgoing', now() - 20);
+    const reply = message('reply', 'Here is the PDF', 'incoming', now() - 10);
+    f.store.cache([request, reply]);
+    f.store.apply([], [reply]);
+    const wait = {
+      id: null,
+      expected: 'The PDF',
+      person: null,
+      task_id: null,
+      source_ids: [request.id],
+    };
+    globalThis.fetch = async (url, options) => {
+      if (String(url).includes('/chat/completions')) return answer({ changes: [], waits: [wait] });
+      const body = JSON.parse(String(options?.body));
+      const name = body.questions[0].name;
+      return new Response(
+        JSON.stringify({
+          answers: [
+            {
+              name,
+              type: 'choice',
+              choice: name === 'trigger' ? 'run' : name === 'response' ? 'received' : 'waiting',
+              confidence: 0.99,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    f.store.queueChat('chat', 0, false);
+    await f.sync.run(['chat']);
+    assert.equal(f.store.status().error, null);
+    const discovered = f.store.snapshot().waiting_for[0];
+    assert.equal(discovered?.needs_review, true);
+    assert.equal(discovered?.response_id, reply.id);
   } finally {
     globalThis.fetch = original;
     f.close();

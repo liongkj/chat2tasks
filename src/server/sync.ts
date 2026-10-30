@@ -4,6 +4,7 @@ import {
   DecisionSchema,
   ImageReadingSchema,
   TaskChangeSchema,
+  WaitChangeSchema,
   type Chat,
   type Message,
   type Profile,
@@ -20,6 +21,8 @@ import {
   reviewExistingKinds,
   reviewCompletions,
   canApplyKind,
+  reviewWaitCandidates,
+  reviewWaitResponses,
 } from './decisions.js';
 
 // Manual review rechecks replies near an open task's sources, including native replies
@@ -219,6 +222,12 @@ export class Sync {
     this.store.cache(messages);
     const pending = this.store.pending(messages),
       replies = this.store.pendingReplies(messages);
+    const messageIds = new Set(messages.map((message) => message.id));
+    const initialWaits = this.store
+      .snapshot()
+      .waiting_for.filter(
+        (wait) => wait.state === 'waiting' && wait.source_ids.some((id) => messageIds.has(id)),
+      );
     const initialTasks = manual
       ? this.store
           .snapshot()
@@ -238,7 +247,11 @@ export class Sync {
       pending: pending.length + replies.length,
       syncing: false,
     });
-    if (!pending.length && !replies.length && !(manual && initialTasks.length)) {
+    if (
+      !pending.length &&
+      !replies.length &&
+      !(manual && (initialTasks.length || initialWaits.length))
+    ) {
       this.store.status({ phase: 'Everything is up to date', debouncing: false });
       return 'done';
     }
@@ -283,6 +296,16 @@ export class Sync {
               'The decision service was unavailable. Keeping the evidence by running task analysis.',
           };
         }
+        if (
+          decision.choice === 'skip' &&
+          initialWaits.length &&
+          pending.some((message) => message.direction === 'incoming')
+        )
+          decision = {
+            ...decision,
+            choice: 'run',
+            reason: 'An incoming message may answer an outstanding request.',
+          };
         this.store.status({ last_decision: { ...decision, connection: gateProfile.name } });
         if (!this.active(chat)) return 'done';
         if (decision.choice === 'wait') {
@@ -341,7 +364,13 @@ export class Sync {
     const snapshot = this.store.snapshot(),
       ids = new Set(messages.map((m) => m.id));
     const tasks = snapshot.tasks.filter((t) => t.source_ids.some((id) => ids.has(id)));
-    const required = new Set(tasks.flatMap((t) => t.source_ids));
+    const existingWaits = snapshot.waiting_for.filter((wait) =>
+      wait.source_ids.some((id) => ids.has(id)),
+    );
+    const required = new Set([
+      ...tasks.flatMap((t) => t.source_ids),
+      ...existingWaits.flatMap((wait) => wait.source_ids),
+    ]);
     for (const m of [...pending, ...replies, ...historical])
       if (m.reply_to_id) required.add(m.reply_to_id);
     for (const m of historical) {
@@ -361,46 +390,65 @@ export class Sync {
     if (batch.length) {
       this.store.status({ phase: `Finding next actions in ${chat.name}` });
       const candidate = z
-        .object({ changes: z.array(TaskChangeSchema).max(40) })
+        .object({
+          changes: z.array(TaskChangeSchema).max(40),
+          waits: z.array(WaitChangeSchema).max(40).default([]),
+        })
         .parse(
           await callModel(
             this.store,
             profile,
             (await prompt('triage')) +
-              JSON.stringify({ EXISTING_TASKS: tasks, CONTEXT: context, NEW_OR_EDITED: batch }),
+              JSON.stringify({
+                EXISTING_TASKS: tasks,
+                EXISTING_WAITS: existingWaits,
+                CONTEXT: context,
+                NEW_OR_EDITED: batch,
+              }),
             'schema.json',
             'task triage',
           ),
         );
       if (!this.active(chat)) return 'done';
       let changes = candidate.changes;
-      if (changes.length) {
+      let waits = candidate.waits;
+      if (changes.length || waits.length) {
         const reviewed = z
-          .object({ changes: z.array(TaskChangeSchema).max(40) })
+          .object({
+            changes: z.array(TaskChangeSchema).max(40),
+            waits: z.array(WaitChangeSchema).max(40).default([]),
+          })
           .parse(
             await callModel(
               this.store,
               profile,
               (await prompt('review')) +
-                JSON.stringify({ CANDIDATES: changes, MESSAGES: [...context, ...batch] }),
+                JSON.stringify({
+                  CANDIDATES: { changes, waits },
+                  MESSAGES: [...context, ...batch],
+                }),
               'schema.json',
               'evidence review',
             ),
           );
         if (
           reviewed.changes.length !== changes.length ||
-          reviewed.changes.some((t, i) => t.id !== changes[i]?.id)
+          reviewed.changes.some((t, i) => t.id !== changes[i]?.id) ||
+          reviewed.waits.length !== waits.length ||
+          reviewed.waits.some((wait, i) => wait.id !== waits[i]?.id)
         )
           throw new Error('Evidence review changed task identity');
         changes = reviewed.changes;
+        waits = reviewed.waits;
       }
       if (!this.active(chat)) return 'done';
       changes = await reviewTaskCandidates(this.store, reviewProfile, changes, [
         ...context,
         ...batch,
       ]);
+      waits = await reviewWaitCandidates(this.store, reviewProfile, waits, [...context, ...batch]);
       if (!this.active(chat)) return 'done';
-      this.store.apply(changes, batch, context);
+      this.store.apply(changes, batch, context, waits);
     }
     if (manual && initialTasks.length) {
       this.store.status({ phase: `Reviewing existing items in ${chat.name}` });
@@ -422,6 +470,48 @@ export class Sync {
       const filtered = await reviewExistingTasks(this.store, reviewProfile, current, context);
       if (!this.active(chat)) return 'done';
       for (const item of filtered) this.store.filterNotTask(item.id, item.revision);
+    }
+    const waitsToReview = this.store
+      .snapshot()
+      .waiting_for.filter(
+        (wait) => wait.state === 'waiting' && wait.source_ids.some((id) => ids.has(id)),
+      );
+    const newIncoming = new Set(
+      batch.filter((message) => message.direction === 'incoming').map((message) => message.id),
+    );
+    const previousWaitIds = new Set(existingWaits.map((wait) => wait.id));
+    const newWaits = waitsToReview.filter((wait) => !previousWaitIds.has(wait.id));
+    const previousWaits = waitsToReview.filter((wait) => previousWaitIds.has(wait.id));
+    if (newWaits.length || (previousWaits.length && (manual || newIncoming.size))) {
+      this.store.status({ phase: `Checking responses in ${chat.name}` });
+      const reviewed = [
+        ...(await reviewWaitResponses(this.store, reviewProfile, newWaits, messages)),
+        ...(manual || newIncoming.size
+          ? await reviewWaitResponses(
+              this.store,
+              reviewProfile,
+              previousWaits,
+              messages,
+              manual ? undefined : newIncoming,
+            )
+          : []),
+      ];
+      if (!this.active(chat)) return 'done';
+      for (const result of reviewed)
+        if (result.needs_review)
+          this.store.suggestWaitResponse(
+            result.id,
+            result.revision,
+            result.response_id,
+            result.response_fingerprint,
+          );
+        else
+          this.store.autoReceiveWait(
+            result.id,
+            result.revision,
+            result.response_id,
+            result.response_fingerprint,
+          );
     }
     const replyBatches = [
       ...(replies.length ? [{ part: replies.slice(0, 40), recheck: false }] : []),

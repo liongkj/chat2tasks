@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { MessageSchema, StatusSchema, TaskSchema } from './schema.js';
+import { MessageSchema, StatusSchema, TaskSchema, WaitSchema } from './schema.js';
 
 export const ExtensionIdSchema = z.string().regex(/^[a-p]{32}$/);
 export const BackendUrlSchema = z
@@ -49,6 +49,7 @@ export const CompanionChatSchema = z.object({
 });
 export const CompanionStateSchema = z.object({
   tasks: z.array(TaskSchema.extend({ chatIds: z.array(z.string()) })),
+  waiting_for: z.array(WaitSchema).default([]),
   chats: z.array(CompanionChatSchema),
   status: StatusSchema,
   analysisMode: z.enum(['automatic', 'manual']),

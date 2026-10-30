@@ -1,9 +1,8 @@
 # Chat2Tasks domain: a GTD-inspired design
 
-**Status: domain design, not a description of fully implemented behavior.** The
-current draft implementation has Tasks, Questions, and Reminders. The owner has
-also chosen an Actions section and a Waiting For view; those are not yet
-implemented. Other concepts below are recommendations for consideration.
+**Status:** the draft implements the main GTD-inspired views and owner controls.
+The meanings and rules below describe the intended domain; implementation limits
+are listed at the end of this document.
 
 ## Purpose
 
@@ -44,20 +43,17 @@ An ordinary greeting, acknowledgement, irrelevant status message, or unselected
 idea need not produce any tracked item. The original conversation stays available.
 The system should not fill a Reference collection with everything it reads.
 
-**Chosen navigation:** Tasks, Actions, Questions, and Reminders are separate
-sections; Waiting For shows requests the owner is waiting on. The additional
-sections are not yet implemented in the current draft.
-
-**Further proposals:** add Someday/Maybe and an in-app Upcoming view when those
-needs are established; reference can begin as saved source material rather than a
-prominent section. A Review view can hold meaningful items whose kind or ownership
-is uncertain without claiming they are confirmed work for the owner.
+**Navigation:** Overview is the dashboard; Tasks, Actions, Questions, Reminders,
+and Waiting For have separate views. Review collects uncertain categories and
+possible replies. Upcoming, Someday/Maybe, Projects, Areas, Events and Reference
+provide additional ways to organize or find the same records.
 
 ## Kinds, states, and views are different
 
 The app should not make every useful label a competing item type.
 
-- **Kind** describes the main outcome: task, action, question, or reminder.
+- **Kind** describes the main outcome: task, action, question, reminder, event,
+  or reference.
 - **Lifecycle** records whether that outcome is open, resolved, dismissed, or
   cancelled. The words shown to the owner depend on kind: a question is answered,
   an action or task is completed, and a reminder is dismissed.
@@ -132,8 +128,8 @@ must not assume a short item is complete or perform it automatically.
 
 For explicitly recurring work, retain the stated or owner-set cadence and the
 individual occurrence's status. Do not invent a cadence from repeated messages,
-silently complete later occurrences, or send notifications. A later implementation
-can show the next occurrence without filling the list with all future repetitions.
+silently complete later occurrences, or send notifications. The app shows the next
+occurrence without filling the list with all future repetitions.
 
 ## Clarify and reconcile conversation evidence
 
@@ -203,23 +199,27 @@ thresholds require evaluation against owner-labeled examples.
 | A question is answered, but the message also requested a separate implementation.          | Resolve only the question; the implementation remains open.                                             |
 | The owner corrects a category or reopens an item.                                          | Keep the correction and completion history through later analysis.                                      |
 
-## How this relates to the current draft
+## Implementation and limits
 
-The existing draft stores Tasks, Questions, and Reminders as task records with a
-kind, a completion flag, readiness fields, source links, and a possible category
-review. Its separate completion-confirmation questions are not conversation
-questions. It does not yet provide the full Action, Waiting For, Someday/Maybe,
-Event, Reference, or Project behavior described above.
-The Review and Upcoming views, recurrence, and area-of-responsibility grouping are
-also design proposals, not implemented features.
+Tasks, actions, questions, reminders, events, and reference are item kinds backed
+by the existing item identity and completion history. Waiting For is a separate
+record with an optional link to an item; receiving it never completes that item.
+The migration keeps existing TODO references, sources, completion records, notes,
+and category corrections. Completion-confirmation prompts remain distinct from
+conversation questions.
 
-Any future implementation needs a migration that keeps existing TODO references,
-source links, completion records, personal notes, and owner corrections intact.
-Existing items should not be split, reopened, or moved merely because a new kind is
-introduced. Reclassification should be reviewable and reversible. Test the new
-rules first against a larger set of owner-labeled examples, including messages
-already answered, ambiguous recipients, waits, screenshots, and multi-outcome
-messages. Record the expected owner, kind, status, and supporting evidence before
-running the model. Compare incorrect additions and missed obligations by category,
-alongside how often the owner has to review a case. A handful of examples cannot
-establish accuracy or calibrate a confidence threshold.
+The owner can set an item's active or Someday commitment, project, area, dates,
+and task/action recurrence in **Organize**. Projects and areas are grouping names,
+not separate managed entities or a hierarchy; actions do not yet have a direct
+parent-task link. Dates in source messages are retained in the item's note, and
+the owner adds structured dates for Upcoming. The app does not infer a precise
+date or timezone, integrate an external calendar, or send notifications. A wait
+does not yet have its own follow-up date. A past dated event leaves Upcoming but
+is not automatically archived; its source and record remain available.
+
+The decision connection checks proposed kinds, possible waits, replies, and
+completion evidence; uncertain results go to Review. Automatic checks cannot
+reopen a completed item or override manual category and state corrections. The
+model's scores are not calibrated guarantees. Evaluate against a larger set of
+owner-labeled examples, including answered questions, ambiguous recipients,
+waits, screenshots, and multi-outcome messages, before drawing accuracy claims.

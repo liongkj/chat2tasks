@@ -1,5 +1,5 @@
 import { useInputModality } from '../../src/shared/useInputModality.js';
-import { itemKindLabel, matchesTaskQuery } from '../../src/shared/tasks.js';
+import { isUpcoming, itemKindLabel, matchesTaskQuery } from '../../src/shared/tasks.js';
 import { Menu } from '@base-ui/react/menu';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -37,7 +37,13 @@ import {
   type CompanionState,
   type Connection,
 } from '../../src/shared/companion.js';
-import { ItemKindSchema, type ItemKind, type Task } from '../../src/shared/schema.js';
+import {
+  ItemKindSchema,
+  WaitEvidenceSchema,
+  type ItemKind,
+  type Task,
+  type Wait,
+} from '../../src/shared/schema.js';
 import { RefreshGate } from '../../src/shared/refresh.js';
 import { ApiError, OkSchema, pair, request } from './api.js';
 import './style.css';
@@ -51,17 +57,23 @@ const message = (error: unknown) =>
       ? error.message
       : 'Something went wrong. Try again.';
 const completionAction = (task: Task) =>
-  task.kind === 'question'
-    ? task.done
-      ? 'Reopen question'
-      : 'Mark answered'
-    : task.kind === 'reminder'
+  task.gtd.recurrence && !task.done
+    ? 'Complete occurrence'
+    : task.kind === 'event' || task.kind === 'reference'
       ? task.done
-        ? 'Restore reminder'
-        : 'Dismiss reminder'
-      : task.done
-        ? 'Mark as to do'
-        : 'Mark Complete';
+        ? 'Restore item'
+        : 'Archive item'
+      : task.kind === 'question'
+        ? task.done
+          ? 'Reopen question'
+          : 'Mark answered'
+        : task.kind === 'reminder'
+          ? task.done
+            ? 'Restore reminder'
+            : 'Dismiss reminder'
+          : task.done
+            ? 'Mark as to do'
+            : 'Mark Complete';
 function App() {
   useInputModality();
   const [session, setSession] = useState<Session>({ kind: 'loading' });
@@ -69,7 +81,8 @@ function App() {
     [code, setCode] = useState(''),
     [name, setName] = useState('My Chrome browser');
   const [state, setState] = useState<CompanionState | null>(null),
-    [detail, setDetail] = useState<z.infer<typeof CompanionTaskSchema> | null>(null);
+    [detail, setDetail] = useState<z.infer<typeof CompanionTaskSchema> | null>(null),
+    [waitDetail, setWaitDetail] = useState<z.infer<typeof WaitEvidenceSchema> | null>(null);
   const [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false),
     [tab, setTab] = useState<'tasks' | 'chats' | 'capture'>('tasks');
@@ -77,7 +90,9 @@ function App() {
     [captureChat, setCaptureChat] = useState('');
   const [chatFilter, setChatFilter] = useState(''),
     [showDone, setShowDone] = useState(false),
-    [kindFilter, setKindFilter] = useState<'all' | ItemKind>('all'),
+    [kindFilter, setKindFilter] = useState<
+      'all' | 'waiting' | 'review' | 'someday' | 'upcoming' | ItemKind
+    >('all'),
     [search, setSearch] = useState('');
   const [showOptions, setShowOptions] = useState(false),
     [showFilters, setShowFilters] = useState(false);
@@ -93,6 +108,7 @@ function App() {
     setSession({ kind: 'unpaired' });
     setState(null);
     setDetail(null);
+    setWaitDetail(null);
   }, []);
   useEffect(() => {
     void chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
@@ -191,6 +207,31 @@ function App() {
   }
   async function tick(task: Task) {
     if (!connection || pendingTicks.current.has(task.id)) return;
+    if (!task.done && task.gtd.recurrence) {
+      pendingTicks.current.set(task.id, false);
+      setPendingTickIds(new Set(pendingTicks.current.keys()));
+      try {
+        const result = await request(connection, 'occurrence', OkSchema, {
+          id: task.id,
+          date: task.gtd.recurrence.next_date,
+        });
+        if (!result.ok)
+          throw new Error('This occurrence has already changed. Refresh and try again.');
+        pendingTicks.current.delete(task.id);
+        await refresh();
+        if (detail?.task.id === task.id)
+          setDetail(
+            await request(connection, 'tasks/' + encodeURIComponent(task.id), CompanionTaskSchema),
+          );
+        setNotice('Occurrence completed.');
+      } catch (error) {
+        setNotice(message(error));
+      } finally {
+        pendingTicks.current.delete(task.id);
+        setPendingTickIds(new Set(pendingTicks.current.keys()));
+      }
+      return;
+    }
     const done = !task.done;
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
@@ -259,6 +300,21 @@ function App() {
       setNotice('Category updated.');
     });
   }
+  async function changeWait(wait: Wait, state: 'waiting' | 'received' | 'dismissed') {
+    await action(async () => {
+      if (!connection) return;
+      await request(connection, 'waiting/state', WaitEvidenceSchema, { id: wait.id, state });
+      setWaitDetail(null);
+      await refresh();
+      setNotice(
+        state === 'received'
+          ? 'Marked as received.'
+          : state === 'dismissed'
+            ? 'Stopped tracking.'
+            : 'Waiting item reopened.',
+      );
+    });
+  }
   const openWorkspace = () => {
     if (connection) void chrome.tabs.create({ url: connection.serverUrl });
   };
@@ -273,9 +329,34 @@ function App() {
     state?.tasks.filter(
       (t) =>
         t.done === showDone &&
-        (kindFilter === 'all' || t.kind === kindFilter) &&
+        (kindFilter === 'someday'
+          ? t.gtd.commitment === 'someday'
+          : kindFilter === 'upcoming'
+            ? isUpcoming(t)
+            : kindFilter === 'review'
+              ? Boolean(t.kind_suggestion)
+              : kindFilter === 'waiting'
+                ? false
+                : (kindFilter === 'all' || t.kind === kindFilter) &&
+                  (showDone || t.gtd.commitment === 'active')) &&
         (!chatFilter || t.chatIds.includes(chatFilter)) &&
         matchesTaskQuery(t, search),
+    ) ?? [];
+  const waits =
+    state?.waiting_for.filter(
+      (wait) =>
+        (kindFilter === 'waiting'
+          ? showDone
+            ? wait.state !== 'waiting'
+            : wait.state === 'waiting' && !wait.needs_review
+          : kindFilter === 'review'
+            ? wait.state === 'waiting' && wait.needs_review
+            : false) &&
+        (!search ||
+          [wait.expected, wait.person ?? '']
+            .join(' ')
+            .toLowerCase()
+            .includes(search.toLowerCase())),
     ) ?? [];
   const destinationChat =
     state?.chats.find((chat) => chat.id === captureChat && chat.enabled)?.id ??
@@ -407,8 +488,15 @@ function App() {
                   [
                     ['all', 'All'],
                     ['task', 'Tasks'],
+                    ['action', 'Actions'],
                     ['question', 'Questions'],
                     ['reminder', 'Reminders'],
+                    ['waiting', 'Waiting for'],
+                    ['review', 'Review'],
+                    ['upcoming', 'Upcoming'],
+                    ['someday', 'Someday'],
+                    ['event', 'Events'],
+                    ['reference', 'Reference'],
                   ] as const
                 ).map(([kind, label]) => (
                   <button
@@ -418,6 +506,7 @@ function App() {
                     onClick={() => {
                       setKindFilter(kind);
                       setDetail(null);
+                      setWaitDetail(null);
                     }}
                   >
                     {label}
@@ -465,7 +554,7 @@ function App() {
               )}
               {!state ? (
                 <div className="empty">Connecting to your workspace…</div>
-              ) : !tasks.length ? (
+              ) : !tasks.length && !waits.length ? (
                 <div className="empty">
                   <CheckCheck size={28} />
                   <h2>{showDone ? 'No completed items here' : 'You’re all caught up'}</h2>
@@ -477,6 +566,125 @@ function App() {
                 </div>
               ) : (
                 <ul className="task-list">
+                  {waits.map((wait) => (
+                    <li key={wait.id} className={waitDetail?.wait.id === wait.id ? 'expanded' : ''}>
+                      <div className="task-row">
+                        <button
+                          className="task-open"
+                          aria-expanded={waitDetail?.wait.id === wait.id}
+                          onClick={() =>
+                            void action(async () => {
+                              if (waitDetail?.wait.id === wait.id) {
+                                setWaitDetail(null);
+                                return;
+                              }
+                              if (connection) {
+                                setDetail(null);
+                                setWaitDetail(
+                                  await request(
+                                    connection,
+                                    'waiting/' + encodeURIComponent(wait.id),
+                                    WaitEvidenceSchema,
+                                  ),
+                                );
+                              }
+                            })
+                          }
+                        >
+                          <strong>{wait.expected}</strong>
+                          <span>
+                            {wait.person ? `From ${wait.person}` : 'Waiting for a response'}
+                            {wait.needs_review ? ' · Check this' : ''}
+                          </span>
+                        </button>
+                        <ChevronRight size={15} />
+                      </div>
+                      {waitDetail?.wait.id === wait.id && (
+                        <div className="task-expansion">
+                          {wait.needs_review && (
+                            <p>
+                              {wait.response_id
+                                ? 'Does this reply provide what you were waiting for?'
+                                : 'Is this something you are waiting for?'}
+                            </p>
+                          )}
+                          {waitDetail.messages.map((source) => (
+                            <section className="source-preview" key={source.id}>
+                              <h2>
+                                {source.id === wait.response_id
+                                  ? 'Possible response'
+                                  : 'From the conversation'}
+                              </h2>
+                              <blockquote>
+                                <p>{source.body || 'Image attachment'}</p>
+                              </blockquote>
+                            </section>
+                          ))}
+                          {wait.task_id && (
+                            <button
+                              className="text-button"
+                              onClick={() => openConversation(wait.task_id ?? '')}
+                            >
+                              <ArrowUpRight size={16} /> View linked item
+                            </button>
+                          )}
+                          {wait.state === 'waiting' ? (
+                            <>
+                              {wait.needs_review && (
+                                <button
+                                  className="text-button"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void action(async () => {
+                                      if (connection) {
+                                        await request(
+                                          connection,
+                                          'waiting/confirm',
+                                          WaitEvidenceSchema,
+                                          { id: wait.id },
+                                        );
+                                        setWaitDetail(null);
+                                        await refresh();
+                                        setNotice(
+                                          wait.response_id
+                                            ? 'Still waiting.'
+                                            : 'Added to Waiting for.',
+                                        );
+                                      }
+                                    })
+                                  }
+                                >
+                                  {wait.response_id ? 'Still waiting' : 'Track this'}
+                                </button>
+                              )}
+                              <button
+                                className="primary"
+                                disabled={busy}
+                                onClick={() => void changeWait(wait, 'received')}
+                              >
+                                Mark received
+                              </button>
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() => void changeWait(wait, 'dismissed')}
+                              >
+                                Stop tracking
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="primary"
+                              disabled={busy}
+                              onClick={() => void changeWait(wait, 'waiting')}
+                            >
+                              Reopen waiting item
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  ))}
                   {tasks.map((task) => (
                     <li key={task.id} className={detail?.task.id === task.id ? 'expanded' : ''}>
                       <div className="task-row">

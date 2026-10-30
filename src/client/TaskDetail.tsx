@@ -20,12 +20,13 @@ import {
   type Task,
   type TaskEvidence,
 } from '../shared/schema.js';
-import { itemKindLabel } from '../shared/tasks.js';
+import { itemKindLabel, itemKindPlural } from '../shared/tasks.js';
 import { api, download, OkSchema, time } from './api.js';
 import { stateLabel, conversationName } from './conversations.js';
 import { MessageCard } from './Evidence.js';
 import { taskUrl, type TaskTab } from './taskLocation.js';
 import { TaskMerge } from './TaskMerge.js';
+import { GtdEditor } from './GtdEditor.js';
 
 export function TaskState({ task }: { task: Task }) {
   return (
@@ -45,7 +46,9 @@ export function TaskState({ task }: { task: Task }) {
             : task.kind === 'reminder'
               ? 'Dismissed'
               : 'Completed'
-        : stateLabel[task.triage_state]}
+        : task.gtd.commitment === 'someday'
+          ? 'Someday'
+          : stateLabel[task.triage_state]}
     </span>
   );
 }
@@ -118,7 +121,7 @@ export function TaskDetail({
     try {
       await api('tasks/kind', OkSchema, { id: task.id, kind });
       onKindChanged(kind);
-      notify(`Moved to ${itemKindLabel[kind].toLowerCase()}s`);
+      notify(`Moved to ${itemKindPlural[kind].toLowerCase()}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Could not change the category.');
     } finally {
@@ -295,6 +298,37 @@ export function TaskDetail({
                 </ul>
               </section>
             )}
+            {(task.gtd.project ||
+              task.gtd.area ||
+              task.gtd.times.length > 0 ||
+              task.gtd.recurrence) && (
+              <div className="gtd-summary">
+                {task.gtd.project && <span>Project: {task.gtd.project}</span>}
+                {task.gtd.area && <span>Area: {task.gtd.area}</span>}
+                {task.gtd.times.map((entry, index) => (
+                  <span key={index}>
+                    {entry.kind === 'due'
+                      ? 'Due'
+                      : entry.kind === 'scheduled'
+                        ? 'Scheduled'
+                        : 'Revisit'}
+                    : {entry.text}
+                    {entry.date && entry.date !== entry.text ? ` (${entry.date})` : ''}
+                  </span>
+                ))}
+                {task.gtd.recurrence && (
+                  <span>
+                    Repeats {task.gtd.recurrence.frequency} · next {task.gtd.recurrence.next_date}
+                  </span>
+                )}
+              </div>
+            )}
+            <GtdEditor
+              key={`${task.id}:${JSON.stringify(task.gtd)}`}
+              task={task}
+              onSaved={onSaved}
+              notify={notify}
+            />
             {layout === 'desk' ? (
               <details
                 className="detail-section source-disclosure"
@@ -410,6 +444,7 @@ export function TaskDetail({
                         <strong>{source.reference}</strong> · {source.title}
                       </p>
                       {source.own_remark && <blockquote>{source.own_remark}</blockquote>}
+                      {source.gtd.project && <p>Project: {source.gtd.project}</p>}
                     </div>
                   ))}
                 </section>
@@ -434,11 +469,13 @@ export function TaskDetail({
                   : task.resolution?.kind === 'reply'
                     ? 'Resolved from your reply. You can reopen it.'
                     : 'You marked this complete.'
-                : task.kind === 'question'
-                  ? 'A clear answer can resolve this question.'
-                  : task.kind === 'reminder'
-                    ? 'Dismiss this reminder when you no longer need it.'
-                    : 'Completion is your call.'}
+                : task.gtd.recurrence
+                  ? 'Completing this occurrence keeps future occurrences open.'
+                  : task.kind === 'question'
+                    ? 'A clear answer can resolve this question.'
+                    : task.kind === 'reminder'
+                      ? 'Dismiss this reminder when you no longer need it.'
+                      : 'Completion is your call.'}
           </span>
         )}
         {layout === 'context' &&
@@ -461,12 +498,18 @@ export function TaskDetail({
               ? 'Restore reminder'
               : task.kind === 'question'
                 ? 'Reopen question'
-                : 'Reopen task'
+                : task.kind === 'event' || task.kind === 'reference'
+                  ? 'Restore item'
+                  : 'Reopen task'
             : task.kind === 'reminder'
               ? 'Dismiss reminder'
               : task.kind === 'question'
                 ? 'Mark answered'
-                : 'Mark complete'}
+                : task.kind === 'event' || task.kind === 'reference'
+                  ? 'Archive item'
+                  : task.gtd.recurrence
+                    ? 'Complete occurrence'
+                    : 'Mark complete'}
         </button>
         {layout === 'context' && (
           <div className="detail-secondary">
