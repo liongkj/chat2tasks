@@ -470,6 +470,7 @@ export async function reviewWaitResponses(
         (message) =>
           message.direction === 'incoming' &&
           (!candidateIds || candidateIds.has(message.id)) &&
+          !store.waitResponseRejected(wait.id, message) &&
           (Boolean(message.body.trim()) ||
             (direct(message) &&
               ['image', 'document', 'video', 'audio', 'ptt'].includes(message.type))) &&

@@ -532,6 +532,72 @@ test('an attachment-only reply to a request is held for review instead of being 
   }
 });
 
+test('still waiting dismisses that proposed reply without ignoring a later answer', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const request = message('request', 'Please send the PDF', 'outgoing', now() - 3);
+    const first = MessageSchema.parse({
+      ...message('first', 'I will send it later', 'incoming', now() - 2),
+      reply_to_id: request.id,
+    });
+    const later = MessageSchema.parse({
+      ...message('later', 'Here is the PDF', 'incoming', now() - 1),
+      reply_to_id: request.id,
+    });
+    f.store.cache([request, first, later]);
+    const wait = f.store.createWait({
+      expected: 'The PDF',
+      person: null,
+      task_id: null,
+      source_ids: [request.id],
+    });
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async (_url, options) => {
+      const state = JSON.parse(JSON.parse(String(options?.body)).input);
+      return new Response(
+        JSON.stringify({
+          answers: [
+            {
+              name: 'response',
+              type: 'choice',
+              choice: 'received',
+              confidence: state.reply.body === first.body ? 0.8 : 0.99,
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    };
+    const [suggestion] = await reviewWaitResponses(f.store, judge, [wait], [request, first]);
+    assert.ok(suggestion?.needs_review);
+    assert.equal(
+      f.store.suggestWaitResponse(
+        wait.id,
+        suggestion.revision,
+        first.id,
+        suggestion.response_fingerprint,
+      ),
+      true,
+    );
+    f.store.confirmWait(wait.id);
+    const current = f.store.waitEvidence(wait.id).wait;
+    assert.deepEqual(await reviewWaitResponses(f.store, judge, [current], [request, first]), []);
+    const [answer] = await reviewWaitResponses(f.store, judge, [current], [request, first, later]);
+    assert.equal(answer?.response_id, later.id);
+    assert.equal(answer?.needs_review, false);
+    const edited = MessageSchema.parse({ ...first, body: 'Here is the PDF' });
+    f.store.cache([edited]);
+    const [editedAnswer] = await reviewWaitResponses(f.store, judge, [current], [request, edited]);
+    assert.equal(editedAnswer?.response_id, edited.id);
+    assert.equal(editedAnswer?.needs_review, false);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
 test('an outgoing request is saved to Waiting for after decision review', async () => {
   const f = fixture();
   const original = globalThis.fetch;

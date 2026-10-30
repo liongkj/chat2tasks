@@ -53,7 +53,7 @@ linked item, source, and state actions.
 
 The built-in browser was used to inspect Overview, Actions with source evidence,
 and Waiting for at desktop and phone sizes. The console contained no errors.
-The full test suite passed 72 tests; the existing browser suite passed nine
+The full test suite passed 73 tests; the existing browser suite passed nine
 unchanged journeys, and its two affected workspace/companion journeys passed on
 targeted reruns after the selector and layout changes. The final workspace
 rerun additionally verifies counts and Someday navigation. TypeScript and the

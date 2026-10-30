@@ -123,6 +123,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS item_kinds(task_id TEXT PRIMARY KEY REFERENCES tasks(id),kind TEXT NOT NULL CHECK(kind IN ('task','action','question','reminder','event','reference')),manual INTEGER NOT NULL CHECK(manual IN (0,1)),suggestion TEXT CHECK(suggestion IS NULL OR suggestion IN ('task','action','question','reminder','event','reference')));
       CREATE TABLE IF NOT EXISTS waiting_for(id TEXT PRIMARY KEY,expected TEXT NOT NULL,person TEXT,task_id TEXT REFERENCES tasks(id),state TEXT NOT NULL CHECK(state IN ('waiting','received','dismissed')),response_id TEXT REFERENCES messages(id),created REAL NOT NULL,updated REAL NOT NULL,manual_state INTEGER NOT NULL DEFAULT 0 CHECK(manual_state IN (0,1)),needs_review INTEGER NOT NULL DEFAULT 0 CHECK(needs_review IN (0,1)));
       CREATE TABLE IF NOT EXISTS waiting_sources(wait_id TEXT NOT NULL REFERENCES waiting_for(id),message_id TEXT NOT NULL REFERENCES messages(id),PRIMARY KEY(wait_id,message_id));
+      CREATE TABLE IF NOT EXISTS rejected_wait_responses(wait_id TEXT NOT NULL REFERENCES waiting_for(id),message_id TEXT NOT NULL REFERENCES messages(id),digest TEXT NOT NULL,PRIMARY KEY(wait_id,message_id));
       CREATE TABLE IF NOT EXISTS item_gtd(task_id TEXT PRIMARY KEY REFERENCES tasks(id),payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS item_occurrences(task_id TEXT NOT NULL REFERENCES tasks(id),date TEXT NOT NULL,completed REAL NOT NULL,PRIMARY KEY(task_id,date));
       CREATE TABLE IF NOT EXISTS image_readings(message_id TEXT PRIMARY KEY,image_digest TEXT NOT NULL,payload TEXT NOT NULL);
@@ -655,11 +656,25 @@ export class Store {
       const current = this.waitEvidence(id);
       if (current.wait.state !== 'waiting')
         throw new TaskTriageError('Only an open waiting item can be confirmed');
+      const rejected = current.messages.find((message) => message.id === current.wait.response_id);
+      if (rejected)
+        this.db
+          .prepare('INSERT OR REPLACE INTO rejected_wait_responses VALUES(?,?,?)')
+          .run(id, rejected.id, fingerprint(rejected));
       this.db
         .prepare('UPDATE waiting_for SET needs_review=0,response_id=NULL,updated=? WHERE id=?')
         .run(now(), id);
       return this.waitEvidence(id);
     });
+  }
+  waitResponseRejected(id: string, message: Message) {
+    return Boolean(
+      this.db
+        .prepare(
+          'SELECT 1 FROM rejected_wait_responses WHERE wait_id=? AND message_id=? AND digest=?',
+        )
+        .get(id, message.id, fingerprint(message)),
+    );
   }
   autoReceiveWait(id: string, revision: string, responseId: string, responseFingerprint: string) {
     return this.transaction(() => {
