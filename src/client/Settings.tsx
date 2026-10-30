@@ -482,9 +482,8 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                     ...draft,
                     profiles,
                     trigger:
-                      draft.trigger.mode === 'automatic' &&
                       draft.trigger.decisionProfileId === profile.id
-                        ? { mode: 'automatic', decisionProfileId: null }
+                        ? { ...draft.trigger, decisionProfileId: null }
                         : draft.trigger,
                     activeProfileId:
                       draft.activeProfileId === profile.id ? first.id : draft.activeProfileId,
@@ -535,8 +534,14 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                       ...draft,
                       trigger:
                         e.target.value === 'manual'
-                          ? { mode: 'manual' }
-                          : { mode: 'automatic', decisionProfileId: draft.activeProfileId },
+                          ? {
+                              mode: 'manual',
+                              decisionProfileId: draft.trigger.decisionProfileId ?? null,
+                            }
+                          : {
+                              mode: 'automatic',
+                              decisionProfileId: draft.trigger.decisionProfileId ?? null,
+                            },
                     })
                   }
                 >
@@ -544,33 +549,31 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                   <option value="manual">Only when I choose Run now</option>
                 </select>
               </div>
-              {draft.trigger.mode === 'automatic' && (
-                <div className="field full-width">
-                  <label htmlFor="decision-connection">Decision connection</label>
-                  <select
-                    id="decision-connection"
-                    value={draft.trigger.decisionProfileId ?? ''}
-                    onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        trigger: { mode: 'automatic', decisionProfileId: e.target.value || null },
-                      })
-                    }
-                  >
-                    <option value="">No decision call · run after the quiet period</option>
-                    {draft.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} · {p.model}
-                      </option>
-                    ))}
-                  </select>
-                  <small>
-                    OpenAI Decisions, Jev, Codex, or another configured connection. This connection
-                    also reviews task candidates and proposed completions. Uncertain results keep
-                    work visible or ask for confirmation.
-                  </small>
-                </div>
-              )}
+              <div className="field full-width">
+                <label htmlFor="decision-connection">Decision connection</label>
+                <select
+                  id="decision-connection"
+                  value={draft.trigger.decisionProfileId ?? ''}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      trigger: { ...draft.trigger, decisionProfileId: e.target.value || null },
+                    })
+                  }
+                >
+                  <option value="">Use the task model for reviews</option>
+                  {draft.profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} · {p.model}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  OpenAI Decisions, Jev, Codex, or another configured connection. This connection
+                  reviews item categories and proposed completions. In automatic mode it also
+                  decides when to run. Uncertain results keep work visible or ask for confirmation.
+                </small>
+              </div>
               <div className="field">
                 <label>Message delivery</label>
                 <div className="codex-hint">

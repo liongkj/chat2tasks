@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { matchesTaskIdentifier } from '../shared/tasks.js';
 import {
   MessageSchema,
+  ItemKindSchema,
   TaskSchema,
   TaskTriageUpdateSchema,
   TaskMergeSchema,
@@ -14,6 +15,7 @@ import {
   StatusSchema,
   QuestionSchema,
   type Message,
+  type ItemKind,
   type TaskChange,
   type Decision,
   type SettingsUpdate,
@@ -94,6 +96,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS processed(id TEXT PRIMARY KEY,digest TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS triage(task_id TEXT PRIMARY KEY REFERENCES tasks(id),payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS item_kinds(task_id TEXT PRIMARY KEY REFERENCES tasks(id),kind TEXT NOT NULL CHECK(kind IN ('task','question','reminder')),manual INTEGER NOT NULL CHECK(manual IN (0,1)),suggestion TEXT CHECK(suggestion IS NULL OR suggestion IN ('task','question','reminder')));
       CREATE TABLE IF NOT EXISTS image_readings(message_id TEXT PRIMARY KEY,image_digest TEXT NOT NULL,payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS completion_history(task_id TEXT,done INTEGER,changed REAL);
       CREATE TABLE IF NOT EXISTS task_remarks(task_id TEXT PRIMARY KEY REFERENCES tasks(id),remark TEXT NOT NULL,updated REAL NOT NULL);
@@ -384,6 +387,10 @@ export class Store {
             'INSERT INTO tasks VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,scope=excluded.scope,note=excluded.note,updated=excluded.updated',
           )
           .run(identity, t.title, t.scope, t.note, timestamp, timestamp);
+        if (!existing)
+          this.db
+            .prepare('INSERT INTO item_kinds(task_id,kind,manual,suggestion) VALUES(?,?,0,?)')
+            .run(identity, t.kind, t.kind_suggestion ?? null);
         for (const id of t.source_ids)
           this.db.prepare('INSERT OR IGNORE INTO sources VALUES(?,?)').run(identity, id);
         const { action_steps, done_when, priority, triage_state, blocking_question } = t;
@@ -485,6 +492,43 @@ export class Store {
     const messages = snapshot.messages.filter((message) => task.source_ids.includes(message.id));
     return { task, messages, revision: hash({ task, messages }) };
   }
+  setTaskKind(identifier: string, kind: ItemKind) {
+    const value = ItemKindSchema.parse(kind);
+    return this.transaction(() => {
+      const id = this.taskId(identifier);
+      this.assertNotMerged(id);
+      this.db
+        .prepare(
+          'INSERT INTO item_kinds(task_id,kind,manual,suggestion) VALUES(?,?,1,NULL) ON CONFLICT(task_id) DO UPDATE SET kind=excluded.kind,manual=1,suggestion=NULL',
+        )
+        .run(id, value);
+      return this.taskEvidence(id);
+    });
+  }
+  isTaskKindManual(id: string) {
+    const row = this.db.prepare('SELECT manual FROM item_kinds WHERE task_id=?').get(id);
+    return Boolean(row && z.object({ manual: z.number() }).parse(row).manual);
+  }
+  autoSetTaskKind(
+    identifier: string,
+    revision: string,
+    kind: ItemKind,
+    suggestion: ItemKind | null = null,
+  ) {
+    const value = ItemKindSchema.parse(kind);
+    const proposed = ItemKindSchema.nullable().parse(suggestion);
+    return this.transaction(() => {
+      const current = this.taskEvidence(identifier);
+      if (current.revision !== revision) return false;
+      if (this.isTaskKindManual(current.task.id)) return false;
+      this.db
+        .prepare(
+          'INSERT INTO item_kinds(task_id,kind,manual,suggestion) VALUES(?,?,0,?) ON CONFLICT(task_id) DO UPDATE SET kind=excluded.kind,suggestion=excluded.suggestion WHERE item_kinds.manual=0',
+        )
+        .run(current.task.id, value, proposed);
+      return true;
+    });
+  }
   triageTask(input: z.infer<typeof TaskTriageUpdateSchema>) {
     const update = TaskTriageUpdateSchema.parse(input);
     return this.transaction(() => {
@@ -530,10 +574,13 @@ export class Store {
       if (
         current.revision !== expectedRevision ||
         current.task.done ||
+        current.task.kind !== 'task' ||
+        current.task.kind_suggestion !== null ||
         current.task.own_remark ||
         current.task.merged_from.length
       )
         return false;
+      if (this.isTaskKindManual(current.task.id)) return false;
       // A manual completion or reopening remains authoritative on later reviews.
       if (this.db.prepare('SELECT task_id FROM completion WHERE task_id=?').get(id)) return false;
       this.tick(id, true);
@@ -585,6 +632,20 @@ export class Store {
           (d.task_ids.length !== 1 || !d.evidence_quote || !m.body.includes(d.evidence_quote))
         )
           throw new Error('Completion needs one task and exact evidence from your reply');
+        if (
+          d.action === 'complete' &&
+          this.db
+            .prepare("SELECT task_id FROM item_kinds WHERE task_id=? AND kind='reminder'")
+            .get(d.task_ids[0] ?? '')
+        )
+          throw new Error('Reminders require an owner action to dismiss');
+        if (
+          d.action === 'complete' &&
+          this.db
+            .prepare('SELECT task_id FROM item_kinds WHERE task_id=? AND suggestion IS NOT NULL')
+            .get(d.task_ids[0] ?? '')
+        )
+          throw new Error('The item category needs review before automatic completion');
         if (d.action === 'ask' && !d.question?.trim())
           throw new Error('Ambiguous completion needs a question');
       }
@@ -679,7 +740,7 @@ export class Store {
     });
     const tasks = this.db
       .prepare(
-        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,t.id",
+        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark,coalesce(k.kind,'task') kind,k.suggestion kind_suggestion FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id LEFT JOIN item_kinds k ON k.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,t.id",
       )
       .all()
       .map((row) => {

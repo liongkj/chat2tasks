@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { Store, hash, now } from './store.js';
 import type { Sync } from './sync.js';
-import { MessageSchema } from '../shared/schema.js';
+import { ItemKindSchema, MessageSchema } from '../shared/schema.js';
 import type { Threads } from './threads.js';
 import type { Threading } from './threading.js';
 import type { OpenWA } from './openwa.js';
@@ -277,6 +277,11 @@ export async function registerCompanion(
       const input = z.object({ id: z.string(), remark: z.string().max(4000) }).parse(request.body);
       companion.task(input.id);
       companion.store.remark(input.id, input.remark);
+      return { ok: true };
+    });
+    routes.post('/api/companion/kind', (request) => {
+      const input = z.object({ id: z.string(), kind: ItemKindSchema }).parse(request.body);
+      companion.store.setTaskKind(input.id, input.kind);
       return { ok: true };
     });
     routes.post('/api/companion/activation', (request) => {

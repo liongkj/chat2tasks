@@ -31,7 +31,13 @@ function fixture() {
   });
   store.cache([message]);
   store.apply([change], [message]);
-  const { id: _id, source_ids: _sources, ...triage } = change;
+  const {
+    id: _id,
+    source_ids: _sources,
+    kind: _kind,
+    kind_suggestion: _kindSuggestion,
+    ...triage
+  } = change;
   const task = store.snapshot().tasks[0];
   assert.ok(task);
   return {

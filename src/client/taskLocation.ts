@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { TaskTriageSchema, type Task } from '../shared/schema.js';
+import { ItemKindSchema, TaskTriageSchema, type ItemKind, type Task } from '../shared/schema.js';
 
 export type TaskTab = 'overview' | 'sources';
 export type TaskFilter = 'open' | 'all' | 'done' | Task['triage_state'];
+export type ItemKindFilter = 'all' | ItemKind;
 export type WorkspaceView =
   'conversations' | 'tasks' | 'threads' | 'connections' | 'settings' | 'activity';
 export type WorkspaceLocation = {
@@ -11,6 +12,7 @@ export type WorkspaceLocation = {
   task: string | null;
   tab: TaskTab;
   filter: TaskFilter;
+  kind: ItemKindFilter;
   query: string;
   expanded: boolean;
   message?: string | null;
@@ -21,6 +23,7 @@ function readLocation(): WorkspaceLocation {
   const view = params.get('view');
   const status = params.get('status');
   const state = TaskTriageSchema.shape.triage_state.safeParse(params.get('state'));
+  const kind = ItemKindSchema.safeParse(params.get('kind'));
   return {
     view:
       view === 'conversations' ||
@@ -36,6 +39,7 @@ function readLocation(): WorkspaceLocation {
     task: params.get('task'),
     tab: params.get('context') === 'conversation' ? 'sources' : 'overview',
     filter: status === 'done' || status === 'all' ? status : state.success ? state.data : 'open',
+    kind: kind.success ? kind.data : 'all',
     query: params.get('q') ?? '',
     expanded: params.get('panel') === 'task',
   };
@@ -54,6 +58,7 @@ function locationUrl(location: WorkspaceLocation) {
       location.filter === 'open' || location.filter === 'done' || location.filter === 'all'
         ? null
         : location.filter,
+    kind: location.kind === 'all' ? null : location.kind,
     q: location.query || null,
     panel: location.task && location.expanded ? 'task' : null,
   };

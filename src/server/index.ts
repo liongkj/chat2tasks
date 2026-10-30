@@ -7,7 +7,12 @@ import { Store, TaskTriageError } from './store.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
-import { SettingsUpdateSchema, TaskSchema, TaskMergeSchema } from '../shared/schema.js';
+import {
+  ItemKindSchema,
+  SettingsUpdateSchema,
+  TaskSchema,
+  TaskMergeSchema,
+} from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
@@ -157,6 +162,11 @@ server.get('/api/tasks/:id', (request) =>
   store.taskEvidence(z.object({ id: z.string() }).parse(request.params).id),
 );
 server.post('/api/tasks/merge', (request) => store.mergeTasks(TaskMergeSchema.parse(request.body)));
+server.post('/api/tasks/kind', (request) => {
+  const value = z.object({ id: z.string(), kind: ItemKindSchema }).parse(request.body);
+  store.setTaskKind(value.id, value.kind);
+  return { ok: true };
+});
 server.get('/api/settings', () => store.publicSettings());
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {

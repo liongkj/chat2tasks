@@ -10,8 +10,9 @@ import {
 } from 'lucide-react';
 import { useState, type ReactNode, type RefObject } from 'react';
 import type { Chat, Message, Task } from '../shared/schema.js';
+import { itemKindLabel } from '../shared/tasks.js';
 import { conversationName } from './conversations.js';
-import { taskFilterLabel, tasksForDesk } from './taskDesk.js';
+import { deskTitle, tasksForDesk } from './taskDesk.js';
 import { TaskState } from './TaskDetail.js';
 import type { WorkspaceLocation } from './taskLocation.js';
 
@@ -58,10 +59,10 @@ export function TaskQueue({
       <section className="task-column" aria-label="Task queue">
         <div className="page-heading">
           {navigationTrigger}
-          <h1>{taskFilterLabel[location.filter]}</h1>
+          <h1>{deskTitle(location)}</h1>
           <span
             className="open-task-count"
-            aria-label={loading ? 'Loading tasks' : `${visible.length} tasks in this view`}
+            aria-label={loading ? 'Loading items' : `${visible.length} items in this view`}
           >
             {loading ? '…' : visible.length}
           </span>
@@ -86,6 +87,7 @@ export function TaskQueue({
                     onClick={() => {
                       onLocation({
                         filter: 'all',
+                        kind: 'all',
                         chat: null,
                         query: '',
                         task: null,
@@ -95,7 +97,7 @@ export function TaskQueue({
                       setMenu(false);
                     }}
                   >
-                    Show all tasks
+                    Show all items
                   </Menu.Item>
                   <Menu.Item onClick={onExport}>
                     <ArrowDownToLine size={15} />
@@ -157,13 +159,15 @@ export function TaskQueue({
               <button
                 className="task-row-content"
                 data-task-reference={task.reference}
-                aria-label={`Open task: ${task.title}`}
+                aria-label={`Open ${itemKindLabel[task.kind].toLowerCase()}: ${task.title}`}
                 aria-pressed={selectedTask?.id === task.id}
                 onClick={() => onSelectTask(task)}
               >
                 <span className="task-row-meta">
                   <span className="task-reference">{task.reference}</span>
+                  <span className="item-kind">{itemKindLabel[task.kind]}</span>
                   <TaskState task={task} />
+                  {task.kind_suggestion && <span className="item-kind-review">Check category</span>}
                 </span>
                 <span className="task-title">{task.title}</span>
                 <span className="task-row-sub">

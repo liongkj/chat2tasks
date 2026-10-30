@@ -47,7 +47,10 @@ export const SettingsSchema = z
     quietSeconds: z.number().int().min(0).max(300),
     trigger: z
       .discriminatedUnion('mode', [
-        z.object({ mode: z.literal('manual') }),
+        z.object({
+          mode: z.literal('manual'),
+          decisionProfileId: z.string().nullable().optional(),
+        }),
         z.object({ mode: z.literal('automatic'), decisionProfileId: z.string().nullable() }),
       ])
       .default({ mode: 'automatic', decisionProfileId: null }),
@@ -67,8 +70,7 @@ export const SettingsSchema = z
       ctx.addIssue({ code: 'custom', message: 'Each conversation can only be added once' });
     if (!settings.profiles.some((p) => p.id === settings.activeProfileId && p.kind !== 'decision'))
       ctx.addIssue({ code: 'custom', message: 'Choose an existing model connection' });
-    const gateId =
-      settings.trigger.mode === 'automatic' ? settings.trigger.decisionProfileId : null;
+    const gateId = settings.trigger.decisionProfileId;
     if (gateId && !settings.profiles.some((p) => p.id === gateId))
       ctx.addIssue({ code: 'custom', message: 'Choose an existing decision connection' });
   });
@@ -82,6 +84,7 @@ export const ImageReadingSchema = z.object({
   observations: z.array(text),
   uncertainties: z.array(text),
 });
+export const ItemKindSchema = z.enum(['task', 'question', 'reminder']);
 export const MessageSchema = z.object({
   id: text,
   sessionId: text,
@@ -115,8 +118,8 @@ export const TaskTriageSchema = z
     title: text,
     scope: text,
     note: text,
-    action_steps: z.array(text).min(1).max(8),
-    done_when: z.array(text).min(1).max(8),
+    action_steps: z.array(text).max(8),
+    done_when: z.array(text).max(8),
     priority: z.enum(['high', 'normal', 'low']),
     triage_state: z.enum(['ready', 'needs_info', 'waiting', 'reported_done']),
     blocking_question: z.string().nullable(),
@@ -129,6 +132,11 @@ export const TaskTriageSchema = z
 export const TaskChangeSchema = TaskTriageSchema.safeExtend({
   id: z.string().nullable(),
   source_ids: z.array(text).min(1),
+  kind: ItemKindSchema.default('task'),
+  kind_suggestion: ItemKindSchema.nullable().optional(),
+}).superRefine((item, ctx) => {
+  if (item.kind === 'task' && (!item.action_steps.length || !item.done_when.length))
+    ctx.addIssue({ code: 'custom', message: 'A task needs a next step and completion criterion' });
 });
 export const TaskTriageUpdateSchema = TaskTriageSchema.safeExtend({
   id: text,
@@ -143,6 +151,8 @@ const TaskBaseSchema = z.object({
   created: z.number(),
   updated: z.number(),
   done: z.boolean(),
+  kind: ItemKindSchema.default('task'),
+  kind_suggestion: ItemKindSchema.nullable().default(null),
   resolution: z
     .object({ kind: z.enum(['filtered', 'reply']), reason: z.string() })
     .nullable()
@@ -233,6 +243,7 @@ export type Profile = z.infer<typeof ProfileSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
 export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
 export type Task = z.infer<typeof TaskSchema>;
+export type ItemKind = z.infer<typeof ItemKindSchema>;
 export type TaskEvidence = z.infer<typeof TaskEvidenceSchema>;
 export type TaskChange = z.infer<typeof TaskChangeSchema>;
 export type Message = z.infer<typeof MessageSchema>;

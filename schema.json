@@ -16,16 +16,17 @@
             "type": "string"
           },
           "id": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           },
           "source_ids": {
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["task", "question", "reminder"]
           },
           "action_steps": {
             "type": "array",
@@ -41,26 +42,14 @@
           },
           "priority": {
             "type": "string",
-            "enum": [
-              "high",
-              "normal",
-              "low"
-            ]
+            "enum": ["high", "normal", "low"]
           },
           "triage_state": {
             "type": "string",
-            "enum": [
-              "ready",
-              "needs_info",
-              "waiting",
-              "reported_done"
-            ]
+            "enum": ["ready", "needs_info", "waiting", "reported_done"]
           },
           "blocking_question": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": ["string", "null"]
           }
         },
         "required": [
@@ -69,6 +58,7 @@
           "note",
           "id",
           "source_ids",
+          "kind",
           "action_steps",
           "done_when",
           "priority",
@@ -79,8 +69,6 @@
       }
     }
   },
-  "required": [
-    "changes"
-  ],
+  "required": ["changes"],
   "additionalProperties": false
 }

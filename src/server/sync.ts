@@ -17,7 +17,9 @@ import {
   GateSchema,
   reviewTaskCandidates,
   reviewExistingTasks,
+  reviewExistingKinds,
   reviewCompletions,
+  canApplyKind,
 } from './decisions.js';
 
 // Manual review rechecks replies near an open task's sources, including native replies
@@ -353,11 +355,9 @@ export class Sync {
     );
     const batch = messages.filter((m) => pending.some((p) => p.id === m.id)).slice(0, 80);
     const trigger = this.store.settings().trigger;
-    const reviewProfile =
-      trigger.mode === 'automatic' && trigger.decisionProfileId
-        ? (this.store.settings().profiles.find((p) => p.id === trigger.decisionProfileId) ??
-          profile)
-        : profile;
+    const reviewProfile = trigger.decisionProfileId
+      ? (this.store.settings().profiles.find((p) => p.id === trigger.decisionProfileId) ?? profile)
+      : profile;
     if (batch.length) {
       this.store.status({ phase: `Finding next actions in ${chat.name}` });
       const candidate = z
@@ -403,8 +403,23 @@ export class Sync {
       this.store.apply(changes, batch, context);
     }
     if (manual && initialTasks.length) {
-      this.store.status({ phase: `Reviewing existing tasks in ${chat.name}` });
-      const filtered = await reviewExistingTasks(this.store, reviewProfile, initialTasks, context);
+      this.store.status({ phase: `Reviewing existing items in ${chat.name}` });
+      const kinds = await reviewExistingKinds(this.store, reviewProfile, initialTasks, context);
+      if (!this.active(chat)) return 'done';
+      const eligible = new Set<string>();
+      for (const { task, revision, assessment } of kinds) {
+        const reliable = assessment && canApplyKind(assessment);
+        const kind = reliable ? assessment.kind : task.kind;
+        const suggestion = reliable ? null : (assessment?.kind ?? task.kind);
+        if (
+          this.store.autoSetTaskKind(task.id, revision, kind, suggestion) &&
+          reliable &&
+          kind === 'task'
+        )
+          eligible.add(task.id);
+      }
+      const current = this.store.snapshot().tasks.filter((task) => eligible.has(task.id));
+      const filtered = await reviewExistingTasks(this.store, reviewProfile, current, context);
       if (!this.active(chat)) return 'done';
       for (const item of filtered) this.store.filterNotTask(item.id, item.revision);
     }

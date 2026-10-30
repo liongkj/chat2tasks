@@ -784,6 +784,22 @@ select:focus-visible {
   border-radius: 4px;
   white-space: nowrap;
 }
+.item-kind,
+.item-kind-review,
+.item-kind-suggestion {
+  color: var(--muted);
+  font-size: 12px;
+}
+.item-kind-review {
+  color: var(--warning);
+}
+.item-kind-selector select {
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.item-kind-suggestion {
+  margin: 8px 0 0;
+}
 .task-state {
   display: inline-flex;
   align-items: center;
@@ -1354,6 +1370,7 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 8px;
 }
 .task-row .task-reference {

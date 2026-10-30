@@ -117,6 +117,27 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await expect(page.getByRole('heading', { name: 'Open work', exact: true })).toBeVisible();
     const title = 'Review the onboarding flow before Friday';
     await expect(page.getByRole('heading', { name: title })).toBeVisible();
+    await page.getByLabel('Item category').selectOption('question');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('question');
+    await page.getByRole('button', { name: 'Questions', exact: true }).click();
+    await expect(page.getByRole('button', { name: `Open question: ${title}` })).toBeVisible();
+    await page.getByLabel('Item category').selectOption('task');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('task');
+    await page.getByRole('button', { name: 'All items', exact: true }).click();
     await expect(page.locator('.source-disclosure > summary')).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('workspace.png') });
     await expectReadableTasks(page, '.task-title');
@@ -225,7 +246,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.keyboard.press('ArrowDown');
     await expect(page.getByRole('menuitem', { name: 'Find tasks now' })).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(page.getByRole('menuitem', { name: 'Show all tasks' })).toBeFocused();
+    await expect(page.getByRole('menuitem', { name: 'Show all items' })).toBeFocused();
     await page.screenshot({
       path: test.info().outputPath('task-menu.png'),
       animations: 'disabled',
@@ -456,11 +477,32 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     await page.getByLabel('Server address').fill(base);
     await page.getByLabel('Pairing code').fill(code.code);
     await page.getByRole('button', { name: 'Connect workspace' }).click();
-    await expect(page.getByRole('heading', { name: 'My Tasks' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My items' })).toBeVisible();
     const title = 'Review the onboarding flow before Friday';
     await expect(page.getByText(title, { exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('companion.png') });
     await page.getByText(title, { exact: true }).click();
+    await page.getByLabel('Item category').selectOption('reminder');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('reminder');
+    await page.getByRole('button', { name: 'Reminders', exact: true }).click();
+    await page.getByText(title, { exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Dismiss reminder' })).toBeVisible();
+    await page.getByLabel('Item category').selectOption('task');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('task');
     await expect(page.locator('footer')).toContainText('Connected to workspace');
     await page.screenshot({ path: test.info().outputPath('companion-detail.png') });
     await expectReadableTasks(page, '.task-open strong');
@@ -493,7 +535,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     });
     await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
     await expect(page.getByText(title, { exact: true })).not.toBeVisible();
-    await expect(page.getByRole('button', { name: /^Complete:/ }).first()).toBeEnabled();
+    await expect(page.getByRole('button', { name: /^Mark Complete:/ }).first()).toBeEnabled();
     expect(
       SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
         (task) => task.title === title,
@@ -585,7 +627,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     expect(devices.devices.length).toBe(1);
     await owner('extensions/' + devices.devices[0]?.id + '/revoke', {});
     expect((await fetch(base + '/api/companion/state', { headers })).status).toBe(401);
-    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'Items', exact: true }).click();
     await page.getByRole('button', { name: 'More options' }).click();
     await page.getByRole('menuitem', { name: 'Refresh tasks' }).click();
     await expect(page.getByRole('button', { name: 'Connect workspace' })).toBeVisible();
@@ -948,7 +990,7 @@ test('in-page TODO links and cross-chat threads keep drafts, source navigation a
     await panel.getByLabel('Server address').fill(base);
     await panel.getByLabel('Pairing code').fill(code.code);
     await panel.getByRole('button', { name: 'Connect workspace' }).click();
-    await expect(panel.getByRole('heading', { name: 'My Tasks' })).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'My items' })).toBeVisible();
     const connection = ConnectionSchema.parse(
       await worker.evaluate(async () => (await chrome.storage.local.get('connection')).connection),
     );

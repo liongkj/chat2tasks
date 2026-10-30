@@ -1,14 +1,23 @@
 import type { Chat, Message, Task } from '../shared/schema.js';
-import { matchesTaskQuery } from '../shared/tasks.js';
+import { itemKindPlural, matchesTaskQuery } from '../shared/tasks.js';
 import { messagesForChat, stateLabel, tasksForMessages } from './conversations.js';
 import type { TaskFilter, WorkspaceLocation } from './taskLocation.js';
 
 export const taskFilterLabel = {
   open: 'Open work',
-  all: 'All tasks',
+  all: 'All items',
   done: 'Completed',
   ...stateLabel,
 } satisfies Record<TaskFilter, string>;
+
+export function deskTitle(location: Pick<WorkspaceLocation, 'filter' | 'kind'>) {
+  if (location.kind === 'all') return taskFilterLabel[location.filter];
+  const name = itemKindPlural[location.kind];
+  if (location.filter === 'open') return name;
+  if (location.filter === 'done') return `Completed ${name.toLowerCase()}`;
+  if (location.filter === 'all') return `All ${name.toLowerCase()}`;
+  return `${name} · ${taskFilterLabel[location.filter]}`;
+}
 
 export function matchesTaskFilter(task: Task, filter: TaskFilter) {
   if (filter === 'all') return true;
@@ -25,13 +34,16 @@ export function tasksForDesk({
   tasks: Task[];
   messages: Message[];
   chats: Chat[];
-  location: Pick<WorkspaceLocation, 'filter' | 'chat' | 'query'>;
+  location: Pick<WorkspaceLocation, 'filter' | 'chat' | 'query' | 'kind'>;
 }) {
   const chat = chats.find((item) => item.id === location.chat);
   const scoped = chat ? tasksForMessages(tasks, messagesForChat(chat, messages)) : tasks;
   return scoped
     .filter(
-      (task) => matchesTaskFilter(task, location.filter) && matchesTaskQuery(task, location.query),
+      (task) =>
+        matchesTaskFilter(task, location.filter) &&
+        (location.kind === 'all' || task.kind === location.kind) &&
+        matchesTaskQuery(task, location.query),
     )
     .sort(
       (a, b) =>

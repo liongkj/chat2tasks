@@ -1,4 +1,16 @@
-import type { Task } from './schema.js';
+import type { ItemKind, Task } from './schema.js';
+
+export const itemKindLabel = {
+  task: 'Task',
+  question: 'Question',
+  reminder: 'Reminder',
+} satisfies Record<ItemKind, string>;
+
+export const itemKindPlural = {
+  task: 'Tasks',
+  question: 'Questions',
+  reminder: 'Reminders',
+} satisfies Record<ItemKind, string>;
 
 export function matchesTaskIdentifier(task: Task, identifier: string | null) {
   return (

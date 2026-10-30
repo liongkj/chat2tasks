@@ -61,6 +61,52 @@ test('replayed task generation is idempotent and cannot overwrite a manual tick'
     f.close();
   }
 });
+
+test('a manual category survives model updates and completion changes', () => {
+  const f = fixture();
+  try {
+    f.store.apply([{ ...f.change, kind: 'question' }], [f.message]);
+    const task = f.store.snapshot().tasks[0];
+    assert.ok(task);
+    assert.equal(task.kind, 'question');
+    f.store.tick(task.id, true);
+    f.store.remark(task.id, 'Keep my note');
+    f.store.setTaskKind(task.id, 'reminder');
+    const before = f.store.taskEvidence(task.id);
+    assert.equal(before.task.kind, 'reminder');
+    assert.equal(before.task.done, true);
+    f.store.apply([{ ...f.change, id: task.id, kind: 'task' }], [f.message]);
+    const after = f.store.taskEvidence(task.id);
+    assert.equal(after.task.kind, 'reminder');
+    assert.equal(after.task.done, true);
+    assert.equal(after.task.own_remark, 'Keep my note');
+    assert.equal(f.store.autoSetTaskKind(task.id, after.revision, 'question'), false);
+    assert.equal(f.store.taskEvidence(task.id).task.kind, 'reminder');
+  } finally {
+    f.close();
+  }
+});
+
+test('an evidence-reviewed category survives later unreviewed task updates', () => {
+  const f = fixture();
+  try {
+    f.store.apply([f.change], [f.message]);
+    const initial = f.store.snapshot().tasks[0];
+    assert.ok(initial);
+    const evidence = f.store.taskEvidence(initial.id);
+    assert.equal(f.store.autoSetTaskKind(initial.id, evidence.revision, 'question'), true);
+    f.store.apply(
+      [{ ...f.change, id: initial.id, kind: 'task', note: 'Updated context' }],
+      [f.message],
+    );
+    const updated = f.store.taskEvidence(initial.id).task;
+    assert.equal(updated.kind, 'question');
+    assert.equal(updated.note, 'Updated context');
+  } finally {
+    f.close();
+  }
+});
+
 test('TODO references stay unique and stable through edits, completion and restart', () => {
   const f = fixture();
   try {

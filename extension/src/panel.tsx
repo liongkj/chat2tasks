@@ -1,5 +1,5 @@
 import { useInputModality } from '../../src/shared/useInputModality.js';
-import { matchesTaskQuery } from '../../src/shared/tasks.js';
+import { itemKindLabel, matchesTaskQuery } from '../../src/shared/tasks.js';
 import { Menu } from '@base-ui/react/menu';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -37,7 +37,7 @@ import {
   type CompanionState,
   type Connection,
 } from '../../src/shared/companion.js';
-import type { Task } from '../../src/shared/schema.js';
+import { ItemKindSchema, type ItemKind, type Task } from '../../src/shared/schema.js';
 import { RefreshGate } from '../../src/shared/refresh.js';
 import { ApiError, OkSchema, pair, request } from './api.js';
 import './style.css';
@@ -50,6 +50,18 @@ const message = (error: unknown) =>
     : error instanceof Error
       ? error.message
       : 'Something went wrong. Try again.';
+const completionAction = (task: Task) =>
+  task.kind === 'question'
+    ? task.done
+      ? 'Reopen question'
+      : 'Mark answered'
+    : task.kind === 'reminder'
+      ? task.done
+        ? 'Restore reminder'
+        : 'Dismiss reminder'
+      : task.done
+        ? 'Mark as to do'
+        : 'Mark Complete';
 function App() {
   useInputModality();
   const [session, setSession] = useState<Session>({ kind: 'loading' });
@@ -65,6 +77,7 @@ function App() {
     [captureChat, setCaptureChat] = useState('');
   const [chatFilter, setChatFilter] = useState(''),
     [showDone, setShowDone] = useState(false),
+    [kindFilter, setKindFilter] = useState<'all' | ItemKind>('all'),
     [search, setSearch] = useState('');
   const [showOptions, setShowOptions] = useState(false),
     [showFilters, setShowFilters] = useState(false);
@@ -234,6 +247,18 @@ function App() {
     }
     await unpair();
   }
+  async function changeKind(task: Task, kind: ItemKind) {
+    await action(async () => {
+      if (!connection) return;
+      await request(connection, 'kind', OkSchema, { id: task.id, kind });
+      if (kindFilter !== 'all') setKindFilter(kind);
+      setDetail(
+        await request(connection, 'tasks/' + encodeURIComponent(task.id), CompanionTaskSchema),
+      );
+      await refresh();
+      setNotice('Category updated.');
+    });
+  }
   const openWorkspace = () => {
     if (connection) void chrome.tabs.create({ url: connection.serverUrl });
   };
@@ -248,6 +273,7 @@ function App() {
     state?.tasks.filter(
       (t) =>
         t.done === showDone &&
+        (kindFilter === 'all' || t.kind === kindFilter) &&
         (!chatFilter || t.chatIds.includes(chatFilter)) &&
         matchesTaskQuery(t, search),
     ) ?? [];
@@ -341,7 +367,7 @@ function App() {
         <>
           {tab === 'tasks' && (
             <div className="view-heading">
-              <h1>{showDone ? 'Completed' : 'My Tasks'}</h1>
+              <h1>{showDone ? 'Completed items' : 'My items'}</h1>
               <button
                 className="icon"
                 aria-label="Filter tasks"
@@ -364,7 +390,7 @@ function App() {
                   }}
                 >
                   {item === 'tasks' ? (
-                    'Tasks'
+                    'Items'
                   ) : item === 'chats' ? (
                     'Conversations'
                   ) : (
@@ -376,6 +402,28 @@ function App() {
           </nav>
           {tab === 'tasks' ? (
             <main className="task-view">
+              <div className="task-tabs item-tabs" role="group" aria-label="Item categories">
+                {(
+                  [
+                    ['all', 'All'],
+                    ['task', 'Tasks'],
+                    ['question', 'Questions'],
+                    ['reminder', 'Reminders'],
+                  ] as const
+                ).map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    className={kindFilter === kind ? 'active' : ''}
+                    aria-pressed={kindFilter === kind}
+                    onClick={() => {
+                      setKindFilter(kind);
+                      setDetail(null);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               {showFilters && (
                 <div className="filters">
                   {' '}
@@ -420,11 +468,11 @@ function App() {
               ) : !tasks.length ? (
                 <div className="empty">
                   <CheckCheck size={28} />
-                  <h2>{showDone ? 'No completed tasks yet' : 'You’re all caught up'}</h2>
+                  <h2>{showDone ? 'No completed items here' : 'You’re all caught up'}</h2>
                   <p>
                     {search
-                      ? 'No tasks match your search.'
-                      : 'Tasks from your followed conversations appear here.'}
+                      ? 'No items match your search.'
+                      : 'Items from your followed conversations appear here.'}
                   </p>
                 </div>
               ) : (
@@ -434,7 +482,7 @@ function App() {
                       <div className="task-row">
                         <button
                           className="completion"
-                          aria-label={`${task.done ? 'Reopen' : 'Complete'}: ${task.title}`}
+                          aria-label={`${completionAction(task)}: ${task.title}`}
                           aria-pressed={task.done}
                           disabled={busy || pendingTickIds.has(task.id)}
                           onClick={() => void tick(task)}
@@ -463,12 +511,13 @@ function App() {
                         >
                           <strong>{task.title}</strong>
                           <span>
-                            {task.reference} ·{' '}
+                            {task.reference} · {itemKindLabel[task.kind]} ·{' '}
                             {task.chatIds.length > 1
                               ? `${task.chatIds.length} conversations`
                               : (state?.chats.find((chat) => task.chatIds.includes(chat.id))
                                   ?.name ?? task.scope)}
                           </span>
+                          {task.kind_suggestion && <small>Check category in details</small>}
                           {task.done && task.resolution?.kind === 'filtered' ? (
                             <small>Not a task · reopen if needed</small>
                           ) : task.done && task.resolution?.kind === 'reply' ? (
@@ -491,12 +540,50 @@ function App() {
                       </div>
                       {detail?.task.id === task.id && (
                         <div className="task-expansion">
-                          <h2>Next steps</h2>
-                          <ol className="steps">
-                            {detail.task.action_steps.map((step) => (
-                              <li key={step}>{step}</li>
-                            ))}
-                          </ol>
+                          <label>
+                            Category
+                            <select
+                              aria-label="Item category"
+                              value={detail.task.kind}
+                              disabled={busy}
+                              onChange={(event) =>
+                                void changeKind(
+                                  detail.task,
+                                  ItemKindSchema.parse(event.target.value),
+                                )
+                              }
+                            >
+                              {ItemKindSchema.options.map((kind) => (
+                                <option key={kind} value={kind}>
+                                  {itemKindLabel[kind]}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          {detail.task.kind_suggestion && (
+                            <p>
+                              {detail.task.kind_suggestion === detail.task.kind
+                                ? 'Please check the category.'
+                                : `Possible category: ${itemKindLabel[detail.task.kind_suggestion]}.`}{' '}
+                              <button
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() => void changeKind(detail.task, detail.task.kind)}
+                              >
+                                Keep this category
+                              </button>
+                            </p>
+                          )}
+                          {detail.task.action_steps.length > 0 && (
+                            <>
+                              <h2>Next steps</h2>
+                              <ol className="steps">
+                                {detail.task.action_steps.map((step) => (
+                                  <li key={step}>{step}</li>
+                                ))}
+                              </ol>
+                            </>
+                          )}
                           {detail.messages.length > 0 && (
                             <section className="source-preview">
                               <h2>From the conversation</h2>
@@ -518,7 +605,7 @@ function App() {
                             disabled={busy || pendingTickIds.has(detail.task.id)}
                             onClick={() => void tick(detail.task)}
                           >
-                            {detail.task.done ? 'Mark as to do' : 'Mark Complete'}
+                            {completionAction(detail.task)}
                           </button>
                           <details>
                             <summary>Notes &amp; details</summary>
@@ -541,12 +628,16 @@ function App() {
                             />
 
                             <p>{detail.task.note}</p>
-                            <h2>You’re done when</h2>
-                            <ul className="criteria">
-                              {detail.task.done_when.map((step) => (
-                                <li key={step}>{step}</li>
-                              ))}
-                            </ul>
+                            {detail.task.done_when.length > 0 && (
+                              <>
+                                <h2>You’re done when</h2>
+                                <ul className="criteria">
+                                  {detail.task.done_when.map((step) => (
+                                    <li key={step}>{step}</li>
+                                  ))}
+                                </ul>
+                              </>
+                            )}
                             {detail.messages.map((m) => (
                               <article className="source" key={m.id}>
                                 <small>

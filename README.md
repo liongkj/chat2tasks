@@ -1,6 +1,6 @@
 # Chat2Tasks
 
-Turn selected WhatsApp conversations into traceable tasks, with your choice of AI model.
+Turn selected WhatsApp conversations into traceable tasks, questions, and reminders, with your choice of AI model.
 
 Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and SQLite. Task desk opens a priority-sorted queue across your conversations. Filter by readiness or conversation, select a task, and review its blocker, next steps and completion criteria. Original messages expand inside the task document. Conversations, activity and settings remain available from the sidebar.
 
@@ -23,7 +23,9 @@ The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGI
 
 ## Tasks and conversations
 
-The sidebar filters **All open work**, **Needs information**, **Ready**, **Waiting**, **Reported done** and **Completed**. Conversation filters narrow that view to tasks linked to a saved chat. Search by title, text or TODO reference; **⌘/Ctrl K** moves to workspace search. **More task actions → Show all tasks** includes open and completed tasks together.
+The sidebar separates **Tasks**, **Questions**, and **Reminders**, with an **All items** view. Tasks are substantial work or actionable issues; questions are for the workspace owner to answer; reminders are lightweight updates or follow-ups. Reminders appear in the app only and do not send notifications. Status and conversation filters narrow each view. Search by title, text or TODO reference; **⌘/Ctrl K** moves to workspace search. **More task actions → Show all items** includes open and completed items together.
+
+Use the category selector in an item's details to correct it. The choice preserves its TODO reference, evidence, notes, and completion state, and later model updates cannot override it. Older items start as tasks until reviewed or changed. **Check category** means the review was uncertain or unavailable; choose the right category or keep the current one. See the [work-item domain](docs/work-item-domain.md) for the rules.
 
 Select a task to read its document. Expand its original messages to inspect text, quotes and cached attachments. **Notes & handoff** holds personal notes, link copying, handoff downloads and manual merging. Saving a note does not change source messages or automatically change readiness. **Mark complete** and **Reopen task** save your manual decision; the confirmation's **Undo** restores the previous completion state. Completion criteria are plain requirements, rather than separately ticked subtasks.
 
@@ -47,7 +49,7 @@ An owner-approved merge can combine conversations. Those linked messages become 
 
 The optional Manifest V3 extension adds a **Chats | Threads** switch to WhatsApp Web. Normal Chats shows only a quiet TODO reference on linked messages. Threads groups discussions across the conversations connected to your server, keeps each original message and source chat, and opens that chat when you choose **Reply in…**. It does not send a reply. A topic can exist without a TODO. **Move** puts a message in another topic, a new topic, or Other messages; your correction persists through automatic organisation, source edits, and restart.
 
-The side panel still searches and completes tasks, saves notes, activates or pauses followed conversations, and offers **Find tasks now**. **View conversation in workspace** opens a task's evidence. To capture selected text, right-click **Capture selection in Chat2Tasks**, review it and choose its destination conversation before saving.
+The side panel separates and searches the same item categories, lets you correct a category or complete an item, saves notes, activates or pauses followed conversations, and offers **Find tasks now**. **View conversation in workspace** opens an item's evidence. To capture selected text, right-click **Capture selection in Chat2Tasks**, review it and choose its destination conversation before saving.
 
 [Preview with fictional sample data](docs/companion.png).
 
@@ -68,18 +70,19 @@ For a reverse proxy, set the exact external `PUBLIC_ORIGIN` and preserve the ori
 
 ## Model connections
 
-Use **Settings** to add, name, test, and select connections. Choose **Use connection** on a model to select it for task generation. The separate **Decision connection** setting chooses the trigger judge. Native decision connections cannot be selected for task generation. In-flight requests finish on the connection they started with. Model IDs are editable; there is no fixed provider catalog. Manual processing is available under the task list's **More task actions → Find tasks now**; it is secondary to completing tasks.
+Use **Settings** to add, name, test, and select connections. Choose **Use connection** on a model to select it for item generation. The separate **Decision connection** reviews categories and proposed completions in both manual and automatic modes; in automatic mode it also chooses when analysis runs. Native decision connections cannot be selected for item generation. In-flight requests finish on the connection they started with. Model IDs are editable; there is no fixed provider catalog. Manual processing is available under **More task actions → Find tasks now**.
 
-* **Codex subscription.** Sign in once inside the running container:
+- **Codex subscription.** Sign in once inside the running container:
 
   ```sh
   docker compose exec chat2tasks codex login --device-auth
   ```
 
   Choose a model supported by your account. Codex sessions persist in the `codex-home` volume. Calls run without shell, app, plugin, or skill tools. The default model carries forward the original app’s configuration; change it if your account exposes different IDs.
-* **OpenAI-compatible API.** Supply a base URL ending at the API version (for example `https://api.openai.com/v1`), an API key, and a model ID. OpenAI, OpenRouter and compatible local servers can use this adapter. **Load models** queries `/models` if the endpoint supports it; manual IDs always work. Providers must support non-streaming Chat Completions with JSON text responses. Screenshot analysis also requires image input support.
-* **Cloudflare AI Gateway proxy.** Supply your account ID, gateway ID, OpenAI provider key, and an optional authenticated-gateway token. Requests use the OpenAI provider-native proxy with the provider key in `Authorization` and the gateway token in `cf-aig-authorization`. Other compatible gateway paths can be configured using a compatible API connection.
-* **Cloudflare REST API with unified billing.** Select unified billing and use a Cloudflare token with **Account → Workers AI → Read** permission. Model IDs use `author/model`, or `@cf/author/model` for Workers AI. Calls use `/accounts/{account}/ai/v1/chat/completions` and `cf-aig-gateway-id`, following [Cloudflare’s current REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/). Model access, credits and billing remain with your provider.
+
+- **OpenAI-compatible API.** Supply a base URL ending at the API version (for example `https://api.openai.com/v1`), an API key, and a model ID. OpenAI, OpenRouter and compatible local servers can use this adapter. **Load models** queries `/models` if the endpoint supports it; manual IDs always work. Providers must support non-streaming Chat Completions with JSON text responses. Screenshot analysis also requires image input support.
+- **Cloudflare AI Gateway proxy.** Supply your account ID, gateway ID, OpenAI provider key, and an optional authenticated-gateway token. Requests use the OpenAI provider-native proxy with the provider key in `Authorization` and the gateway token in `cf-aig-authorization`. Other compatible gateway paths can be configured using a compatible API connection.
+- **Cloudflare REST API with unified billing.** Select unified billing and use a Cloudflare token with **Account → Workers AI → Read** permission. Model IDs use `author/model`, or `@cf/author/model` for Workers AI. Calls use `/accounts/{account}/ai/v1/chat/completions` and `cf-aig-gateway-id`, following [Cloudflare’s current REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/). Model access, credits and billing remain with your provider.
 
 **Test connection** makes one small, billable model request. Saving a connection does not run a test; normal active-chat processing continues in the background. Selected models must return valid schema JSON. Invalid task output is rejected without marking its source messages processed.
 
@@ -90,22 +93,22 @@ Connect an external model to the saved Chat2Tasks issues and their evidence thro
 1. Generate a token with `openssl rand -hex 32`, and save it as `MCP_TOKEN` in your private `.env`. Tokens must have at least 32 characters. Recreate the service with `docker compose up -d --build`.
 2. In an MCP client that supports Streamable HTTP and custom authorization headers, configure:
 
-   | Setting | Value |
-   | --- | --- |
-   | URL | `http://127.0.0.1:2786/mcp`, or your HTTPS workspace origin followed by `/mcp` |
-   | Transport | Streamable HTTP |
-   | Authorization header | `Bearer YOUR_MCP_TOKEN` |
+   | Setting              | Value                                                                          |
+   | -------------------- | ------------------------------------------------------------------------------ |
+   | URL                  | `http://127.0.0.1:2786/mcp`, or your HTTPS workspace origin followed by `/mcp` |
+   | Transport            | Streamable HTTP                                                                |
+   | Authorization header | `Bearer YOUR_MCP_TOKEN`                                                        |
 
 3. Ask the connected model to review open issues, read their original evidence, and save their triage. The `triage_issues` prompt provides the workflow to clients that support MCP prompts.
 
-| Tool | Purpose |
-| --- | --- |
-| `list_tasks` | Search tasks and filter by completion, priority, or triage state. Defaults to open tasks. |
-| `get_task` | Read a task, its exact source messages, cached image observations, and current revision. |
-| `list_conversations` | List followed conversations, including paused ones. |
-| `get_conversation` | Read saved conversation messages, newest first. |
-| `get_source_image` | Read an original source screenshot from the private cache, or retrieve it from the configured OpenWA server. |
-| `triage_task` | Update an existing task's title, scope, evidence note, priority, state, next steps, completion criteria, and blocking question. |
+| Tool                 | Purpose                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `list_tasks`         | Search tasks and filter by completion, priority, or triage state. Defaults to open tasks.                                       |
+| `get_task`           | Read a task, its exact source messages, cached image observations, and current revision.                                        |
+| `list_conversations` | List followed conversations, including paused ones.                                                                             |
+| `get_conversation`   | Read saved conversation messages, newest first.                                                                                 |
+| `get_source_image`   | Read an original source screenshot from the private cache, or retrieve it from the configured OpenWA server.                    |
+| `triage_task`        | Update an existing task's title, scope, evidence note, priority, state, next steps, completion criteria, and blocking question. |
 
 List tools and conversation reads support `offset` and `limit`, with a maximum of 100 items per page. `triage_task` requires all triage fields and the `expected_revision` returned by `get_task`. If the task, personal notes, completion tick, or cited evidence changed, the write is rejected; read the task again and reassess. A `needs_info` state requires a concrete blocking question.
 
@@ -121,8 +124,8 @@ Receiving a message does not run Luna. The stages are independent:
 2. In automatic mode, a durable per-chat debounce waits for the chosen quiet period, capped at three minutes for a continuous burst. It survives a restart. There is no recurring OpenWA message poll. A source-history reconciliation runs at startup, on session-status changes, configuration changes, and explicit recovery.
 3. An optional decision connection chooses **run**, **wait**, or **skip** before task analysis. Codex or an ordinary API connection can return schema-validated decisions. **OpenAI Decisions** calls [`POST /v1/decisions`](https://developers.openai.com/api/docs/guides/decisions) with `gpt-6-luna`; **Jev** calls TypeSafe’s native [`POST /v1/systemone`](https://docs.typesafe.ai/introduction/quickstart) with typed choice criteria. Add either under model connections and select it as the decision connection. They require their respective API keys; a Codex subscription is a separate connection.
 4. Low confidence, decision-service failures, attachment evidence, and outgoing completion evidence conservatively run the task model. A **wait** cannot extend a burst beyond three minutes. A **skip** marks only the evaluated batch processed; source messages remain saved. Skipped chatter does not generate task work. These are application policies, not claims that provider confidence is calibrated for your chats.
-5. After task drafting, the selected decision connection reviews each new candidate against the conversation. It filters a candidate only when the reviewer identifies it as clearly non-actionable with confidence of at least 0.95. Existing task changes are preserved. Proposed automatic completions receive a separate review of the whole outcome and matching reply; uncertain results ask for confirmation. If no decision connection is selected, the task model performs these reviews. A failed reviewer keeps candidate work and requires confirmation for completion.
-6. In **manual** mode, webhook receipt continues, but models do not run until you choose **Run now**. In automatic mode **Run now** bypasses the debounce and trigger gate, but still reviews candidates and completions. It also reviews open tasks and nearby saved replies in active conversations, including previously processed replies. A clear non-task is moved to Completed with a **Not a task** label; reopen it if needed. Tasks with personal notes, manual completion changes, merged tasks, or unavailable image evidence are not automatically filtered. A manual review may make additional model calls.
+5. After drafting, the selected decision connection checks each new item's category against linked evidence. A category needs confidence of at least 0.75 to be applied automatically; otherwise the item stays visible with a category review prompt. A question found only in an uncaptioned screenshot always needs owner review, because its intended recipient is unclear. This threshold is provisional, not an accuracy guarantee. The app filters a task candidate only when a separate review identifies it as clearly not an item with confidence of at least 0.95. Questions and reminders are not filtered as non-tasks. Proposed automatic completions receive a separate review of the whole outcome and matching reply; uncertain results ask for confirmation. If no decision connection is selected, the task model performs these reviews. A failed reviewer keeps candidate work visible and requires confirmation for completion.
+6. In **manual** mode, webhook receipt continues, but models do not run until you choose **Run now**. In automatic mode **Run now** bypasses the debounce and trigger gate, but still reviews candidates and completions. It also reviews categories of open items and nearby saved replies in active conversations, including previously processed replies. It does not reclassify completed items or override a manual category choice. A clearly irrelevant task may be moved to Completed with a **Not an item** label; reopen it if needed. Tasks with personal notes, manual completion changes, merged tasks, unavailable image evidence, or an uncertain category are not automatically filtered. A manual review makes additional model calls.
 
 The default connection is Codex. A fresh workspace selects Codex for the decision gate too; all trigger choices are configurable in Settings. The browser refreshes displayed state periodically; that does not poll OpenWA or invoke any model.
 
@@ -130,7 +133,7 @@ The default connection is Codex. A fresh workspace selects Codex for the decisio
 
 Screenshots are cached against their source message, read as evidence, and reread when their bytes change. Original images appear with source messages. Older unavailable images are retried in bounded batches during triggered work; deleted or expired media can remain unavailable.
 
-Task generation and an evidence review produce next steps, completion criteria, priorities, and exact source links. Source messages and images are untrusted evidence. The app never sends WhatsApp replies or executes task instructions. A clear outgoing completion report, or a substantive answer when answering that exact question was the whole task, can automatically resolve one task. A reply does not resolve separate unfinished work. Ambiguous matches ask locally. Manual completion changes win, including changes during inference. Task generation cannot change ticks or personal notes.
+Item generation and evidence review produce priorities and exact source links, with next steps and completion criteria when needed. Source messages and images are untrusted evidence. The app never sends WhatsApp replies or executes task instructions. A clear outgoing completion report, or a substantive answer to the exact owner-directed question, can automatically resolve the corresponding item. A reply does not resolve separate unfinished work. Reminders stay until the owner dismisses them. Ambiguous matches ask locally. Manual completion and category changes win, including changes during inference. Item generation cannot change ticks or personal notes.
 
 Notes, task completion, trigger decisions, and usage persist in SQLite. Export includes tasks and cached source messages; import changes only matching task ticks. Task handoffs download as Markdown. Rate-limit retries are bounded jobs, not periodic message polling.
 

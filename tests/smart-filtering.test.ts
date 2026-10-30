@@ -132,7 +132,8 @@ test('decision reviews share only the evidence needed for the tasks being review
           answers: request.questions.map((q: { name: string }) => ({
             name: q.name,
             type: 'choice',
-            choice: q.name.startsWith('completion_') ? 'supported' : 'keep',
+            choice:
+              q.name === 'kind' ? 'task' : q.name.startsWith('completion_') ? 'supported' : 'keep',
             confidence: 0.99,
           })),
         }),
@@ -157,14 +158,168 @@ test('decision reviews share only the evidence needed for the tasks being review
       tasks,
       messages,
     );
-    assert.equal(inputs.length, 3);
+    assert.equal(inputs.length, 4);
     for (const input of inputs) {
       assert.match(input, /What is the rate\?/);
       assert.match(input, /For the export/);
       assert.doesNotMatch(input, /Private unrelated conversation/);
     }
-    assert.match(inputs[2] ?? '', /The rate is 10%/);
-    assert.doesNotMatch(inputs[2] ?? '', /Other task/);
+    assert.match(inputs[3] ?? '', /The rate is 10%/);
+    assert.doesNotMatch(inputs[3] ?? '', /Other task/);
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('questions and reminders are categorized and are not filtered as non-tasks', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const source = message(
+      'source',
+      'A question, a reminder, and other context',
+      'incoming',
+      now(),
+    );
+    const changes = [
+      change('Question', source.id),
+      change('Reminder', source.id),
+      change('Uncertain reminder', source.id),
+      change('Not an item', source.id),
+    ];
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      const isKind = body.questions[0].name === 'kind';
+      const title = isKind ? JSON.parse(body.input).item.title : '';
+      return new Response(
+        JSON.stringify({
+          answers: body.questions.map((q: { name: string }) => ({
+            name: q.name,
+            type: 'choice',
+            choice: isKind
+              ? title === 'Question'
+                ? 'question'
+                : title.includes('reminder') || title === 'Reminder'
+                  ? 'reminder'
+                  : 'task'
+              : 'not_task',
+            confidence: title === 'Uncertain reminder' ? 0.4 : 0.99,
+          })),
+        }),
+        { status: 200 },
+      );
+    };
+    const result = await reviewTaskCandidates(f.store, judge, changes, [source]);
+    assert.deepEqual(
+      result.map((item) => item.title),
+      ['Question', 'Reminder', 'Uncertain reminder'],
+    );
+    assert.equal(result[0]?.kind, 'question');
+    assert.equal(result[1]?.kind, 'reminder');
+    assert.equal(result[2]?.kind, 'task');
+    assert.equal(result[2]?.kind_suggestion, 'reminder');
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('a question found only in an uncaptioned screenshot needs owner review', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const source = MessageSchema.parse({
+      ...message('image', '', 'incoming', now()),
+      type: 'image',
+      image_reading: {
+        message_id: 'image',
+        observations: ['Who should approve this?'],
+        uncertainties: [],
+      },
+    });
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          answers: [{ name: 'kind', type: 'choice', choice: 'question', confidence: 0.99 }],
+        }),
+        { status: 200 },
+      );
+    const [result] = await reviewTaskCandidates(
+      f.store,
+      judge,
+      [change('Approval question', source.id)],
+      [source],
+    );
+    assert.equal(result?.kind, 'task');
+    assert.equal(result?.kind_suggestion, 'question');
+  } finally {
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('a clear answer can resolve a question without automatically dismissing a reminder', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    const source = message('source', 'What is the rate?', 'incoming', now() - 2);
+    const reply = message('reply', 'The rate is 10%', 'outgoing', now() - 1);
+    f.store.cache([source, reply]);
+    f.store.apply(
+      [
+        { ...change('Rate question', source.id), kind: 'question' },
+        { ...change('Status reminder', source.id), kind: 'reminder' },
+        { ...change('Uncertain item', source.id), kind_suggestion: 'reminder' },
+      ],
+      [source, reply],
+    );
+    const tasks = f.store.snapshot().tasks;
+    const question = tasks.find((item) => item.title === 'Rate question');
+    const reminder = tasks.find((item) => item.title === 'Status reminder');
+    const uncertain = tasks.find((item) => item.title === 'Uncertain item');
+    assert.ok(question && reminder && uncertain);
+    const judge = f.store.settings().profiles.find((profile) => profile.id === 'judge');
+    assert.ok(judge);
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(String(options?.body));
+      return new Response(
+        JSON.stringify({
+          answers: body.questions.map((q: { name: string }) => ({
+            name: q.name,
+            type: 'choice',
+            choice: 'supported',
+            confidence: 0.99,
+          })),
+        }),
+        { status: 200 },
+      );
+    };
+    const decisions = [
+      DecisionSchema.parse(completion(reply.id, question.id)),
+      DecisionSchema.parse(completion(reply.id, reminder.id)),
+      DecisionSchema.parse(completion(reply.id, uncertain.id)),
+    ];
+    const reviewed = await reviewCompletions(f.store, judge, decisions, [reply], tasks, [
+      source,
+      reply,
+    ]);
+    assert.equal(reviewed[0]?.action, 'complete');
+    assert.equal(reviewed[1]?.action, 'none');
+    assert.equal(reviewed[2]?.action, 'ask');
+    const reminderDecision = decisions[1];
+    assert.ok(reminderDecision);
+    assert.throws(() => f.store.decide([reminderDecision], [reply], now()), /Reminders require/);
+    const uncertainDecision = decisions[2];
+    assert.ok(uncertainDecision);
+    assert.throws(
+      () => f.store.decide([uncertainDecision], [reply], now()),
+      /category needs review/,
+    );
   } finally {
     globalThis.fetch = original;
     f.close();
@@ -195,8 +350,8 @@ test('new candidates are filtered only when the decision service identifies a no
           answers: body.questions.map((q: { name: string }, i: number) => ({
             name: q.name,
             type: 'choice',
-            choice: i === 0 ? 'keep' : 'not_task',
-            confidence: i === 2 ? 0.6 : 0.99,
+            choice: q.name === 'kind' ? 'task' : i === 0 ? 'keep' : 'not_task',
+            confidence: q.name === 'kind' ? 0.99 : i === 2 ? 0.6 : 0.99,
           })),
         }),
         { status: 200 },
@@ -223,6 +378,12 @@ test('manual review revisits an already-processed answer, filters an old non-tas
   const f = fixture();
   const original = globalThis.fetch;
   try {
+    f.store.saveSettings({
+      settings: { ...f.store.settings(), trigger: { mode: 'manual', decisionProfileId: 'judge' } },
+      secrets: {},
+      removeSecrets: [],
+    });
+    let decisionCalls = 0;
     const t = now() - 120;
     const question = message('q', 'What is the rate?', 'incoming', t);
     const reply = message('r', 'The rate is 10%', 'outgoing', t + 1);
@@ -244,6 +405,7 @@ test('manual review revisits an already-processed answer, filters an old non-tas
     globalThis.fetch = async (url, options) => {
       if (String(url).includes('/chat/completions'))
         return answer({ decisions: [completion('r', questionTask.id)] });
+      decisionCalls++;
       const body = JSON.parse(String(options?.body));
       return new Response(
         JSON.stringify({
@@ -251,11 +413,14 @@ test('manual review revisits an already-processed answer, filters an old non-tas
             name: q.name,
             type: 'choice',
             confidence: 0.99,
-            choice: q.instructions.includes('completion proposal')
-              ? 'supported'
-              : q.instructions.includes(nonTask.id)
-                ? 'not_task'
-                : 'keep',
+            choice:
+              q.name === 'kind'
+                ? 'task'
+                : q.instructions.includes('completion proposal')
+                  ? 'supported'
+                  : q.instructions.includes(nonTask.id)
+                    ? 'not_task'
+                    : 'keep',
           })),
         }),
         { status: 200 },
@@ -264,6 +429,7 @@ test('manual review revisits an already-processed answer, filters an old non-tas
     f.store.queueChat('chat', 0, false, true);
     await f.sync.run(['chat']);
     assert.equal(f.store.status().error, null);
+    assert.ok(decisionCalls > 0, 'manual review must use its selected decision connection');
     const result = f.store.snapshot().tasks;
     assert.equal(result.find((item) => item.id === questionTask.id)?.done, true);
     assert.equal(result.find((item) => item.id === nonTask.id)?.resolution?.kind, 'filtered');
@@ -314,10 +480,13 @@ test('Jev can review individual task candidates through its native decision form
     globalThis.fetch = async (url, options) => {
       assert.equal(String(url), 'https://judge.example/v1/systemone');
       const request = JSON.parse(String(options?.body));
-      assert.ok(request.questions.candidate_0);
+      const kind = Boolean(request.questions.kind);
+      assert.ok(kind || request.questions.candidate_0);
       return new Response(
         JSON.stringify({
-          answers: { candidate_0: { type: 'choice', choice: 'not_task', confidence: 0.99 } },
+          answers: kind
+            ? { kind: { type: 'choice', choice: 'task', confidence: 0.99 } }
+            : { candidate_0: { type: 'choice', choice: 'not_task', confidence: 0.99 } },
         }),
         { status: 200 },
       );

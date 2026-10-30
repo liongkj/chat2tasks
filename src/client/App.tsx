@@ -33,7 +33,7 @@ import { SettingsPanel } from './Settings.js';
 import { TaskDetail } from './TaskDetail.js';
 import { TaskQueue } from './TaskQueue.js';
 import { TaskFilters } from './TaskFilters.js';
-import { matchesTaskFilter, taskFilterLabel, tasksForDesk } from './taskDesk.js';
+import { deskTitle, matchesTaskFilter, tasksForDesk } from './taskDesk.js';
 import { useWorkspaceLocation, type WorkspaceView } from './taskLocation.js';
 
 const empty: Snapshot = {
@@ -155,6 +155,7 @@ export function App() {
     location.task,
     location.message,
     location.filter,
+    location.kind,
     location.query,
     chat,
     chats,
@@ -185,6 +186,11 @@ export function App() {
         ...(location.view === 'tasks' && !matchesTaskFilter(selectedTask, location.filter)
           ? { filter: selectedTask.done ? 'done' : 'open' }
           : {}),
+        ...(location.view === 'tasks' &&
+        location.kind !== 'all' &&
+        selectedTask.kind !== location.kind
+          ? { kind: selectedTask.kind }
+          : {}),
         ...(location.view === 'conversations' && !chat ? { chat: linkedChat?.id ?? null } : {}),
         ...(location.view === 'tasks' &&
         chat &&
@@ -199,6 +205,7 @@ export function App() {
     location.task,
     location.view,
     location.filter,
+    location.kind,
     location.query,
     selectedTask,
     loaded,
@@ -219,6 +226,7 @@ export function App() {
       chat: null,
       query: '',
       filter: 'open',
+      kind: 'all',
     });
   };
   useEffect(() => {
@@ -237,6 +245,7 @@ export function App() {
           task: null,
           chat: null,
           filter: 'open',
+          kind: 'all',
           query: '',
           tab: 'overview',
           expanded: false,
@@ -255,7 +264,7 @@ export function App() {
         : location.view === 'threads'
           ? 'Threads'
           : location.view === 'tasks'
-            ? taskFilterLabel[location.filter]
+            ? deskTitle(location)
             : location.view === 'settings'
               ? 'Settings'
               : 'Activity';
@@ -278,7 +287,17 @@ export function App() {
       setPendingTickIds(new Set(pendingTicks.current.keys()));
       setNoticeState({
         kind: 'completion',
-        text: done ? 'Task completed' : 'Task reopened',
+        text: done
+          ? task.kind === 'question'
+            ? 'Question answered'
+            : task.kind === 'reminder'
+              ? 'Reminder dismissed'
+              : 'Task completed'
+          : task.kind === 'question'
+            ? 'Question reopened'
+            : task.kind === 'reminder'
+              ? 'Reminder restored'
+              : 'Task reopened',
         taskId: task.id,
         previousDone: task.done,
         done,
@@ -370,6 +389,10 @@ export function App() {
       onTick={() => void tick(selectedTask)}
       ticking={pendingTickIds.has(selectedTask.id)}
       onSaved={() => void refresh()}
+      onKindChanged={(kind) => {
+        if (location.view === 'tasks' && location.kind !== 'all') updateLocation({ kind });
+        void refresh();
+      }}
       onMerged={onMerged}
       notify={notify}
     />

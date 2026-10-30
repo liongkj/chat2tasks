@@ -1,7 +1,23 @@
-import { CheckCheck, Circle, CircleAlert, Clock3, Inbox, SquareCheck } from 'lucide-react';
+import {
+  Bell,
+  CheckCheck,
+  Circle,
+  CircleAlert,
+  Clock3,
+  Inbox,
+  MessageCircle,
+  SquareCheck,
+} from 'lucide-react';
 import type { Chat, Message, Task } from '../shared/schema.js';
 import { tasksForDesk } from './taskDesk.js';
-import type { TaskFilter, WorkspaceLocation } from './taskLocation.js';
+import type { ItemKindFilter, TaskFilter, WorkspaceLocation } from './taskLocation.js';
+
+const kinds = [
+  { value: 'all', label: 'All items', icon: Inbox },
+  { value: 'task', label: 'Tasks', icon: SquareCheck },
+  { value: 'question', label: 'Questions', icon: MessageCircle },
+  { value: 'reminder', label: 'Reminders', icon: Bell },
+] satisfies { value: ItemKindFilter; label: string; icon: typeof Inbox }[];
 
 const filters = [
   { value: 'open', label: 'All open work', icon: Inbox },
@@ -28,19 +44,52 @@ export function TaskFilters({
   onLocation: (patch: Partial<WorkspaceLocation>) => void;
 }) {
   const context = location.view === 'tasks' ? location : { ...location, chat: null, query: '' };
-  const choose = (patch: Pick<WorkspaceLocation, 'filter' | 'chat' | 'query'>) =>
+  const choose = (patch: Pick<WorkspaceLocation, 'filter' | 'chat' | 'query' | 'kind'>) =>
     onLocation({ view: 'tasks', task: null, tab: 'overview', expanded: false, ...patch });
   return (
     <div className="task-navigation">
+      <nav aria-label="Item categories">
+        <p className="nav-section-label">Categories</p>
+        {kinds.map(({ value, label, icon: Icon }) => (
+          <button
+            key={value}
+            className={`nav-item ${location.view === 'tasks' && location.kind === value ? 'active' : ''}`}
+            aria-pressed={location.view === 'tasks' && location.kind === value}
+            onClick={() =>
+              choose({ kind: value, filter: 'open', chat: context.chat, query: context.query })
+            }
+          >
+            <Icon size={16} />
+            <span>{label}</span>
+            <span className="nav-count" aria-hidden="true">
+              {loaded
+                ? tasksForDesk({
+                    tasks,
+                    messages,
+                    chats,
+                    location: { ...context, kind: value, filter: 'open' },
+                  }).length
+                : '…'}
+            </span>
+          </button>
+        ))}
+      </nav>
       <nav aria-label="Task filters">
-        <p className="nav-section-label">Workspace</p>
+        <p className="nav-section-label">Status</p>
         {filters.map(({ value, label, icon: Icon }) => (
           <button
             key={value}
             className={`nav-item ${location.view === 'tasks' && location.filter === value ? 'active' : ''}`}
             aria-label={label}
             aria-pressed={location.view === 'tasks' && location.filter === value}
-            onClick={() => choose({ filter: value, chat: context.chat, query: context.query })}
+            onClick={() =>
+              choose({
+                filter: value,
+                kind: context.kind,
+                chat: context.chat,
+                query: context.query,
+              })
+            }
           >
             <Icon size={16} />
             <span>{label}</span>
@@ -58,7 +107,9 @@ export function TaskFilters({
         <button
           className={`conversation-filter ${location.view === 'tasks' && !location.chat ? 'active' : ''}`}
           aria-pressed={location.view === 'tasks' && !location.chat}
-          onClick={() => choose({ filter: context.filter, chat: null, query: context.query })}
+          onClick={() =>
+            choose({ filter: context.filter, kind: context.kind, chat: null, query: context.query })
+          }
         >
           All conversations
         </button>
@@ -68,7 +119,14 @@ export function TaskFilters({
             className={`conversation-filter ${location.view === 'tasks' && location.chat === chat.id ? 'active' : ''}`}
             aria-label={`Filter tasks from ${chat.name}`}
             aria-pressed={location.view === 'tasks' && location.chat === chat.id}
-            onClick={() => choose({ filter: context.filter, chat: chat.id, query: context.query })}
+            onClick={() =>
+              choose({
+                filter: context.filter,
+                kind: context.kind,
+                chat: chat.id,
+                query: context.query,
+              })
+            }
           >
             {chat.name}
           </button>
