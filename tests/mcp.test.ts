@@ -198,19 +198,13 @@ test('an MCP client reads evidence, images and conversations, then saves bounded
       .parse(sourceImage).content[0];
     assert.ok(block);
     assert.equal(block.data, bytes.toString('base64'));
-    const {
-      id: _id,
-      reference: _reference,
-      merged_from: _merged,
-      created: _created,
-      updated: _updated,
-      done: _done,
-      source_ids: _sources,
-      own_remark: _remark,
-      ...details
-    } = evidence.task;
+    const { title, scope, note, action_steps, done_when } = evidence.task;
     const input = {
-      ...details,
+      title,
+      scope,
+      note,
+      action_steps,
+      done_when,
       id: task.reference,
       expected_revision: evidence.revision,
       priority: 'low',
