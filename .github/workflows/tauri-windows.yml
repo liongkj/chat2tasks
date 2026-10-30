@@ -26,7 +26,9 @@ jobs:
           $bun = Join-Path $env:GITHUB_WORKSPACE 'work/tauri/bun/bun.exe'
           if (-not (Test-Path $bun)) { throw 'The staged Bun runtime is missing.' }
           New-NetFirewallRule -DisplayName "Chat2Tasks staged offline test $([guid]::NewGuid())" -Direction Outbound -Action Block -Program $bun | Out-Null
-      - name: Check the staged runtime offline
+      - name: Check the staged runtime offline across drives
+        env:
+          C2T_TEST_CROSS_DRIVE: '1'
         run: node scripts/test-tauri-runtime.mjs
       - run: npx tauri build --bundles nsis
       - name: Install the preview on the test runner

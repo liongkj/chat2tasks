@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, parse, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const resources = resolve(process.env.CHAT2TASKS_TAURI_TEST_RESOURCES ?? 'work/tauri');
@@ -13,7 +13,15 @@ const supervisor = resolve(
 const bun = join(resources, 'bun', process.platform === 'win32' ? 'bun.exe' : 'bun');
 const origin = process.platform === 'win32' ? 'http://tauri.localhost' : 'tauri://localhost';
 const passphrase = 'fictional test passphrase';
-const root = await mkdtemp(join(tmpdir(), 'chat2tasks-tauri-offline-'));
+const temp = tmpdir();
+if (process.platform === 'win32' && process.env.C2T_TEST_CROSS_DRIVE === '1') {
+  assert.notEqual(
+    parse(resources).root.toLowerCase(),
+    parse(temp).root.toLowerCase(),
+    'The Windows regression check needs the app and test workspace on different drives.',
+  );
+}
+const root = await mkdtemp(join(temp, 'chat2tasks-tauri-offline-'));
 
 async function start(demo) {
   const data = join(root, demo ? 'sample' : 'preview');

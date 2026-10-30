@@ -123,6 +123,18 @@ for (const name of ['dist', 'node_modules', 'package.json', 'package-lock.json',
 await run('npm', ['prune', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
   cwd: gateway,
 });
+if (process.platform === 'win32') {
+  const loader = join(gateway, 'node_modules', 'typeorm', 'util', 'DirectoryExportedClassesLoader.js');
+  const original = await readFile(loader, 'utf8');
+  const call = '(0, tinyglobby_1.globSync)(PlatformTools_1.PlatformTools.pathNormalize(dir))';
+  const fixed =
+    '(0, tinyglobby_1.globSync)(PlatformTools_1.PlatformTools.pathNormalize(dir), ' +
+    '{ cwd: require("path").parse(dir).root || process.cwd(), absolute: true })';
+  if (original.split(call).length !== 2)
+    throw new Error('TypeORM glob loader changed; review the Windows cross-drive fix.');
+  // Resolve each entity and migration from its own drive, not the data directory's drive.
+  await writeFile(loader, original.replace(call, fixed));
+}
 await cp(browser, join(gateway, 'browser'), { recursive: true });
 await writeFile(join(gateway, 'browser-path.txt'), join('browser', browserRelative));
 process.stdout.write('Prepared the isolated Tauri preview dependencies.\n');
