@@ -1,5 +1,8 @@
 # Work-item domain
 
+For the proposed broader GTD-inspired domain, including concepts not yet
+implemented in this draft, see [GTD-inspired domain design](gtd-domain-design.md).
+
 Chat2Tasks turns conversation evidence into a small set of things the owner needs to
 notice or act on. A work item is not the same thing as a WhatsApp message: one
 message can support several distinct items, and several messages can support one
