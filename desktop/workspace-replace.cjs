@@ -7,6 +7,7 @@ async function replaceWorkspace({
   stopServer,
   startServer,
   runImport,
+  onError,
 }) {
   await stopServer();
   const previous = `${workspace}.before-import-${Date.now()}`;
@@ -20,7 +21,8 @@ async function replaceWorkspace({
     }
     await startServer();
     return { ok: true };
-  } catch {
+  } catch (error) {
+    onError?.(error);
     try {
       await access(workspace);
     } catch {

@@ -23,6 +23,15 @@ if (process.platform === 'win32' && process.env.C2T_TEST_CROSS_DRIVE === '1') {
 }
 const root = await mkdtemp(join(temp, 'chat2tasks-tauri-offline-'));
 
+async function reportDiagnostics(data, output) {
+  const key = await readFile(join(data, 'gateway', 'data', '.api-key'), 'utf8').catch(() => '');
+  if (key.trim()) output = output.replaceAll(key.trim(), '[redacted]');
+  output = output
+    .replace(/\b(?:sk-[\w-]+|gh[pousr]_[\w-]+)\b/g, '[redacted]')
+    .replace(/\b[\da-f]{32,}\b/gi, '[redacted]');
+  if (output) process.stderr.write(`Local test diagnostics:\n${output}\n`);
+}
+
 async function start(demo) {
   const data = join(root, demo ? 'sample' : 'preview');
   let diagnostics = '';
@@ -55,6 +64,12 @@ async function start(demo) {
     const headers = { Origin: origin, 'X-Chat2Tasks-Session': ready.token };
     return {
       data,
+      clearDiagnostics() {
+        diagnostics = '';
+      },
+      async reportDiagnostics() {
+        await reportDiagnostics(data, diagnostics);
+      },
       async fetch(path, options = {}) {
         return fetch(ready.origin + path, {
           ...options,
@@ -79,12 +94,7 @@ async function start(demo) {
     child.kill();
     clearTimeout(timeout);
     lines.close();
-    const key = await readFile(join(data, 'gateway', 'data', '.api-key'), 'utf8').catch(() => '');
-    if (key.trim()) diagnostics = diagnostics.replaceAll(key.trim(), '[redacted]');
-    diagnostics = diagnostics
-      .replace(/\b(?:sk-[\w-]+|gh[pousr]_[\w-]+)\b/g, '[redacted]')
-      .replace(/\b[\da-f]{32,}\b/gi, '[redacted]');
-    if (diagnostics) process.stderr.write(`Local startup diagnostics:\n${diagnostics}\n`);
+    await reportDiagnostics(data, diagnostics);
     throw error;
   }
 }
@@ -127,8 +137,10 @@ try {
   });
   assert.equal(imported.ok, false);
   assert.deepEqual(await readFile(join(preview.data, 'workspace', 'vault.key')), keyBefore);
+  preview.clearDiagnostics();
   imported = await preview.request({ action: 'import', path: transfer, passphrase });
-  assert.equal(imported.ok, true);
+  if (!imported.ok) await preview.reportDiagnostics();
+  assert.equal(imported.ok, true, imported.error);
   response = await preview.fetch('/api/state');
   state = await response.json();
   assert.equal(response.status, 200);

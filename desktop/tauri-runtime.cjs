@@ -151,7 +151,12 @@ function runImport(source, destination, passphrase) {
     const child = spawn(
       process.execPath,
       [join(runtime, 'dist', 'desktop', 'transfer-cli.js'), source, destination],
-      { cwd: runtime, env: cleanEnv(), stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true },
+      {
+        cwd: runtime,
+        env: cleanEnv(),
+        stdio: testDiagnostics ? ['pipe', 2, 2] : ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+      },
     );
     child.once('error', () => resolve(false));
     child.once('close', (code) => resolve(code === 0));
@@ -209,6 +214,7 @@ input.on('line', (line) => {
         stopServer: () => stop(server),
         startServer,
         runImport,
+        onError: testDiagnostics ? (error) => console.error(error.stack) : undefined,
       });
       report(result);
     })
