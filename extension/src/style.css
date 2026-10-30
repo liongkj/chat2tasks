@@ -245,6 +245,15 @@ nav button.active {
 .task-tabs span {
   margin-left: 5px;
 }
+.item-tabs button {
+  font-size: 12px;
+  padding: 5px 3px;
+  flex: 0 0 auto;
+  min-width: 55px;
+}
+.item-tabs {
+  overflow-x: auto;
+}
 .search {
   margin: 8px 0 2px;
   font-size: 14px;

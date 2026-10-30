@@ -33,12 +33,16 @@ import { SettingsPanel } from './Settings.js';
 import { TaskDetail } from './TaskDetail.js';
 import { TaskQueue } from './TaskQueue.js';
 import { TaskFilters } from './TaskFilters.js';
-import { matchesTaskFilter, taskFilterLabel, tasksForDesk } from './taskDesk.js';
+import { Overview } from './Overview.js';
+import { ReviewView } from './ReviewView.js';
+import { WaitingView } from './WaitingView.js';
+import { deskTitle, matchesTaskFilter, tasksForDesk } from './taskDesk.js';
 import { useWorkspaceLocation, type WorkspaceView } from './taskLocation.js';
 
 const empty: Snapshot = {
   demo: false,
   tasks: [],
+  waiting_for: [],
   messages: [],
   questions: [],
   status: { syncing: false, phase: 'Connecting', pending: 0, error: null, debouncing: false },
@@ -155,6 +159,7 @@ export function App() {
     location.task,
     location.message,
     location.filter,
+    location.kind,
     location.query,
     chat,
     chats,
@@ -185,6 +190,15 @@ export function App() {
         ...(location.view === 'tasks' && !matchesTaskFilter(selectedTask, location.filter)
           ? { filter: selectedTask.done ? 'done' : 'open' }
           : {}),
+        ...(location.view === 'tasks' &&
+        location.kind !== 'all' &&
+        location.kind !== 'someday' &&
+        location.kind !== 'upcoming' &&
+        location.kind !== 'projects' &&
+        location.kind !== 'areas' &&
+        selectedTask.kind !== location.kind
+          ? { kind: selectedTask.kind }
+          : {}),
         ...(location.view === 'conversations' && !chat ? { chat: linkedChat?.id ?? null } : {}),
         ...(location.view === 'tasks' &&
         chat &&
@@ -199,6 +213,7 @@ export function App() {
     location.task,
     location.view,
     location.filter,
+    location.kind,
     location.query,
     selectedTask,
     loaded,
@@ -214,11 +229,13 @@ export function App() {
       view,
       message: null,
       task: null,
+      wait: null,
       tab: 'overview',
       expanded: false,
       chat: null,
       query: '',
       filter: 'open',
+      kind: 'all',
     });
   };
   useEffect(() => {
@@ -237,6 +254,7 @@ export function App() {
           task: null,
           chat: null,
           filter: 'open',
+          kind: 'all',
           query: '',
           tab: 'overview',
           expanded: false,
@@ -248,22 +266,51 @@ export function App() {
     return () => document.removeEventListener('keydown', handler);
   }, [updateLocation]);
   const viewTitle =
-    location.view === 'connections'
-      ? 'Connections'
-      : location.view === 'conversations'
-        ? 'Conversations'
-        : location.view === 'threads'
-          ? 'Threads'
-          : location.view === 'tasks'
-            ? taskFilterLabel[location.filter]
-            : location.view === 'settings'
-              ? 'Settings'
-              : 'Activity';
+    location.view === 'overview'
+      ? 'Overview'
+      : location.view === 'waiting'
+        ? 'Waiting for'
+        : location.view === 'review'
+          ? 'Review'
+          : location.view === 'connections'
+            ? 'Connections'
+            : location.view === 'conversations'
+              ? 'Conversations'
+              : location.view === 'threads'
+                ? 'Threads'
+                : location.view === 'tasks'
+                  ? deskTitle(location)
+                  : location.view === 'settings'
+                    ? 'Settings'
+                    : 'Activity';
   useEffect(() => {
     document.title = `Chat2Tasks — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
   }, [viewTitle, chat, location.view]);
   async function tick(task: Task, done = !task.done) {
     if (pendingTicks.current.has(task.id) || task.done === done) return;
+    if (done && task.gtd.recurrence) {
+      pendingTicks.current.set(task.id, done);
+      setPendingTickIds(new Set(pendingTicks.current.keys()));
+      try {
+        const result = await api('tasks/occurrence', OkSchema, {
+          id: task.id,
+          date: task.gtd.recurrence.next_date,
+        });
+        if (!result.ok)
+          throw new Error('This occurrence has already changed. Refresh and try again.');
+        pendingTicks.current.delete(task.id);
+        setPendingTickIds(new Set(pendingTicks.current.keys()));
+        await refresh();
+        notify('Occurrence completed');
+      } catch (error) {
+        notify(errorMessage(error));
+        void refresh();
+      } finally {
+        pendingTicks.current.delete(task.id);
+        setPendingTickIds(new Set(pendingTicks.current.keys()));
+      }
+      return;
+    }
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
     refreshGate.current.invalidate();
@@ -278,7 +325,17 @@ export function App() {
       setPendingTickIds(new Set(pendingTicks.current.keys()));
       setNoticeState({
         kind: 'completion',
-        text: done ? 'Task completed' : 'Task reopened',
+        text: done
+          ? task.kind === 'question'
+            ? 'Question answered'
+            : task.kind === 'reminder'
+              ? 'Reminder dismissed'
+              : 'Task completed'
+          : task.kind === 'question'
+            ? 'Question reopened'
+            : task.kind === 'reminder'
+              ? 'Reminder restored'
+              : 'Task reopened',
         taskId: task.id,
         previousDone: task.done,
         done,
@@ -314,6 +371,23 @@ export function App() {
       reference: task.reference,
     };
     updateLocation({ task: task.reference, tab: 'overview', expanded, message: null });
+  };
+  const openInDesk = (task: Task) => {
+    taskReturnFocus.current = {
+      element: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      reference: task.reference,
+    };
+    updateLocation({
+      view: 'tasks',
+      kind: !task.done && task.gtd.commitment === 'someday' ? 'someday' : task.kind,
+      task: task.reference,
+      wait: null,
+      chat: null,
+      query: '',
+      filter: task.done ? 'done' : 'open',
+      tab: 'overview',
+      expanded: true,
+    });
   };
   const closeTask = () =>
     updateLocation(
@@ -370,6 +444,18 @@ export function App() {
       onTick={() => void tick(selectedTask)}
       ticking={pendingTickIds.has(selectedTask.id)}
       onSaved={() => void refresh()}
+      onKindChanged={(kind) => {
+        if (
+          location.view === 'tasks' &&
+          location.kind !== 'all' &&
+          location.kind !== 'someday' &&
+          location.kind !== 'upcoming' &&
+          location.kind !== 'projects' &&
+          location.kind !== 'areas'
+        )
+          updateLocation({ kind });
+        void refresh();
+      }}
       onMerged={onMerged}
       notify={notify}
     />
@@ -421,7 +507,7 @@ export function App() {
   ) : null;
   const navigation = (
     <>
-      <button className="brand" onClick={() => navigate('tasks')}>
+      <button className="brand" onClick={() => navigate('overview')}>
         <SquareCheck size={20} /> <span>chat2tasks</span>
       </button>
       <TaskFilters
@@ -429,6 +515,8 @@ export function App() {
         loaded={loaded}
         messages={data.messages}
         chats={chats}
+        waits={data.waiting_for}
+        pendingQuestions={data.questions.length}
         location={location}
         onLocation={(patch) => {
           setMobileMenu(false);
@@ -589,23 +677,27 @@ export function App() {
         <div className="app">
           <aside className="sidebar">{navigation}</aside>
           <main className="workspace">
-            {location.view !== 'conversations' && location.view !== 'tasks' && (
-              <header className="topbar">
-                {navigationTrigger}
-                <span>{viewTitle}</span>
-                <span className="topbar-status">
-                  {data.demo
-                    ? 'Sample workspace'
-                    : !online
-                      ? 'Reconnecting…'
-                      : data.status.error
-                        ? 'Needs attention'
-                        : data.status.syncing
-                          ? 'Analysing messages…'
-                          : 'Your workspace'}
-                </span>
-              </header>
-            )}
+            {location.view !== 'conversations' &&
+              location.view !== 'tasks' &&
+              location.view !== 'overview' &&
+              location.view !== 'waiting' &&
+              location.view !== 'review' && (
+                <header className="topbar">
+                  {navigationTrigger}
+                  <span>{viewTitle}</span>
+                  <span className="topbar-status">
+                    {data.demo
+                      ? 'Sample workspace'
+                      : !online
+                        ? 'Reconnecting…'
+                        : data.status.error
+                          ? 'Needs attention'
+                          : data.status.syncing
+                            ? 'Analysing messages…'
+                            : 'Your workspace'}
+                  </span>
+                </header>
+              )}
             {data.status.error && (
               <div className="inline-alert">
                 <TriangleAlert size={17} />
@@ -637,7 +729,67 @@ export function App() {
                 </button>
               </div>
             )}
-            {location.view === 'conversations' ? (
+            {location.view === 'overview' ? (
+              <Overview
+                tasks={data.tasks}
+                waits={data.waiting_for}
+                pendingQuestions={data.questions.length}
+                onOpenTask={openInDesk}
+                onOpenWait={(wait) =>
+                  updateLocation({ view: 'waiting', wait: wait.id, task: null })
+                }
+                onCategory={(kind) =>
+                  updateLocation({
+                    view: 'tasks',
+                    kind,
+                    task: null,
+                    wait: null,
+                    chat: null,
+                    query: '',
+                    filter: 'open',
+                  })
+                }
+                onWaiting={() => navigate('waiting')}
+                onUpcoming={() =>
+                  updateLocation({
+                    view: 'tasks',
+                    kind: 'upcoming',
+                    task: null,
+                    wait: null,
+                    chat: null,
+                    query: '',
+                    filter: 'open',
+                  })
+                }
+                onReview={() => navigate('review')}
+                navigationTrigger={navigationTrigger}
+              />
+            ) : location.view === 'waiting' ? (
+              <WaitingView
+                waits={data.waiting_for}
+                tasks={data.tasks}
+                messages={data.messages}
+                chats={chats}
+                selectedId={location.wait ?? null}
+                onSelect={(wait) => updateLocation({ wait })}
+                onOpenTask={openInDesk}
+                onRefresh={refresh}
+                notify={notify}
+                navigationTrigger={navigationTrigger}
+              />
+            ) : location.view === 'review' ? (
+              <ReviewView
+                tasks={data.tasks}
+                waits={data.waiting_for}
+                onOpenTask={openInDesk}
+                onOpenWait={(wait) =>
+                  updateLocation({ view: 'waiting', wait: wait.id, task: null })
+                }
+                questions={questions}
+                pendingQuestions={data.questions.length}
+                navigationTrigger={navigationTrigger}
+              />
+            ) : location.view === 'conversations' ? (
               <ConversationWorkspace
                 chats={chats}
                 messages={data.messages}

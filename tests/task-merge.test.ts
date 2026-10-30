@@ -67,6 +67,18 @@ test('manual merge moves evidence and redirects old references while retaining b
   try {
     f.store.remark(f.source.id, 'Original personal note');
     f.store.remark(f.target.id, 'Destination personal note');
+    f.store.setGtd(f.source.id, {
+      commitment: 'someday',
+      project: 'Exports',
+      times: [],
+      recurrence: null,
+    });
+    const wait = f.store.createWait({
+      expected: 'Requested file',
+      person: null,
+      task_id: f.source.id,
+      source_ids: [f.a.message.id],
+    });
     f.store.tick(f.target.id, true);
     const reply = MessageSchema.parse({
       ...f.a.message,
@@ -100,6 +112,8 @@ test('manual merge moves evidence and redirects old references while retaining b
     assert.deepEqual(result.task.source_ids.toSorted(), ['a', 'b']);
     assert.equal(result.task.merged_from[0]?.own_remark, 'Original personal note');
     assert.equal(result.task.merged_from[0]?.reference, f.source.reference);
+    assert.equal(result.task.merged_from[0]?.gtd.project, 'Exports');
+    assert.equal(f.store.waitEvidence(wait.id).wait.task_id, f.target.id);
     assert.deepEqual(result.task.merged_from[0]?.source_ids, f.source.source_ids);
     assert.equal(f.store.taskEvidence(f.source.id).task.id, f.target.id);
     assert.equal(f.store.taskEvidence(f.source.reference).task.id, f.target.id);

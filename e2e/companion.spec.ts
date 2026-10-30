@@ -114,9 +114,88 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(base);
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Actions', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Waiting for', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Final illustration exports', exact: true }),
+    ).toBeVisible();
+    const beforeWait = SnapshotSchema.parse(await (await owner('state')).json()).waiting_for[0];
+    if (!beforeWait?.task_id) throw Error('The sample waiting item needs linked work');
+    await page.getByRole('button', { name: 'Mark received', exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).waiting_for.find(
+            (wait) => wait.id === beforeWait.id,
+          )?.state,
+      )
+      .toBe('received');
+    expect(
+      SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+        (task) => task.id === beforeWait.task_id,
+      )?.done,
+    ).toBe(false);
+    await page.getByRole('button', { name: 'Reopen waiting item', exact: true }).click();
+    const linkedTask = SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+      (task) => task.id === beforeWait.task_id,
+    );
+    if (!linkedTask) throw Error('The sample waiting item needs linked work');
+    await owner('tasks/gtd', {
+      id: linkedTask.id,
+      gtd: { ...linkedTask.gtd, commitment: 'someday' },
+    });
+    await page.reload();
+    await page
+      .getByRole('button', { name: `${linkedTask.reference} · ${linkedTask.title}` })
+      .click();
+    await expect(page.getByRole('heading', { name: 'Someday / Maybe', exact: true })).toBeVisible();
+    const restore = await owner('tasks/gtd', { id: linkedTask.id, gtd: linkedTask.gtd });
+    expect(restore.ok).toBe(true);
+    await page.reload();
+    await page.getByRole('button', { name: 'Actions', exact: true }).click();
+    await expect(
+      page.getByRole('button', {
+        name: 'Open action: Send Alex the notes from our conversation',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    const allOpen = SnapshotSchema.parse(await (await owner('state')).json()).tasks.filter(
+      (task) => !task.done && task.gtd.commitment === 'active',
+    ).length;
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Task filters' })
+        .getByRole('button', { name: 'All open work' })
+        .locator('.nav-count'),
+    ).toHaveText(String(allOpen));
+    await page.getByRole('button', { name: 'All items', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Open work', exact: true })).toBeVisible();
     const title = 'Review the onboarding flow before Friday';
     await expect(page.getByRole('heading', { name: title })).toBeVisible();
+    await page.getByLabel('Item category').selectOption('question');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('question');
+    await page.getByRole('button', { name: 'Questions', exact: true }).click();
+    await expect(page.getByRole('button', { name: `Open question: ${title}` })).toBeVisible();
+    await page.getByLabel('Item category').selectOption('task');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('task');
+    await page.getByRole('button', { name: 'All items', exact: true }).click();
     await expect(page.locator('.source-disclosure > summary')).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('workspace.png') });
     await expectReadableTasks(page, '.task-title');
@@ -225,7 +304,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.keyboard.press('ArrowDown');
     await expect(page.getByRole('menuitem', { name: 'Find tasks now' })).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    await expect(page.getByRole('menuitem', { name: 'Show all tasks' })).toBeFocused();
+    await expect(page.getByRole('menuitem', { name: 'Show all items' })).toBeFocused();
     await page.screenshot({
       path: test.info().outputPath('task-menu.png'),
       animations: 'disabled',
@@ -398,7 +477,7 @@ test('TODO links restore the selected task and source view through refresh and b
     await page.goto(base + '?task=' + second.id + '&context=conversation');
     await expect(page).toHaveURL(new RegExp('task=' + second.reference));
     await expect(page.locator('.message-card').first()).toBeVisible();
-    await page.getByLabel('Search tasks', { exact: true }).fill(second.reference.toLowerCase());
+    await page.getByLabel('Search items', { exact: true }).fill(second.reference.toLowerCase());
     await expect(page.locator('.task-row')).toHaveCount(1);
 
     await page.goto(base + '?task=TODO-999999');
@@ -456,11 +535,52 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     await page.getByLabel('Server address').fill(base);
     await page.getByLabel('Pairing code').fill(code.code);
     await page.getByRole('button', { name: 'Connect workspace' }).click();
-    await expect(page.getByRole('heading', { name: 'My Tasks' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My items' })).toBeVisible();
+    const waiting = SnapshotSchema.parse(await (await owner('state')).json()).waiting_for[0];
+    if (!waiting?.task_id) throw Error('The sample waiting item needs linked work');
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await page.getByText('Final illustration exports', { exact: true }).click();
+    await page.getByRole('button', { name: 'Mark received', exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).waiting_for.find(
+            (item) => item.id === waiting.id,
+          )?.state,
+      )
+      .toBe('received');
+    expect(
+      SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+        (item) => item.id === waiting.task_id,
+      )?.done,
+    ).toBe(false);
+    await owner('waiting/state', { id: waiting.id, state: 'waiting' });
+    await page.getByRole('button', { name: 'All', exact: true }).click();
     const title = 'Review the onboarding flow before Friday';
     await expect(page.getByText(title, { exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath('companion.png') });
     await page.getByText(title, { exact: true }).click();
+    await page.getByLabel('Item category').selectOption('reminder');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('reminder');
+    await page.getByRole('button', { name: 'Reminders', exact: true }).click();
+    await page.getByText(title, { exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Dismiss reminder', exact: true })).toBeVisible();
+    await page.getByLabel('Item category').selectOption('task');
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.title === title,
+          )?.kind,
+      )
+      .toBe('task');
     await expect(page.locator('footer')).toContainText('Connected to workspace');
     await page.screenshot({ path: test.info().outputPath('companion-detail.png') });
     await expectReadableTasks(page, '.task-open strong');
@@ -493,7 +613,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     });
     await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
     await expect(page.getByText(title, { exact: true })).not.toBeVisible();
-    await expect(page.getByRole('button', { name: /^Complete:/ }).first()).toBeEnabled();
+    await expect(page.getByRole('button', { name: /^Mark Complete:/ }).first()).toBeEnabled();
     expect(
       SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
         (task) => task.title === title,
@@ -585,7 +705,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     expect(devices.devices.length).toBe(1);
     await owner('extensions/' + devices.devices[0]?.id + '/revoke', {});
     expect((await fetch(base + '/api/companion/state', { headers })).status).toBe(401);
-    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await page.getByRole('button', { name: 'Items', exact: true }).click();
     await page.getByRole('button', { name: 'More options' }).click();
     await page.getByRole('menuitem', { name: 'Refresh tasks' }).click();
     await expect(page.getByRole('button', { name: 'Connect workspace' })).toBeVisible();
@@ -768,7 +888,7 @@ test('manual merge moves evidence into an existing TODO and preserves notes, com
     await page.goto(base + '?task=' + source.id + '&context=conversation');
     await expect(page).toHaveURL(new RegExp('task=' + target.reference));
     await expect(page.locator('.message-card').first()).toBeVisible();
-    await page.getByLabel('Search tasks', { exact: true }).fill(source.reference);
+    await page.getByLabel('Search items', { exact: true }).fill(source.reference);
     await expect(page.locator('.task-row')).toHaveCount(1);
     await expect(page.locator('.task-row .task-reference')).toHaveText(target.reference);
     const after = SnapshotSchema.parse(await (await owner('state')).json());
@@ -948,7 +1068,7 @@ test('in-page TODO links and cross-chat threads keep drafts, source navigation a
     await panel.getByLabel('Server address').fill(base);
     await panel.getByLabel('Pairing code').fill(code.code);
     await panel.getByRole('button', { name: 'Connect workspace' }).click();
-    await expect(panel.getByRole('heading', { name: 'My Tasks' })).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'My items' })).toBeVisible();
     const connection = ConnectionSchema.parse(
       await worker.evaluate(async () => (await chrome.storage.local.get('connection')).connection),
     );

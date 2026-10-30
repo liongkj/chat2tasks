@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import { TaskTriageSchema, type Task } from '../shared/schema.js';
+import { ItemKindSchema, TaskTriageSchema, type ItemKind, type Task } from '../shared/schema.js';
 
 export type TaskTab = 'overview' | 'sources';
 export type TaskFilter = 'open' | 'all' | 'done' | Task['triage_state'];
+export type ItemKindFilter = 'all' | 'someday' | 'upcoming' | 'projects' | 'areas' | ItemKind;
 export type WorkspaceView =
-  'conversations' | 'tasks' | 'threads' | 'connections' | 'settings' | 'activity';
+  | 'overview'
+  | 'waiting'
+  | 'review'
+  | 'conversations'
+  | 'tasks'
+  | 'threads'
+  | 'connections'
+  | 'settings'
+  | 'activity';
 export type WorkspaceLocation = {
   view: WorkspaceView;
   chat: string | null;
   task: string | null;
+  wait?: string | null;
   tab: TaskTab;
   filter: TaskFilter;
+  kind: ItemKindFilter;
   query: string;
   expanded: boolean;
   message?: string | null;
@@ -21,21 +32,39 @@ function readLocation(): WorkspaceLocation {
   const view = params.get('view');
   const status = params.get('status');
   const state = TaskTriageSchema.shape.triage_state.safeParse(params.get('state'));
+  const kind = ItemKindSchema.safeParse(params.get('kind'));
   return {
     view:
       view === 'conversations' ||
+      view === 'overview' ||
+      view === 'waiting' ||
+      view === 'review' ||
       view === 'tasks' ||
       view === 'threads' ||
       view === 'connections' ||
       view === 'settings' ||
       view === 'activity'
         ? view
-        : 'tasks',
+        : params.has('task')
+          ? 'tasks'
+          : 'overview',
     chat: params.get('chat'),
     message: params.get('message'),
     task: params.get('task'),
+    wait: params.get('wait'),
     tab: params.get('context') === 'conversation' ? 'sources' : 'overview',
     filter: status === 'done' || status === 'all' ? status : state.success ? state.data : 'open',
+    kind: kind.success
+      ? kind.data
+      : params.get('kind') === 'projects'
+        ? 'projects'
+        : params.get('kind') === 'areas'
+          ? 'areas'
+          : params.get('kind') === 'someday'
+            ? 'someday'
+            : params.get('kind') === 'upcoming'
+              ? 'upcoming'
+              : 'all',
     query: params.get('q') ?? '',
     expanded: params.get('panel') === 'task',
   };
@@ -48,12 +77,14 @@ function locationUrl(location: WorkspaceLocation) {
     message: location.view === 'conversations' ? (location.message ?? null) : null,
     chat: location.chat,
     task: location.task,
+    wait: location.view === 'waiting' ? (location.wait ?? null) : null,
     context: location.task && location.tab === 'sources' ? 'conversation' : null,
     status: location.filter === 'done' || location.filter === 'all' ? location.filter : null,
     state:
       location.filter === 'open' || location.filter === 'done' || location.filter === 'all'
         ? null
         : location.filter,
+    kind: location.kind === 'all' ? null : location.kind,
     q: location.query || null,
     panel: location.task && location.expanded ? 'task' : null,
   };

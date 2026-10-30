@@ -47,7 +47,10 @@ export const SettingsSchema = z
     quietSeconds: z.number().int().min(0).max(300),
     trigger: z
       .discriminatedUnion('mode', [
-        z.object({ mode: z.literal('manual') }),
+        z.object({
+          mode: z.literal('manual'),
+          decisionProfileId: z.string().nullable().optional(),
+        }),
         z.object({ mode: z.literal('automatic'), decisionProfileId: z.string().nullable() }),
       ])
       .default({ mode: 'automatic', decisionProfileId: null }),
@@ -67,8 +70,7 @@ export const SettingsSchema = z
       ctx.addIssue({ code: 'custom', message: 'Each conversation can only be added once' });
     if (!settings.profiles.some((p) => p.id === settings.activeProfileId && p.kind !== 'decision'))
       ctx.addIssue({ code: 'custom', message: 'Choose an existing model connection' });
-    const gateId =
-      settings.trigger.mode === 'automatic' ? settings.trigger.decisionProfileId : null;
+    const gateId = settings.trigger.decisionProfileId;
     if (gateId && !settings.profiles.some((p) => p.id === gateId))
       ctx.addIssue({ code: 'custom', message: 'Choose an existing decision connection' });
   });
@@ -81,6 +83,37 @@ export const ImageReadingSchema = z.object({
   message_id: text,
   observations: z.array(text),
   uncertainties: z.array(text),
+});
+export const ItemKindSchema = z.enum([
+  'task',
+  'action',
+  'question',
+  'reminder',
+  'event',
+  'reference',
+]);
+export const GtdSchema = z.object({
+  commitment: z.enum(['active', 'someday']).default('active'),
+  project: z.string().trim().min(1).max(200).nullable().default(null),
+  area: z.string().trim().min(1).max(200).nullable().default(null),
+  times: z
+    .array(
+      z.object({
+        kind: z.enum(['due', 'scheduled', 'revisit']),
+        text: z.string().trim().min(1).max(200),
+        date: z.iso.date().nullable(),
+      }),
+    )
+    .max(6)
+    .default([]),
+  recurrence: z
+    .object({
+      frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']),
+      anchor_date: z.iso.date(),
+      next_date: z.iso.date(),
+    })
+    .nullable()
+    .default(null),
 });
 export const MessageSchema = z.object({
   id: text,
@@ -115,8 +148,8 @@ export const TaskTriageSchema = z
     title: text,
     scope: text,
     note: text,
-    action_steps: z.array(text).min(1).max(8),
-    done_when: z.array(text).min(1).max(8),
+    action_steps: z.array(text).max(8),
+    done_when: z.array(text).max(8),
     priority: z.enum(['high', 'normal', 'low']),
     triage_state: z.enum(['ready', 'needs_info', 'waiting', 'reported_done']),
     blocking_question: z.string().nullable(),
@@ -129,6 +162,11 @@ export const TaskTriageSchema = z
 export const TaskChangeSchema = TaskTriageSchema.safeExtend({
   id: z.string().nullable(),
   source_ids: z.array(text).min(1),
+  kind: ItemKindSchema.default('task'),
+  kind_suggestion: ItemKindSchema.nullable().optional(),
+}).superRefine((item, ctx) => {
+  if (item.kind === 'task' && (!item.action_steps.length || !item.done_when.length))
+    ctx.addIssue({ code: 'custom', message: 'A task needs a next step and completion criterion' });
 });
 export const TaskTriageUpdateSchema = TaskTriageSchema.safeExtend({
   id: text,
@@ -143,6 +181,20 @@ const TaskBaseSchema = z.object({
   created: z.number(),
   updated: z.number(),
   done: z.boolean(),
+  kind: ItemKindSchema.default('task'),
+  kind_suggestion: ItemKindSchema.nullable().default(null),
+  gtd: GtdSchema.default({
+    commitment: 'active',
+    project: null,
+    area: null,
+    times: [],
+    recurrence: null,
+  }),
+  occurrences: z.array(z.object({ date: z.iso.date(), completed: z.number() })).default([]),
+  resolution: z
+    .object({ kind: z.enum(['filtered', 'reply']), reason: z.string() })
+    .nullable()
+    .default(null),
   source_ids: z.array(z.string()),
   own_remark: z.string().default(''),
   action_steps: z.array(z.string()).default([]),
@@ -162,12 +214,40 @@ export const TaskSchema = TaskBaseSchema.extend({
         own_remark: true,
         done: true,
         source_ids: true,
+        gtd: true,
+        occurrences: true,
       }),
     )
     .default([]),
 });
 export const TaskEvidenceSchema = z.object({
   task: TaskSchema,
+  messages: z.array(MessageSchema),
+  revision: z.string(),
+});
+export const WaitInputSchema = z.object({
+  expected: text,
+  person: z.string().trim().max(500).nullable().default(null),
+  task_id: z.string().nullable().default(null),
+  source_ids: z.array(text).max(40).default([]),
+});
+export const WaitStateSchema = z.enum(['waiting', 'received', 'dismissed']);
+export const WaitChangeSchema = WaitInputSchema.extend({
+  id: z.string().nullable(),
+  source_ids: z.array(text).min(1).max(40),
+  needs_review: z.boolean().default(false),
+});
+export const WaitSchema = WaitInputSchema.extend({
+  id: text,
+  state: WaitStateSchema,
+  response_id: z.string().nullable(),
+  created: z.number(),
+  updated: z.number(),
+  manual_state: z.boolean(),
+  needs_review: z.boolean(),
+});
+export const WaitEvidenceSchema = z.object({
+  wait: WaitSchema,
   messages: z.array(MessageSchema),
   revision: z.string(),
 });
@@ -212,6 +292,7 @@ export const StatusSchema = z.object({
 export const SnapshotSchema = z.object({
   demo: z.boolean().default(false),
   tasks: z.array(TaskSchema),
+  waiting_for: z.array(WaitSchema).default([]),
   messages: z.array(MessageSchema),
   questions: z.array(QuestionSchema),
   status: StatusSchema,
@@ -229,6 +310,12 @@ export type Profile = z.infer<typeof ProfileSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
 export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
 export type Task = z.infer<typeof TaskSchema>;
+export type ItemKind = z.infer<typeof ItemKindSchema>;
+export type Gtd = z.infer<typeof GtdSchema>;
+export type GtdInput = z.input<typeof GtdSchema>;
+export type Wait = z.infer<typeof WaitSchema>;
+export type WaitInput = z.infer<typeof WaitInputSchema>;
+export type WaitChange = z.infer<typeof WaitChangeSchema>;
 export type TaskEvidence = z.infer<typeof TaskEvidenceSchema>;
 export type TaskChange = z.infer<typeof TaskChangeSchema>;
 export type Message = z.infer<typeof MessageSchema>;

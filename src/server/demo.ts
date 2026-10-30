@@ -131,6 +131,17 @@ export function seedDemo(store: Store) {
       priority: 'normal',
       state: 'ready',
     },
+    {
+      title: 'The design review is moving to a new room',
+      scope: 'Team updates',
+      chat: 'design-sample',
+      body: 'A quick heads-up: the design review will be in the larger room this time.',
+      note: 'The team shared a location update for the next review.',
+      steps: [],
+      criteria: [],
+      priority: 'low',
+      state: 'ready',
+    },
   ];
   for (const [i, item] of items.entries()) {
     const message = MessageSchema.parse({
@@ -151,9 +162,10 @@ export function seedDemo(store: Store) {
           title: item.title,
           scope: item.scope,
           note: item.note,
+          kind: i === 2 ? 'action' : i === 4 ? 'question' : i === 7 ? 'reminder' : 'task',
           source_ids: [message.id],
-          action_steps: item.steps,
-          done_when: item.criteria,
+          action_steps: i === 2 || i === 4 ? [] : item.steps,
+          done_when: i === 2 || i === 4 ? [] : item.criteria,
           priority: item.priority,
           triage_state: item.state,
           blocking_question:
@@ -169,6 +181,26 @@ export function seedDemo(store: Store) {
     .snapshot()
     .tasks.find((t) => t.title === 'Organize the shared reference library');
   if (completed) store.tick(completed.id, true);
+  const linked = store
+    .snapshot()
+    .tasks.find((task) => task.title === 'Follow up on the illustration handover');
+  const request = MessageSchema.parse({
+    id: 'sample-wait-request',
+    sessionId: 'sample',
+    chatId: 'design-sample',
+    waMessageId: 'sample-wait',
+    body: 'Could you send me the final illustration exports when they are ready?',
+    direction: 'outgoing',
+    type: 'text',
+    timestamp: now() - 1200,
+  });
+  store.cache([request]);
+  store.createWait({
+    expected: 'Final illustration exports',
+    person: 'Illustrator',
+    task_id: linked?.id ?? null,
+    source_ids: [request.id],
+  });
   store.status({
     phase: 'Sample workspace · no live chats or AI calls',
     last_poll: now(),

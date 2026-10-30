@@ -12,12 +12,21 @@ import {
   NotebookPen,
 } from 'lucide-react';
 import { z } from 'zod';
-import type { Chat, Message, Task, TaskEvidence } from '../shared/schema.js';
+import {
+  ItemKindSchema,
+  type Chat,
+  type ItemKind,
+  type Message,
+  type Task,
+  type TaskEvidence,
+} from '../shared/schema.js';
+import { itemKindLabel, itemKindPlural } from '../shared/tasks.js';
 import { api, download, OkSchema, time } from './api.js';
 import { stateLabel, conversationName } from './conversations.js';
 import { MessageCard } from './Evidence.js';
 import { taskUrl, type TaskTab } from './taskLocation.js';
 import { TaskMerge } from './TaskMerge.js';
+import { GtdEditor } from './GtdEditor.js';
 
 export function TaskState({ task }: { task: Task }) {
   return (
@@ -29,7 +38,17 @@ export function TaskState({ task }: { task: Task }) {
       ) : (
         <Circle size={10} />
       )}
-      {task.done ? 'Completed' : stateLabel[task.triage_state]}
+      {task.done
+        ? task.resolution?.kind === 'filtered'
+          ? 'Not an item'
+          : task.kind === 'question'
+            ? 'Answered'
+            : task.kind === 'reminder'
+              ? 'Dismissed'
+              : 'Completed'
+        : task.gtd.commitment === 'someday'
+          ? 'Someday'
+          : stateLabel[task.triage_state]}
     </span>
   );
 }
@@ -45,6 +64,7 @@ export function TaskDetail({
   onTick,
   ticking,
   onSaved,
+  onKindChanged,
   onMerged,
   notify,
 }: {
@@ -58,11 +78,13 @@ export function TaskDetail({
   onTick: () => void;
   ticking: boolean;
   onSaved: () => void;
+  onKindChanged: (kind: ItemKind) => void;
   onMerged: (evidence: TaskEvidence) => void;
   notify: (text: string) => void;
 }) {
   const [remark, setRemark] = useState(task.own_remark);
   const [saving, setSaving] = useState(false);
+  const [kindSaving, setKindSaving] = useState(false);
   const [handoff, setHandoff] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [backgroundOpen, setBackgroundOpen] = useState(false);
@@ -93,6 +115,19 @@ export function TaskDetail({
       setSaving(false);
     }
   }
+  async function changeKind(value: string) {
+    const kind = ItemKindSchema.parse(value);
+    setKindSaving(true);
+    try {
+      await api('tasks/kind', OkSchema, { id: task.id, kind });
+      onKindChanged(kind);
+      notify(`Moved to ${itemKindPlural[kind].toLowerCase()}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Could not change the category.');
+    } finally {
+      setKindSaving(false);
+    }
+  }
   async function prepare() {
     setHandoff(true);
     try {
@@ -115,6 +150,21 @@ export function TaskDetail({
     <>
       <div className="task-reference-bar">
         <span className="task-reference">{task.reference}</span>
+        <label className="item-kind-selector">
+          <span className="sr-only">Item category</span>
+          <select
+            aria-label="Item category"
+            value={task.kind}
+            disabled={kindSaving}
+            onChange={(event) => void changeKind(event.target.value)}
+          >
+            {ItemKindSchema.options.map((kind) => (
+              <option key={kind} value={kind}>
+                {itemKindLabel[kind]}
+              </option>
+            ))}
+          </select>
+        </label>
         {layout === 'desk' && (
           <span className="task-conversation" title={conversationName(task, messages, chats)}>
             {conversationName(task, messages, chats)}
@@ -123,6 +173,22 @@ export function TaskDetail({
         <TaskState task={task} />
       </div>
       <h2 className={task.done ? 'task-done-title' : ''}>{task.title}</h2>
+      {task.kind_suggestion && (
+        <p className="item-kind-suggestion">
+          {task.kind_suggestion === task.kind
+            ? 'Please check the category.'
+            : `Possible category: ${itemKindLabel[task.kind_suggestion]}.`}{' '}
+          Choose a category or{' '}
+          <button
+            className="text-button"
+            disabled={kindSaving}
+            onClick={() => void changeKind(task.kind)}
+          >
+            keep {itemKindLabel[task.kind].toLowerCase()}
+          </button>
+          .
+        </p>
+      )}
     </>
   );
   const sourceMessages = (
@@ -232,6 +298,37 @@ export function TaskDetail({
                 </ul>
               </section>
             )}
+            {(task.gtd.project ||
+              task.gtd.area ||
+              task.gtd.times.length > 0 ||
+              task.gtd.recurrence) && (
+              <div className="gtd-summary">
+                {task.gtd.project && <span>Project: {task.gtd.project}</span>}
+                {task.gtd.area && <span>Area: {task.gtd.area}</span>}
+                {task.gtd.times.map((entry, index) => (
+                  <span key={index}>
+                    {entry.kind === 'due'
+                      ? 'Due'
+                      : entry.kind === 'scheduled'
+                        ? 'Scheduled'
+                        : 'Revisit'}
+                    : {entry.text}
+                    {entry.date && entry.date !== entry.text ? ` (${entry.date})` : ''}
+                  </span>
+                ))}
+                {task.gtd.recurrence && (
+                  <span>
+                    Repeats {task.gtd.recurrence.frequency} · next {task.gtd.recurrence.next_date}
+                  </span>
+                )}
+              </div>
+            )}
+            <GtdEditor
+              key={`${task.id}:${JSON.stringify(task.gtd)}`}
+              task={task}
+              onSaved={onSaved}
+              notify={notify}
+            />
             {layout === 'desk' ? (
               <details
                 className="detail-section source-disclosure"
@@ -347,6 +444,7 @@ export function TaskDetail({
                         <strong>{source.reference}</strong> · {source.title}
                       </p>
                       {source.own_remark && <blockquote>{source.own_remark}</blockquote>}
+                      {source.gtd.project && <p>Project: {source.gtd.project}</p>}
                     </div>
                   ))}
                 </section>
@@ -366,8 +464,18 @@ export function TaskDetail({
             {ticking
               ? 'Saving…'
               : task.done
-                ? 'You marked this complete.'
-                : 'Completion is your call.'}
+                ? task.resolution?.kind === 'filtered'
+                  ? 'Filtered as not a task. You can reopen it.'
+                  : task.resolution?.kind === 'reply'
+                    ? 'Resolved from your reply. You can reopen it.'
+                    : 'You marked this complete.'
+                : task.gtd.recurrence
+                  ? 'Completing this occurrence keeps future occurrences open.'
+                  : task.kind === 'question'
+                    ? 'A clear answer can resolve this question.'
+                    : task.kind === 'reminder'
+                      ? 'Dismiss this reminder when you no longer need it.'
+                      : 'Completion is your call.'}
           </span>
         )}
         {layout === 'context' &&
@@ -385,7 +493,23 @@ export function TaskDetail({
         >
           {ticking && <LoaderCircle size={15} className="spin" />}
           {layout === 'desk' && !ticking && <Check size={16} />}
-          {task.done ? 'Reopen task' : 'Mark complete'}
+          {task.done
+            ? task.kind === 'reminder'
+              ? 'Restore reminder'
+              : task.kind === 'question'
+                ? 'Reopen question'
+                : task.kind === 'event' || task.kind === 'reference'
+                  ? 'Restore item'
+                  : 'Reopen task'
+            : task.kind === 'reminder'
+              ? 'Dismiss reminder'
+              : task.kind === 'question'
+                ? 'Mark answered'
+                : task.kind === 'event' || task.kind === 'reference'
+                  ? 'Archive item'
+                  : task.gtd.recurrence
+                    ? 'Complete occurrence'
+                    : 'Mark complete'}
         </button>
         {layout === 'context' && (
           <div className="detail-secondary">

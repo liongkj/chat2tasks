@@ -7,7 +7,15 @@ import { Store, TaskTriageError } from './store.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
-import { SettingsUpdateSchema, TaskSchema, TaskMergeSchema } from '../shared/schema.js';
+import {
+  ItemKindSchema,
+  GtdSchema,
+  WaitInputSchema,
+  WaitStateSchema,
+  SettingsUpdateSchema,
+  TaskSchema,
+  TaskMergeSchema,
+} from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
@@ -157,6 +165,31 @@ server.get('/api/tasks/:id', (request) =>
   store.taskEvidence(z.object({ id: z.string() }).parse(request.params).id),
 );
 server.post('/api/tasks/merge', (request) => store.mergeTasks(TaskMergeSchema.parse(request.body)));
+server.post('/api/tasks/kind', (request) => {
+  const value = z.object({ id: z.string(), kind: ItemKindSchema }).parse(request.body);
+  store.setTaskKind(value.id, value.kind);
+  return { ok: true };
+});
+server.post('/api/tasks/gtd', (request) => {
+  const value = z.object({ id: z.string(), gtd: GtdSchema }).parse(request.body);
+  return store.setGtd(value.id, value.gtd);
+});
+server.post('/api/tasks/occurrence', (request) => {
+  const value = z.object({ id: z.string(), date: z.iso.date() }).parse(request.body);
+  return { ok: store.completeOccurrence(value.id, value.date) };
+});
+server.get('/api/waiting/:id', (request) =>
+  store.waitEvidence(z.object({ id: z.string() }).parse(request.params).id),
+);
+server.post('/api/waiting', (request) => store.createWait(WaitInputSchema.parse(request.body)));
+server.post('/api/waiting/state', (request) => {
+  const value = z.object({ id: z.string(), state: WaitStateSchema }).parse(request.body);
+  return store.setWaitState(value.id, value.state);
+});
+server.post('/api/waiting/confirm', (request) => {
+  const value = z.object({ id: z.string() }).parse(request.body);
+  return store.confirmWait(value.id);
+});
 server.get('/api/settings', () => store.publicSettings());
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {

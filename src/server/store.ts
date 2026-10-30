@@ -1,11 +1,16 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createHash, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createHash, createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { matchesTaskIdentifier } from '../shared/tasks.js';
 import {
   MessageSchema,
+  ItemKindSchema,
+  GtdSchema,
+  WaitInputSchema,
+  WaitSchema,
+  WaitStateSchema,
   TaskSchema,
   TaskTriageUpdateSchema,
   TaskMergeSchema,
@@ -14,6 +19,11 @@ import {
   StatusSchema,
   QuestionSchema,
   type Message,
+  type ItemKind,
+  type Gtd,
+  type GtdInput,
+  type WaitInput,
+  type WaitChange,
   type TaskChange,
   type Decision,
   type SettingsUpdate,
@@ -55,6 +65,22 @@ const legacySchema = z.object({
   openwa_api_key_file: z.string().optional(),
   model: z.string().optional(),
 });
+function nextOccurrence(recurrence: NonNullable<Gtd['recurrence']>) {
+  const [year, month, day] = recurrence.next_date.split('-').map(Number);
+  const [anchorYear, anchorMonth, anchorDay] = recurrence.anchor_date.split('-').map(Number);
+  if (!year || !month || !day || !anchorYear || !anchorMonth || !anchorDay)
+    throw new Error('A recurring item needs valid dates');
+  let date: Date;
+  if (recurrence.frequency === 'daily' || recurrence.frequency === 'weekly')
+    date = new Date(Date.UTC(year, month - 1, day + (recurrence.frequency === 'daily' ? 1 : 7)));
+  else {
+    const targetYear = recurrence.frequency === 'yearly' ? year + 1 : year + Math.floor(month / 12);
+    const targetMonth = recurrence.frequency === 'yearly' ? anchorMonth : (month % 12) + 1;
+    const lastDay = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+    date = new Date(Date.UTC(targetYear, targetMonth - 1, Math.min(anchorDay, lastDay)));
+  }
+  return date.toISOString().slice(0, 10);
+}
 
 export class TaskTriageError extends Error {
   constructor(
@@ -94,6 +120,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS processed(id TEXT PRIMARY KEY,digest TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS triage(task_id TEXT PRIMARY KEY REFERENCES tasks(id),payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS item_kinds(task_id TEXT PRIMARY KEY REFERENCES tasks(id),kind TEXT NOT NULL CHECK(kind IN ('task','action','question','reminder','event','reference')),manual INTEGER NOT NULL CHECK(manual IN (0,1)),suggestion TEXT CHECK(suggestion IS NULL OR suggestion IN ('task','action','question','reminder','event','reference')));
+      CREATE TABLE IF NOT EXISTS waiting_for(id TEXT PRIMARY KEY,expected TEXT NOT NULL,person TEXT,task_id TEXT REFERENCES tasks(id),state TEXT NOT NULL CHECK(state IN ('waiting','received','dismissed')),response_id TEXT REFERENCES messages(id),created REAL NOT NULL,updated REAL NOT NULL,manual_state INTEGER NOT NULL DEFAULT 0 CHECK(manual_state IN (0,1)),needs_review INTEGER NOT NULL DEFAULT 0 CHECK(needs_review IN (0,1)));
+      CREATE TABLE IF NOT EXISTS waiting_sources(wait_id TEXT NOT NULL REFERENCES waiting_for(id),message_id TEXT NOT NULL REFERENCES messages(id),PRIMARY KEY(wait_id,message_id));
+      CREATE TABLE IF NOT EXISTS rejected_wait_responses(wait_id TEXT NOT NULL REFERENCES waiting_for(id),message_id TEXT NOT NULL REFERENCES messages(id),digest TEXT NOT NULL,PRIMARY KEY(wait_id,message_id));
+      CREATE TABLE IF NOT EXISTS item_gtd(task_id TEXT PRIMARY KEY REFERENCES tasks(id),payload TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS item_occurrences(task_id TEXT NOT NULL REFERENCES tasks(id),date TEXT NOT NULL,completed REAL NOT NULL,PRIMARY KEY(task_id,date));
       CREATE TABLE IF NOT EXISTS image_readings(message_id TEXT PRIMARY KEY,image_digest TEXT NOT NULL,payload TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS completion_history(task_id TEXT,done INTEGER,changed REAL);
       CREATE TABLE IF NOT EXISTS task_remarks(task_id TEXT PRIMARY KEY REFERENCES tasks(id),remark TEXT NOT NULL,updated REAL NOT NULL);
@@ -105,6 +137,31 @@ export class Store {
       CREATE TABLE IF NOT EXISTS app_secrets(id TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS webhook_events(id TEXT PRIMARY KEY,received REAL NOT NULL);
       CREATE TABLE IF NOT EXISTS chat_jobs(chat_id TEXT PRIMARY KEY,due REAL NOT NULL,first REAL NOT NULL,generation INTEGER NOT NULL,reconcile INTEGER NOT NULL,manual INTEGER NOT NULL DEFAULT 0);`);
+    const kindsDefinition = z
+      .object({ sql: z.string() })
+      .parse(
+        this.db
+          .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='item_kinds'")
+          .get(),
+      ).sql;
+    if (!kindsDefinition.includes("'action'") || !kindsDefinition.includes("'reference'"))
+      this.transaction(() =>
+        this.db.exec(`
+        ALTER TABLE item_kinds RENAME TO previous_item_kinds;
+        CREATE TABLE item_kinds(task_id TEXT PRIMARY KEY REFERENCES tasks(id),kind TEXT NOT NULL CHECK(kind IN ('task','action','question','reminder','event','reference')),manual INTEGER NOT NULL CHECK(manual IN (0,1)),suggestion TEXT CHECK(suggestion IS NULL OR suggestion IN ('task','action','question','reminder','event','reference')));
+        INSERT INTO item_kinds(task_id,kind,manual,suggestion) SELECT task_id,kind,manual,suggestion FROM previous_item_kinds;
+        DROP TABLE previous_item_kinds;
+      `),
+      );
+    if (
+      !this.db
+        .prepare('PRAGMA table_info(waiting_for)')
+        .all()
+        .some((row) => row.name === 'needs_review')
+    )
+      this.db.exec(
+        'ALTER TABLE waiting_for ADD COLUMN needs_review INTEGER NOT NULL DEFAULT 0 CHECK(needs_review IN (0,1))',
+      );
     this.transaction(() =>
       this.db.exec(`
       INSERT INTO task_references(task_id)
@@ -339,7 +396,12 @@ export class Store {
     );
     return messages.filter((m) => seen.get(m.id) !== fingerprint(m));
   }
-  apply(changes: TaskChange[], batch: Message[], context: Message[] = []) {
+  apply(
+    changes: TaskChange[],
+    batch: Message[],
+    context: Message[] = [],
+    waits: WaitChange[] = [],
+  ) {
     const messages = new Map([...batch, ...context].map((m) => [m.id, m]));
     if (changes.length > 40) throw new Error('Task batch is too large');
     return this.transaction(() => {
@@ -384,6 +446,10 @@ export class Store {
             'INSERT INTO tasks VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,scope=excluded.scope,note=excluded.note,updated=excluded.updated',
           )
           .run(identity, t.title, t.scope, t.note, timestamp, timestamp);
+        if (!existing)
+          this.db
+            .prepare('INSERT INTO item_kinds(task_id,kind,manual,suggestion) VALUES(?,?,0,?)')
+            .run(identity, t.kind, t.kind_suggestion ?? null);
         for (const id of t.source_ids)
           this.db.prepare('INSERT OR IGNORE INTO sources VALUES(?,?)').run(identity, id);
         const { action_steps, done_when, priority, triage_state, blocking_question } = t;
@@ -394,6 +460,57 @@ export class Store {
             JSON.stringify({ action_steps, done_when, priority, triage_state, blocking_question }),
           );
         if (!existing) added++;
+      }
+      for (const wait of waits) {
+        if (wait.id) {
+          if (!this.db.prepare('SELECT id FROM waiting_for WHERE id=?').get(wait.id))
+            throw new TaskTriageError('Unknown waiting item');
+          continue;
+        }
+        const sources = wait.source_ids.map((id) => messages.get(id));
+        const first = sources[0];
+        if (
+          !first ||
+          sources.some(
+            (source) =>
+              !source || source.chatId !== first.chatId || source.sessionId !== first.sessionId,
+          ) ||
+          !sources.some((source) => source?.direction === 'outgoing')
+        )
+          throw new TaskTriageError(
+            'A proposed wait needs an outgoing request in one conversation',
+          );
+        const taskId = wait.task_id ? this.taskId(wait.task_id) : null;
+        if (taskId && sources.some((source) => source && !this.taskInChat(taskId, source)))
+          throw new TaskTriageError('A proposed wait cannot link unrelated conversations');
+        const id =
+          wait.id ??
+          hash([
+            'wait',
+            first.sessionId,
+            first.chatId,
+            [...wait.source_ids].sort()[0],
+            wait.expected.toLocaleLowerCase(),
+          ]);
+        const timestamp = now();
+        this.db
+          .prepare(
+            'INSERT OR IGNORE INTO waiting_for(id,expected,person,task_id,state,response_id,created,updated,manual_state,needs_review) VALUES(?,?,?,?,?,?,?,?,?,?)',
+          )
+          .run(
+            id,
+            wait.expected,
+            wait.person,
+            taskId,
+            'waiting',
+            null,
+            timestamp,
+            timestamp,
+            0,
+            Number(wait.needs_review),
+          );
+        for (const source of wait.source_ids)
+          this.db.prepare('INSERT OR IGNORE INTO waiting_sources VALUES(?,?)').run(id, source);
       }
       for (const m of batch)
         this.db.prepare('INSERT OR REPLACE INTO processed VALUES(?,?)').run(m.id, fingerprint(m));
@@ -438,6 +555,8 @@ export class Store {
         return target;
       }
       const source = this.taskEvidence(sourceId);
+      if (source.task.gtd.recurrence)
+        throw new TaskTriageError('Stop repeating the source item before merging it');
       if (source.revision !== value.source_revision || target.revision !== value.target_revision)
         throw new TaskTriageError(
           'A TODO changed while the merge was being prepared. Try again after reading the updated tasks.',
@@ -449,6 +568,9 @@ export class Store {
         )
         .run(target.task.id, sourceId);
       this.db.prepare('DELETE FROM sources WHERE task_id=?').run(sourceId);
+      this.db
+        .prepare('UPDATE waiting_for SET task_id=? WHERE task_id=?')
+        .run(target.task.id, sourceId);
       this.db
         .prepare('UPDATE task_merges SET target_id=? WHERE target_id=?')
         .run(target.task.id, sourceId);
@@ -485,6 +607,227 @@ export class Store {
     const messages = snapshot.messages.filter((message) => task.source_ids.includes(message.id));
     return { task, messages, revision: hash({ task, messages }) };
   }
+  createWait(input: WaitInput) {
+    const value = WaitInputSchema.parse(input);
+    return this.transaction(() => {
+      const taskId = value.task_id ? this.taskId(value.task_id) : null;
+      if (taskId) this.assertNotMerged(taskId);
+      if (
+        new Set(value.source_ids).size !== value.source_ids.length ||
+        value.source_ids.some(
+          (id) => !this.db.prepare('SELECT id FROM messages WHERE id=?').get(id),
+        )
+      )
+        throw new TaskTriageError('Waiting for needs valid source messages');
+      const id = randomUUID(),
+        timestamp = now();
+      this.db
+        .prepare(
+          'INSERT INTO waiting_for(id,expected,person,task_id,state,response_id,created,updated,manual_state,needs_review) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        )
+        .run(id, value.expected, value.person, taskId, 'waiting', null, timestamp, timestamp, 0, 0);
+      for (const source of value.source_ids)
+        this.db.prepare('INSERT INTO waiting_sources VALUES(?,?)').run(id, source);
+      return this.waitEvidence(id).wait;
+    });
+  }
+  waitEvidence(id: string) {
+    const snapshot = this.snapshot();
+    const wait = snapshot.waiting_for.find((item) => item.id === id);
+    if (!wait) throw new TaskTriageError('Waiting item not found', 404);
+    const ids = new Set([...wait.source_ids, ...(wait.response_id ? [wait.response_id] : [])]);
+    const messages = snapshot.messages.filter((message) => ids.has(message.id));
+    return { wait, messages, revision: hash({ wait, messages }) };
+  }
+  setWaitState(id: string, state: z.infer<typeof WaitStateSchema>) {
+    const value = WaitStateSchema.parse(state);
+    return this.transaction(() => {
+      this.waitEvidence(id);
+      this.db
+        .prepare(
+          'UPDATE waiting_for SET state=?,response_id=NULL,updated=?,manual_state=1,needs_review=0 WHERE id=?',
+        )
+        .run(value, now(), id);
+      return this.waitEvidence(id);
+    });
+  }
+  confirmWait(id: string) {
+    return this.transaction(() => {
+      const current = this.waitEvidence(id);
+      if (current.wait.state !== 'waiting')
+        throw new TaskTriageError('Only an open waiting item can be confirmed');
+      const rejected = current.messages.find((message) => message.id === current.wait.response_id);
+      if (rejected)
+        this.db
+          .prepare('INSERT OR REPLACE INTO rejected_wait_responses VALUES(?,?,?)')
+          .run(id, rejected.id, fingerprint(rejected));
+      this.db
+        .prepare('UPDATE waiting_for SET needs_review=0,response_id=NULL,updated=? WHERE id=?')
+        .run(now(), id);
+      return this.waitEvidence(id);
+    });
+  }
+  waitResponseRejected(id: string, message: Message) {
+    return Boolean(
+      this.db
+        .prepare(
+          'SELECT 1 FROM rejected_wait_responses WHERE wait_id=? AND message_id=? AND digest=?',
+        )
+        .get(id, message.id, fingerprint(message)),
+    );
+  }
+  autoReceiveWait(id: string, revision: string, responseId: string, responseFingerprint: string) {
+    return this.transaction(() => {
+      const current = this.waitEvidence(id);
+      if (
+        current.revision !== revision ||
+        current.wait.state !== 'waiting' ||
+        current.wait.manual_state ||
+        current.wait.needs_review
+      )
+        return false;
+      const response = this.messages().find((message) => message.id === responseId);
+      if (
+        !response ||
+        response.direction !== 'incoming' ||
+        !response.body.trim() ||
+        fingerprint(response) !== responseFingerprint
+      )
+        return false;
+      const matchesChat = current.messages.some(
+        (source) =>
+          source.direction === 'outgoing' &&
+          source.sessionId === response.sessionId &&
+          source.chatId === response.chatId &&
+          response.timestamp >= source.timestamp &&
+          (response.reply_to_id === source.id ||
+            Boolean(source.waMessageId && response.reply_to_wa_id === source.waMessageId)),
+      );
+      if (!matchesChat) return false;
+      this.db
+        .prepare("UPDATE waiting_for SET state='received',response_id=?,updated=? WHERE id=?")
+        .run(response.id, now(), id);
+      return true;
+    });
+  }
+  suggestWaitResponse(
+    id: string,
+    revision: string,
+    responseId: string,
+    responseFingerprint: string,
+  ) {
+    return this.transaction(() => {
+      const current = this.waitEvidence(id);
+      if (
+        current.revision !== revision ||
+        current.wait.state !== 'waiting' ||
+        current.wait.manual_state ||
+        current.wait.needs_review
+      )
+        return false;
+      const response = this.messages().find((message) => message.id === responseId);
+      const matchesChat =
+        response &&
+        response.direction === 'incoming' &&
+        fingerprint(response) === responseFingerprint &&
+        current.messages.some(
+          (source) =>
+            source.direction === 'outgoing' &&
+            source.sessionId === response.sessionId &&
+            source.chatId === response.chatId &&
+            response.timestamp >= source.timestamp,
+        );
+      if (!matchesChat) return false;
+      this.db
+        .prepare('UPDATE waiting_for SET response_id=?,needs_review=1,updated=? WHERE id=?')
+        .run(responseId, now(), id);
+      return true;
+    });
+  }
+  setTaskKind(identifier: string, kind: ItemKind) {
+    const value = ItemKindSchema.parse(kind);
+    return this.transaction(() => {
+      const id = this.taskId(identifier);
+      this.assertNotMerged(id);
+      if (this.taskEvidence(id).task.gtd.recurrence && value !== 'task' && value !== 'action')
+        throw new TaskTriageError('Stop repeating this item before changing its category');
+      this.db
+        .prepare(
+          'INSERT INTO item_kinds(task_id,kind,manual,suggestion) VALUES(?,?,1,NULL) ON CONFLICT(task_id) DO UPDATE SET kind=excluded.kind,manual=1,suggestion=NULL',
+        )
+        .run(id, value);
+      return this.taskEvidence(id);
+    });
+  }
+  setGtd(identifier: string, input: GtdInput) {
+    const value = GtdSchema.parse(input);
+    return this.transaction(() => {
+      const id = this.taskId(identifier);
+      this.assertNotMerged(id);
+      const task = this.taskEvidence(id).task;
+      if (value.recurrence && task.kind !== 'task' && task.kind !== 'action')
+        throw new TaskTriageError('Only tasks and actions can repeat');
+      this.db
+        .prepare('INSERT OR REPLACE INTO item_gtd(task_id,payload) VALUES(?,?)')
+        .run(id, JSON.stringify(value));
+      return this.taskEvidence(id);
+    });
+  }
+  completeOccurrence(identifier: string, date: string) {
+    const occurrenceDate = z.iso.date().parse(date);
+    return this.transaction(() => {
+      const id = this.taskId(identifier);
+      this.assertNotMerged(id);
+      if (
+        this.db
+          .prepare('SELECT task_id FROM item_occurrences WHERE task_id=? AND date=?')
+          .get(id, occurrenceDate)
+      )
+        return false;
+      const task = this.taskEvidence(id).task;
+      const recurrence = task.gtd.recurrence;
+      if (task.done || !recurrence || recurrence.next_date !== occurrenceDate) return false;
+      this.db
+        .prepare('INSERT INTO item_occurrences(task_id,date,completed) VALUES(?,?,?)')
+        .run(id, occurrenceDate, now());
+      const next = {
+        ...task.gtd,
+        recurrence: { ...recurrence, next_date: nextOccurrence(recurrence) },
+      };
+      this.db
+        .prepare('INSERT OR REPLACE INTO item_gtd(task_id,payload) VALUES(?,?)')
+        .run(id, JSON.stringify(next));
+      return true;
+    });
+  }
+  isTaskKindManual(id: string) {
+    const row = this.db.prepare('SELECT manual FROM item_kinds WHERE task_id=?').get(id);
+    return Boolean(row && z.object({ manual: z.number() }).parse(row).manual);
+  }
+  hasGtd(id: string) {
+    return Boolean(this.db.prepare('SELECT task_id FROM item_gtd WHERE task_id=?').get(id));
+  }
+  autoSetTaskKind(
+    identifier: string,
+    revision: string,
+    kind: ItemKind,
+    suggestion: ItemKind | null = null,
+  ) {
+    const value = ItemKindSchema.parse(kind);
+    const proposed = ItemKindSchema.nullable().parse(suggestion);
+    return this.transaction(() => {
+      const current = this.taskEvidence(identifier);
+      if (current.revision !== revision) return false;
+      if (this.isTaskKindManual(current.task.id)) return false;
+      if (current.task.gtd.recurrence && value !== 'task' && value !== 'action') return false;
+      this.db
+        .prepare(
+          'INSERT INTO item_kinds(task_id,kind,manual,suggestion) VALUES(?,?,0,?) ON CONFLICT(task_id) DO UPDATE SET kind=excluded.kind,suggestion=excluded.suggestion WHERE item_kinds.manual=0',
+        )
+        .run(current.task.id, value, proposed);
+      return true;
+    });
+  }
   triageTask(input: z.infer<typeof TaskTriageUpdateSchema>) {
     const update = TaskTriageUpdateSchema.parse(input);
     return this.transaction(() => {
@@ -510,6 +853,11 @@ export class Store {
     this.assertNotMerged(id);
     if (!this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
       throw new Error('Task not found');
+    if (done) {
+      const row = this.db.prepare('SELECT payload FROM item_gtd WHERE task_id=?').get(id);
+      if (row && GtdSchema.parse(JSON.parse(PayloadRow.parse(row).payload)).recurrence)
+        throw new TaskTriageError('Complete the current occurrence or stop repeating first');
+    }
     const timestamp = now();
     this.db
       .prepare('INSERT OR REPLACE INTO completion VALUES(?,?,?)')
@@ -524,6 +872,37 @@ export class Store {
       throw new Error('Task not found');
     this.db.prepare('INSERT OR REPLACE INTO task_remarks VALUES(?,?,?)').run(id, remark, now());
   }
+  filterNotTask(id: string, expectedRevision: string) {
+    return this.transaction(() => {
+      const current = this.taskEvidence(id);
+      if (
+        current.revision !== expectedRevision ||
+        current.task.done ||
+        current.task.kind !== 'task' ||
+        current.task.kind_suggestion !== null ||
+        current.task.own_remark ||
+        current.task.merged_from.length
+      )
+        return false;
+      if (this.isTaskKindManual(current.task.id)) return false;
+      if (this.hasGtd(current.task.id)) return false;
+      // A manual completion or reopening remains authoritative on later reviews.
+      if (this.db.prepare('SELECT task_id FROM completion WHERE task_id=?').get(id)) return false;
+      this.tick(id, true);
+      this.db
+        .prepare(
+          'INSERT INTO completion_events(task_id,message_id,kind,reason,created) VALUES(?,?,?,?,?)',
+        )
+        .run(
+          id,
+          null,
+          'filtered',
+          'The conversation did not contain an actionable request.',
+          now(),
+        );
+      return true;
+    });
+  }
   pendingReplies(messages: Message[]) {
     const since = z.number().parse(this.metaValue('auto_completion_since'));
     return messages.filter((m) => {
@@ -537,7 +916,7 @@ export class Store {
       );
     });
   }
-  decide(decisions: Decision[], batch: Message[], started: number) {
+  decide(decisions: Decision[], batch: Message[], started: number, recheck = false) {
     if (
       decisions.length !== batch.length ||
       new Set(decisions.map((d) => d.message_id)).size !== batch.length
@@ -558,6 +937,32 @@ export class Store {
           (d.task_ids.length !== 1 || !d.evidence_quote || !m.body.includes(d.evidence_quote))
         )
           throw new Error('Completion needs one task and exact evidence from your reply');
+        if (
+          d.action === 'complete' &&
+          this.db
+            .prepare(
+              "SELECT task_id FROM item_kinds WHERE task_id=? AND kind IN ('reminder','event','reference')",
+            )
+            .get(d.task_ids[0] ?? '')
+        )
+          throw new Error('Reminders require an owner action to dismiss');
+        if (d.action === 'complete' && d.task_ids[0]) {
+          const gtd = this.db
+            .prepare('SELECT payload FROM item_gtd WHERE task_id=?')
+            .get(d.task_ids[0]);
+          if (gtd) {
+            const value = GtdSchema.parse(JSON.parse(PayloadRow.parse(gtd).payload));
+            if (value.recurrence || value.commitment === 'someday')
+              throw new Error('Recurring or someday items require an owner action to complete');
+          }
+        }
+        if (
+          d.action === 'complete' &&
+          this.db
+            .prepare('SELECT task_id FROM item_kinds WHERE task_id=? AND suggestion IS NOT NULL')
+            .get(d.task_ids[0] ?? '')
+        )
+          throw new Error('The item category needs review before automatic completion');
         if (d.action === 'ask' && !d.question?.trim())
           throw new Error('Ambiguous completion needs a question');
       }
@@ -567,7 +972,12 @@ export class Store {
         const row = this.db
           .prepare('SELECT digest FROM completion_seen WHERE message_id=?')
           .get(m.id);
-        if (row && z.object({ digest: z.string() }).parse(row).digest === fingerprint(m)) continue;
+        if (
+          row &&
+          z.object({ digest: z.string() }).parse(row).digest === fingerprint(m) &&
+          (!recheck || d.action !== 'complete')
+        )
+          continue;
         this.db
           .prepare(
             "UPDATE completion_questions SET status='superseded' WHERE message_id=? AND status='pending'",
@@ -645,30 +1055,80 @@ export class Store {
         ? MessageSchema.parse({ ...m, image_reading: JSON.parse(reading.payload) })
         : m;
     });
+    const waiting_for = this.db
+      .prepare('SELECT * FROM waiting_for ORDER BY created,id')
+      .all()
+      .map((row) => {
+        const id = IdRow.parse(row).id;
+        const source_ids = this.db
+          .prepare('SELECT message_id FROM waiting_sources WHERE wait_id=? ORDER BY message_id')
+          .all(id)
+          .map((source) => RefRow.parse(source).message_id);
+        const flags = z.object({ manual_state: z.number(), needs_review: z.number() }).parse(row);
+        return WaitSchema.parse({
+          ...row,
+          source_ids,
+          manual_state: Boolean(flags.manual_state),
+          needs_review: Boolean(flags.needs_review),
+        });
+      });
     const tasks = this.db
       .prepare(
-        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,t.id",
+        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark,coalesce(k.kind,'task') kind,k.suggestion kind_suggestion FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id LEFT JOIN item_kinds k ON k.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,t.id",
       )
       .all()
       .map((row) => {
         const id = IdRow.parse(row).id,
-          triage = this.db.prepare('SELECT payload FROM triage WHERE task_id=?').get(id);
+          triage = this.db.prepare('SELECT payload FROM triage WHERE task_id=?').get(id),
+          lastResolution = this.db
+            .prepare(
+              `SELECT e.kind,e.reason FROM completion_events e JOIN completion c ON c.task_id=e.task_id WHERE e.task_id=? AND c.done=1 AND e.created>=c.updated ORDER BY e.id DESC LIMIT 1`,
+            )
+            .get(id),
+          resolution = lastResolution
+            ? z.object({ kind: z.string(), reason: z.string().nullable() }).parse(lastResolution)
+            : null;
         const detail: unknown = triage ? JSON.parse(PayloadRow.parse(triage).payload) : {};
+        const gtd = this.db.prepare('SELECT payload FROM item_gtd WHERE task_id=?').get(id);
+        const occurrences = this.db
+          .prepare('SELECT date,completed FROM item_occurrences WHERE task_id=? ORDER BY date')
+          .all(id);
         return TaskSchema.parse({
           ...row,
           ...z.record(z.string(), z.unknown()).parse(detail),
+          ...(gtd ? { gtd: JSON.parse(PayloadRow.parse(gtd).payload) } : {}),
+          occurrences,
+          resolution:
+            resolution && ['filtered', 'auto', 'confirmed'].includes(resolution.kind)
+              ? {
+                  kind: resolution.kind === 'filtered' ? 'filtered' : 'reply',
+                  reason: resolution.reason ?? '',
+                }
+              : null,
           merged_from: this.db
             .prepare(
               "SELECT t.id,'TODO-' || printf('%03d',ref.number) reference,t.title,t.note,m.source_ids,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark FROM task_merges m JOIN tasks t ON t.id=m.source_id JOIN task_references ref ON ref.task_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id WHERE m.target_id=? ORDER BY m.created,t.id",
             )
             .all(id)
-            .map((source) => ({
-              ...source,
-              done: Boolean(source.done),
-              source_ids: z
-                .array(z.string())
-                .parse(JSON.parse(z.string().parse(source.source_ids))),
-            })),
+            .map((source) => {
+              const sourceId = IdRow.parse(source).id;
+              const metadata = this.db
+                .prepare('SELECT payload FROM item_gtd WHERE task_id=?')
+                .get(sourceId);
+              return {
+                ...source,
+                done: Boolean(source.done),
+                source_ids: z
+                  .array(z.string())
+                  .parse(JSON.parse(z.string().parse(source.source_ids))),
+                ...(metadata ? { gtd: JSON.parse(PayloadRow.parse(metadata).payload) } : {}),
+                occurrences: this.db
+                  .prepare(
+                    'SELECT date,completed FROM item_occurrences WHERE task_id=? ORDER BY date',
+                  )
+                  .all(sourceId),
+              };
+            }),
           done: Boolean(row.done),
           source_ids: this.db
             .prepare('SELECT message_id FROM sources WHERE task_id=?')
@@ -692,6 +1152,7 @@ export class Store {
     return {
       demo: this.metaValue('demo') === true,
       tasks,
+      waiting_for,
       messages,
       questions,
       status: this.status(),
