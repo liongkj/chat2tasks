@@ -79,3 +79,36 @@
   gap: 10px;
   margin-top: 24px;
 }
+
+.remote-connecting {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+.remote-connecting-card {
+  width: min(100%, 420px);
+  text-align: center;
+}
+.remote-connecting-card > svg {
+  color: var(--muted);
+}
+.remote-connecting-card h1 {
+  margin: 18px 0 8px;
+  font-size: 24px;
+}
+.remote-connecting-card p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.remote-connecting-card .remote-connecting-error {
+  color: var(--danger);
+  margin-top: 12px;
+}
+.remote-connecting-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}

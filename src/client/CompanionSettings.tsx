@@ -89,8 +89,8 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
       </p>
       <div className="connection-actions">
         <button className="button secondary" disabled={busy} onClick={() => void createCode()}>
-          {busy ? <LoaderCircle className="spin" size={14} /> : <Link2 size={14} />} Create pairing
-          code
+          {busy ? <LoaderCircle className="spin" size={14} /> : <Link2 size={14} />}{' '}
+          {busy ? 'Creating pairing code…' : 'Create pairing code'}
         </button>
         <button className="text-button" onClick={() => void refresh()}>
           Refresh paired browsers

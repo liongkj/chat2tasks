@@ -56,6 +56,7 @@ export function ConversationWorkspace({
   const thread = useRef<HTMLDivElement>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
   const previousChat = useRef<string | null>(null);
+  const scrollRequest = useRef<{ key: string; completed: boolean } | null>(null);
   const back = useRef<HTMLButtonElement>(null);
   const chatMessages = chat ? messagesForChat(chat, messages) : [];
   const relatedTasks = tasksForMessages(tasks, chatMessages);
@@ -79,18 +80,37 @@ export function ConversationWorkspace({
     previousChat.current = chat?.id ?? null;
   }, [chat?.id]);
   useEffect(() => {
-    if (selectedMessageId) {
-      thread.current
-        ?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(selectedMessageId)}"]`)
-        ?.scrollIntoView({ block: 'center' });
+    const target = selectedMessageId
+      ? `message:${selectedMessageId}`
+      : selectedTask
+        ? `task:${selectedTask.id}`
+        : null;
+    if (!chat || !target) {
+      scrollRequest.current = null;
       return;
     }
-    if (!selectedTask) return;
-    const linked = [
-      ...(thread.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? []),
-    ].find((element) => selectedTask.source_ids.includes(element.dataset.messageId ?? ''));
-    linked?.scrollIntoView({ block: 'center' });
-  }, [chat?.id, selectedTask?.id, sourceOnly, selectedMessageId, messages.length]);
+    const key = JSON.stringify([chat.id, sourceOnly, target]);
+    if (scrollRequest.current?.key !== key) scrollRequest.current = { key, completed: false };
+    if (scrollRequest.current.completed) return;
+    const linked = selectedMessageId
+      ? thread.current?.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(selectedMessageId)}"]`,
+        )
+      : [...(thread.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(
+          (element) => selectedTask?.source_ids.includes(element.dataset.messageId ?? ''),
+        );
+    if (linked) {
+      linked.scrollIntoView({ block: 'center' });
+      scrollRequest.current.completed = true;
+    }
+  }, [
+    chat?.id,
+    selectedTask?.id,
+    selectedTask?.source_ids,
+    sourceOnly,
+    selectedMessageId,
+    messages,
+  ]);
   return (
     <div className={`conversation-layout ${chat ? 'conversation-open' : ''}`}>
       <section className="conversation-rail" aria-label="Followed conversations">

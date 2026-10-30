@@ -5,6 +5,7 @@ fn main() {
             "import_workspace",
             "open_external",
             "open_workspace_picker",
+            "retry_remote_workspace",
             "get_workspace_target",
             "set_workspace_target",
             "close_workspace_picker",

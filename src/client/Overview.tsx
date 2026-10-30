@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ArrowRight, Circle, Clock3, LoaderCircle } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Circle, CircleAlert, Clock3, LoaderCircle } from 'lucide-react';
 import type { ItemKind, Snapshot, Task, Wait } from '../shared/schema.js';
 import { isUpcoming } from '../shared/tasks.js';
 
@@ -49,6 +49,30 @@ export function Overview({
   const upcoming = open.filter((task) => isUpcoming(task));
   const emptyWorkspace = !tasks.length && !waits.length && !pendingQuestions && !messageCount;
   const working = status.syncing || status.debouncing || requestingSync;
+  const statusTitle = !online
+    ? 'Reconnecting to your workspace…'
+    : !loaded
+      ? 'Opening your workspace…'
+      : status.error
+        ? 'Workspace needs attention'
+        : requestingSync
+          ? 'Starting analysis…'
+          : status.syncing
+            ? status.phase || 'Checking your conversations…'
+            : status.debouncing
+              ? 'Waiting for a quiet moment'
+              : 'Workspace ready';
+  const statusHint = !online
+    ? 'Showing saved data while the connection is restored.'
+    : !loaded
+      ? 'Your tasks and conversations will appear here.'
+      : status.error
+        ? 'Open activity for more details.'
+        : status.debouncing && !status.syncing
+          ? 'New messages will be checked shortly.'
+          : working
+            ? 'You can keep using Chat2Tasks while this runs.'
+            : 'Updates appear here as conversations are checked.';
   const reviewCount =
     tasks.filter((task) => !task.done && task.kind_suggestion).length +
     waits.filter((wait) => wait.state === 'waiting' && wait.needs_review).length +
@@ -69,36 +93,24 @@ export function Overview({
           <p>See what needs your attention across your conversations.</p>
         </div>
       </header>
-      {!loaded ? (
-        <div className="overview-status" role="status">
-          <LoaderCircle className="spin" size={20} />
-          <div>
-            <strong>Opening your workspace…</strong>
-            <p>Your tasks and conversations will appear here.</p>
-          </div>
+      <div className="overview-status">
+        {!online || status.error ? (
+          <CircleAlert size={18} />
+        ) : !loaded || working ? (
+          <LoaderCircle className="spin" size={18} />
+        ) : (
+          <CheckCircle2 size={18} />
+        )}
+        <div role="status" aria-live="polite">
+          <strong title={statusTitle}>{statusTitle}</strong>
+          <p title={statusHint}>{statusHint}</p>
         </div>
-      ) : online && working ? (
-        <div className="overview-status" role="status">
-          <LoaderCircle className="spin" size={20} />
-          <div>
-            <strong>
-              {requestingSync
-                ? 'Starting analysis…'
-                : status.syncing
-                  ? status.phase
-                  : 'Waiting for a quiet moment'}
-            </strong>
-            <p>
-              {status.debouncing && !status.syncing
-                ? 'New messages will be checked shortly.'
-                : 'This can take a moment. You can keep using Chat2Tasks.'}
-            </p>
-          </div>
+        {loaded && online && (working || status.error) && (
           <button className="text-button" onClick={onActivity}>
             View activity
           </button>
-        </div>
-      ) : null}
+        )}
+      </div>
       {loaded && online && !status.error && !working && emptyWorkspace && (
         <section className="overview-welcome">
           <h2>

@@ -493,23 +493,25 @@ export function TaskDetail({
         >
           {ticking && <LoaderCircle size={15} className="spin" />}
           {layout === 'desk' && !ticking && <Check size={16} />}
-          {task.done
-            ? task.kind === 'reminder'
-              ? 'Restore reminder'
-              : task.kind === 'question'
-                ? 'Reopen question'
-                : task.kind === 'event' || task.kind === 'reference'
-                  ? 'Restore item'
-                  : 'Reopen task'
-            : task.kind === 'reminder'
-              ? 'Dismiss reminder'
-              : task.kind === 'question'
-                ? 'Mark answered'
-                : task.kind === 'event' || task.kind === 'reference'
-                  ? 'Archive item'
-                  : task.gtd.recurrence
-                    ? 'Complete occurrence'
-                    : 'Mark complete'}
+          {ticking
+            ? 'Saving…'
+            : task.done
+              ? task.kind === 'reminder'
+                ? 'Restore reminder'
+                : task.kind === 'question'
+                  ? 'Reopen question'
+                  : task.kind === 'event' || task.kind === 'reference'
+                    ? 'Restore item'
+                    : 'Reopen task'
+              : task.kind === 'reminder'
+                ? 'Dismiss reminder'
+                : task.kind === 'question'
+                  ? 'Mark answered'
+                  : task.kind === 'event' || task.kind === 'reference'
+                    ? 'Archive item'
+                    : task.gtd.recurrence
+                      ? 'Complete occurrence'
+                      : 'Mark complete'}
         </button>
         {layout === 'context' && (
           <div className="detail-secondary">
