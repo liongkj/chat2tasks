@@ -199,8 +199,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
           ))}
         </nav>
         <div className="onboarding-sidebar-note">
-          <ShieldCheck size={17} /> Your workspace stays on this Mac. Selected evidence is sent to
-          your chosen AI provider.
+          <ShieldCheck size={17} /> Your workspace stays on this computer. Selected evidence is sent
+          to your chosen AI provider.
         </div>
       </aside>
       <div className="onboarding-main">
@@ -224,8 +224,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
               <div className="onboarding-explainer">
                 <strong>Start fresh or bring your work along.</strong>
                 <p>
-                  We’ll connect WhatsApp, sign in to Codex, and learn what matters to you. Your Mac
-                  needs to be awake while it processes messages.
+                  We’ll connect WhatsApp, sign in to Codex, and learn what matters to you. Your
+                  computer needs to be awake while it processes messages.
                 </p>
               </div>
               {status?.imported ? (
@@ -416,7 +416,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
               <p className="onboarding-kicker">CONNECT YOUR AI</p>
               <h1>Sign in to Codex.</h1>
               <p className="onboarding-lede">
-                Chat2Tasks uses the Codex CLI on this Mac. Sign in with your ChatGPT account to
+                Chat2Tasks uses the Codex CLI on this computer. Sign in with your ChatGPT account to
                 connect it.
               </p>
               {status?.codex.signedIn ? (

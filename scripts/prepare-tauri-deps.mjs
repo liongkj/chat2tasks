@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { access, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,6 +42,17 @@ async function exists(path) {
     () => false,
   );
 }
+async function installEnvironment() {
+  if (process.platform !== 'win32') return { PUPPETEER_SKIP_DOWNLOAD: 'true' };
+  const key = Object.keys(process.env).find((name) => name.toLowerCase() === 'path') ?? 'PATH';
+  const paths = (process.env[key] ?? '').split(delimiter);
+  const hasPatch = await Promise.all(paths.map((path) => exists(join(path, 'patch.exe'))));
+  const cleanPath = paths.filter((_, index) => !hasPatch[index]).join(delimiter);
+  const env = { [key]: cleanPath, PUPPETEER_SKIP_DOWNLOAD: 'true' };
+  // OpenWA falls back to git apply when patch is absent. Some Windows patch builds crash mid-apply.
+  await run('git', ['--version'], { env, capture: true });
+  return env;
+}
 
 if (!['darwin', 'win32'].includes(process.platform))
   throw new Error('Prepare the preview on the target Mac or Windows architecture.');
@@ -65,11 +76,14 @@ const localListen = "await app.listen(port, '127.0.0.1');";
 if (original.includes(oldListen)) await writeFile(entry, original.replace(oldListen, localListen));
 else if (!original.includes(localListen))
   throw new Error('OpenWA listener changed; review the local-only patch.');
-if (!(await exists(join(source, 'node_modules'))))
+const installMarker = join(source, 'node_modules', '.chat2tasks-tauri-install-complete');
+if (!(await exists(installMarker))) {
   await run('npm', ['ci', '--no-audit', '--no-fund'], {
     cwd: source,
-    env: { PUPPETEER_SKIP_DOWNLOAD: 'true' },
+    env: await installEnvironment(),
   });
+  await writeFile(installMarker, expectedCommit);
+}
 await run('npm', ['run', 'build'], { cwd: source });
 await run('npm', ['exec', '--', 'puppeteer', 'browsers', 'install', 'chrome', '--path', browser], {
   cwd: source,
