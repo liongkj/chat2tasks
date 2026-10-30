@@ -203,6 +203,14 @@
   max-height: 280px;
   overflow: auto;
 }
+.onboarding-search {
+  margin-bottom: 16px;
+}
+.onboarding-wait {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
 .onboarding-chat-list label {
   display: flex;
   justify-content: space-between;
@@ -263,6 +271,9 @@
   padding: 18px 46px;
 }
 .onboarding-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 50px;
   color: #666;
 }

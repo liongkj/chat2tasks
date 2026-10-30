@@ -29,6 +29,19 @@
   background: var(--line-strong);
   color: var(--text);
 }
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
 body {
   overflow: hidden;
 }
@@ -2131,6 +2144,78 @@ select:focus-visible {
 .overview-heading .eyebrow {
   font-size: 12px;
   margin: 0 0 8px;
+}
+.overview-status,
+.overview-welcome {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 28px;
+  background: var(--sidebar);
+}
+.overview-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.overview-status > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.overview-status > div {
+  flex: 1;
+}
+.overview-status p,
+.overview-welcome p {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.overview-welcome h2 {
+  font-size: 18px;
+}
+.overview-welcome > .button {
+  margin-top: 16px;
+}
+.overview-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+.workspace-import-option,
+.workspace-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.workspace-import-option {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+.workspace-import-option p,
+.workspace-import-selected {
+  color: var(--muted);
+  margin-top: 6px;
+}
+.workspace-import-dialog .workspace-import-selected {
+  margin: 12px 0;
+}
+.workspace-import-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-import-actions {
+  justify-content: flex-end;
+  margin-top: 24px;
 }
 .review-banner {
   display: flex;

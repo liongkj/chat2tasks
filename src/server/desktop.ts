@@ -15,6 +15,22 @@ const Session = z.object({
 });
 const Chat = z.object({ id: z.string(), name: z.string().nullish() });
 
+export async function waitForDesktopGateway(url: string, signal: AbortSignal) {
+  const deadline = Date.now() + 30_000;
+  while (!signal.aborted && Date.now() < deadline) {
+    try {
+      const response = await fetch(url + '/api/health', {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
+      });
+      if (response.ok) return;
+    } catch {
+      if (signal.aborted) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!signal.aborted) throw new Error('WhatsApp could not start. Quit Chat2Tasks and try again.');
+}
+
 export async function configureDesktopGateway(store: Store) {
   const url = process.env.DESKTOP_OPENWA_URL;
   const keyFile = process.env.DESKTOP_OPENWA_KEY_FILE;

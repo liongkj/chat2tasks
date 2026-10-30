@@ -20,6 +20,25 @@
         max-width: 360px;
         text-align: center;
       }
+      .spinner {
+        width: 26px;
+        height: 26px;
+        margin: 0 auto 20px;
+        border: 3px solid #e2e9e3;
+        border-top-color: #286b43;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation: none;
+        }
+      }
       strong {
         display: block;
         color: #222;
@@ -33,13 +52,22 @@
   </head>
   <body>
     <main>
+      <div class="spinner" aria-hidden="true"></div>
       <strong>Chat2Tasks</strong>
-      <p id="status">Starting your workspace…</p>
+      <p id="status" role="status" aria-live="polite">Starting your workspace…</p>
+      <p id="detail">This can take a few seconds.</p>
     </main>
     <script>
-      if (new URLSearchParams(location.search).has('error'))
-        document.getElementById('status').textContent =
-          'Chat2Tasks could not start its local services. Quit the app and try again.';
+      if (new URLSearchParams(location.search).has('error')) {
+        document.getElementById('status').textContent = 'Chat2Tasks could not start.';
+        document.getElementById('detail').textContent =
+          'Quit Chat2Tasks from the menu bar, then open it again.';
+        document.querySelector('.spinner').hidden = true;
+      } else {
+        window.chat2tasksDesktop?.onStartupProgress((message) => {
+          document.getElementById('status').textContent = message;
+        });
+      }
     </script>
   </body>
 </html>

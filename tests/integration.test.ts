@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,91 @@ import { OpenWA } from '../src/server/openwa.js';
 import { Sync } from '../src/server/sync.js';
 import { connectionRequest } from '../src/server/ai.js';
 import { SettingsSchema, MessageSchema } from '../src/shared/schema.js';
+
+test('a desktop workspace opens while WhatsApp starts and reports when it is ready', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-desktop-start-'));
+  const keyFile = join(dir, 'gateway-key');
+  writeFileSync(keyFile, 'fixture-key');
+  const store = new Store(join(dir, 'workspace'));
+  store.setMeta('desktop_setup_complete', true);
+  store.close();
+  let gatewayReady = false;
+  const gateway = createServer((_request, response) => {
+    response.writeHead(gatewayReady ? 200 : 503, { 'Content-Type': 'application/json' });
+    response.end('{}');
+  });
+  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve));
+  const address = gateway.address();
+  assert.ok(address && typeof address !== 'string');
+  const reservation = createServer();
+  await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const reserved = reservation.address();
+  assert.ok(reserved && typeof reserved !== 'string');
+  const port = reserved.port;
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      CHAT2TASKS_DESKTOP: 'true',
+      SYNC_DISABLED: 'true',
+      PORT: String(port),
+      PUBLIC_ORIGIN: base,
+      BIND_HOST: '127.0.0.1',
+      APP_PASSWORD: '',
+      DATA_DIR: join(dir, 'workspace'),
+      DESKTOP_OPENWA_URL: `http://127.0.0.1:${address.port}`,
+      DESKTOP_OPENWA_KEY_FILE: keyFile,
+    },
+  });
+  let output = '';
+  child.stdout.on('data', (data: Buffer) => (output += data.toString().slice(0, 8192)));
+  child.stderr.on('data', (data: Buffer) => (output += data.toString().slice(0, 8192)));
+  async function state() {
+    const response = await fetch(base + '/api/state');
+    assert.equal(response.status, 200);
+    return z
+      .object({ status: z.object({ syncing: z.boolean(), phase: z.string() }) })
+      .parse(await response.json()).status;
+  }
+  try {
+    let first: Awaited<ReturnType<typeof state>> | undefined;
+    for (let attempt = 0; attempt < 300; attempt++) {
+      try {
+        first = await state();
+        break;
+      } catch {
+        if (child.exitCode !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    assert.ok(first, `the workspace should open before the gateway is ready: ${output}`);
+    assert.equal(first.syncing, true);
+    assert.match(first.phase, /Starting WhatsApp/);
+    gatewayReady = true;
+    let ready = first;
+    for (let attempt = 0; attempt < 100 && ready.syncing; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      ready = await state();
+    }
+    assert.equal(ready.syncing, false);
+  } finally {
+    gatewayReady = true;
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 5000);
+    timeout.unref();
+    await exited;
+    clearTimeout(timeout);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    gateway.closeAllConnections();
+    await new Promise<void>((resolve) => gateway.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('active chats alone reach OpenWA and the selected model; paused chats do not', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-flow-')),

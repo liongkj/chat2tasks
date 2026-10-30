@@ -245,7 +245,6 @@ export class Sync {
     this.store.status({
       last_poll: now(),
       pending: pending.length + replies.length,
-      syncing: false,
     });
     if (
       !pending.length &&
@@ -272,6 +271,7 @@ export class Sync {
         ? this.store.settings().profiles.find((p) => p.id === trigger.decisionProfileId)
         : undefined;
       if (gateProfile) {
+        this.store.status({ phase: 'Checking which messages need attention' });
         const existing = this.store
           .snapshot()
           .tasks.filter((t) => t.source_ids.some((id) => messages.some((m) => m.id === id)));

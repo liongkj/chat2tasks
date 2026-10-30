@@ -200,6 +200,11 @@ ipcMain.handle('workspace:import', async (_event, passphrase) => {
     };
   }
 });
+ipcMain.on('navigation:ready', (event, ready) => {
+  if (event.sender !== window?.webContents) return;
+  const settings = Menu.getApplicationMenu()?.getMenuItemById('workspace-settings');
+  if (settings) settings.enabled = ready === true;
+});
 
 app.whenReady().then(async () => {
   window = new BrowserWindow({
@@ -216,6 +221,40 @@ app.whenReady().then(async () => {
       sandbox: true,
     },
   });
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          {
+            id: 'workspace-settings',
+            label: 'Settings…',
+            accelerator: 'CommandOrControl+,',
+            enabled: false,
+            click: () => {
+              window.show();
+              window.focus();
+              window.webContents.send('navigation:settings');
+            },
+          },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
+      { role: 'fileMenu' },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' },
+    ]),
+  );
   await window.loadFile(join(__dirname, 'loading.html'));
   window.on('close', (event) => {
     if (!quitting && tray) {
@@ -248,7 +287,20 @@ app.whenReady().then(async () => {
     do {
       serverPort = await freePort();
     } while (serverPort === gatewayPort);
-    await startGateway();
+    window.webContents.send('startup:progress', 'Starting your WhatsApp connection…');
+    const existingKey = await access(join(gatewayData, 'data', '.api-key')).then(
+      () => true,
+      () => false,
+    );
+    const gatewayReady = startGateway().then(
+      () => null,
+      (error) => error,
+    );
+    if (!existingKey) {
+      const error = await gatewayReady;
+      if (error) throw error;
+    }
+    window.webContents.send('startup:progress', 'Opening your workspace…');
     await startServer();
     const origin = `http://127.0.0.1:${serverPort}`;
     window.webContents.setWindowOpenHandler(({ url }) => {
@@ -259,6 +311,9 @@ app.whenReady().then(async () => {
       if (!url.startsWith(origin + '/')) event.preventDefault();
     });
     await window.loadURL(origin);
+    // Keep the saved workspace accessible if WhatsApp fails to start. The
+    // workspace reports the connection error when its readiness check ends.
+    await gatewayReady;
   } catch {
     await window.loadFile(join(__dirname, 'loading.html'), { query: { error: '1' } });
   }
