@@ -45,7 +45,7 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'models', label: 'AI models' },
   { id: 'automation', label: 'Automation' },
   { id: 'attention', label: 'Attention' },
-  { id: 'workspace', label: 'Move workspace' },
+  { id: 'workspace', label: 'Workspaces' },
   { id: 'browser', label: 'Browser' },
 ];
 

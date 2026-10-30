@@ -3,5 +3,11 @@
   "identifier": "main",
   "description": "Native access for the bundled Chat2Tasks interface.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-choose-import",
+    "allow-import-workspace",
+    "allow-open-external",
+    "allow-open-workspace-picker"
+  ]
 }

@@ -1,0 +1,81 @@
+.workspace-picker {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 34px;
+  color: var(--text);
+  font-size: 14px;
+}
+.workspace-picker h1 {
+  margin: 6px 0 10px;
+  font-size: 26px;
+  letter-spacing: -0.5px;
+}
+.workspace-picker > p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.workspace-picker .workspace-picker-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.workspace-picker-options {
+  display: grid;
+  gap: 10px;
+  margin: 24px 0;
+}
+.workspace-picker-options label {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.workspace-picker-options label.selected {
+  border-color: #2d806b;
+  background: #f2faf6;
+}
+.workspace-picker-options input {
+  margin-top: 3px;
+  accent-color: #26775f;
+}
+.workspace-picker-options span {
+  display: grid;
+  gap: 4px;
+}
+.workspace-picker-options small,
+.workspace-picker-address small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.workspace-picker-address {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.workspace-picker-address label {
+  font-weight: 600;
+}
+.workspace-picker-address input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+}
+.workspace-picker-note {
+  padding: 12px;
+  background: var(--hover);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.workspace-picker-error {
+  color: #a12424 !important;
+}
+.workspace-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}

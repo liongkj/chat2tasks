@@ -31,6 +31,12 @@ import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
 import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
 import { RemoteEvents } from './remote-events.js';
+import {
+  desktopSessionCookie,
+  desktopSignInCsp,
+  desktopSignInPage,
+  validDesktopSession,
+} from './desktop-session.js';
 
 const port = z.coerce
   .number()
@@ -62,6 +68,30 @@ const server = Fastify({
   bodyLimit: 2_000_000,
   disableRequestLogging: true,
 });
+const additionalOrigins = (process.env.ADDITIONAL_ORIGINS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map((value) => {
+    const url = new URL(value);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    )
+      throw new Error(
+        'ADDITIONAL_ORIGINS must contain exact HTTP(S) origins without paths or credentials.',
+      );
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+      if (url.protocol !== 'https:') throw new Error('Remote workspace addresses must use HTTPS.');
+      if (!process.env.APP_PASSWORD)
+        throw new Error('Set APP_PASSWORD before adding a remote workspace address.');
+    }
+    return url.origin;
+  });
 const origins = new Set([
   `http://127.0.0.1:${port}`,
   `http://localhost:${port}`,
@@ -69,6 +99,7 @@ const origins = new Set([
     ? ['http://127.0.0.1:5173', 'http://localhost:5173']
     : []),
   ...(process.env.PUBLIC_ORIGIN ? [new URL(process.env.PUBLIC_ORIGIN).origin] : []),
+  ...additionalOrigins,
 ]);
 const allowedHosts = new Set([...origins].map((origin) => new URL(origin).host));
 const tauriOrigin = process.env.CHAT2TASKS_TAURI_ORIGIN;
@@ -108,6 +139,12 @@ server.addHook('onRequest', async (request, reply) => {
       .code(403)
       .send({ error: 'Host is not allowed. Set PUBLIC_ORIGIN for your reverse proxy.' });
   if (request.url === '/api/health') return;
+  if (request.url === '/desktop-sign-in' && ['GET', 'POST'].includes(request.method)) {
+    // WebKit sends a null Origin for form posts under no-referrer, so retain the
+    // origin only for this same-origin sign-in page.
+    reply.header('Referrer-Policy', 'same-origin');
+    return;
+  }
   if (request.url.startsWith('/api/companion/')) return;
   if (request.routeOptions.url === '/mcp') return;
   if (tauriOrigin && request.headers.origin === tauriOrigin) {
@@ -130,7 +167,10 @@ server.addHook('onRequest', async (request, reply) => {
   if (password) {
     const expected = Buffer.from(`Basic ${Buffer.from(`admin:${password}`).toString('base64')}`),
       actual = Buffer.from(request.headers.authorization ?? '');
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual))
+    if (
+      (expected.length !== actual.length || !timingSafeEqual(expected, actual)) &&
+      !validDesktopSession(request.headers.cookie ?? '', store.key, password)
+    )
       return reply
         .header('WWW-Authenticate', 'Basic realm="Chat2Tasks", charset="UTF-8"')
         .code(401)
@@ -166,6 +206,45 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.addContentTypeParser(
+  'application/x-www-form-urlencoded',
+  { parseAs: 'string', bodyLimit: 4096 },
+  (_request, body, done) => {
+    done(null, Object.fromEntries(new URLSearchParams(String(body))));
+  },
+);
+server.get('/desktop-sign-in', (request, reply) => {
+  if (
+    !process.env.APP_PASSWORD ||
+    validDesktopSession(request.headers.cookie ?? '', store.key, process.env.APP_PASSWORD)
+  )
+    return reply.code(303).header('Location', '/').send();
+  return reply
+    .header('Content-Security-Policy', desktopSignInCsp)
+    .type('text/html')
+    .send(desktopSignInPage());
+});
+server.post('/desktop-sign-in', (request, reply) => {
+  const origin = request.headers.origin;
+  if (!origin || !origins.has(origin) || new URL(origin).host !== request.headers.host)
+    return reply.code(403).send({ error: 'Invalid request origin' });
+  const password = process.env.APP_PASSWORD;
+  if (!password) return reply.code(303).header('Location', '/').send();
+  const input = z.object({ password: z.string().max(1024) }).safeParse(request.body);
+  const expected = Buffer.from(password);
+  const actual = Buffer.from(input.success ? input.data.password : '');
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual))
+    return reply
+      .code(401)
+      .header('Content-Security-Policy', desktopSignInCsp)
+      .type('text/html')
+      .send(desktopSignInPage(true));
+  return reply
+    .code(303)
+    .header('Location', '/')
+    .header('Set-Cookie', desktopSessionCookie(store.key, password, origin.startsWith('https://')))
+    .send();
+});
 await registerCompanion(
   server,
   new Companion(store, sync, syncEnabled),

@@ -35,6 +35,7 @@ import { errorMessage } from './App.js';
 import { CompanionSettings } from './CompanionSettings.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
 import type { SettingsSection } from './taskLocation.js';
+import { openWorkspacePicker } from './tauri.js';
 
 type Props = {
   section: SettingsSection;
@@ -59,8 +60,8 @@ const sectionCopy: Record<SettingsSection, { title: string; description: string 
     description: 'Choose what appears in your workspace.',
   },
   workspace: {
-    title: 'Move workspace',
-    description: 'Move your tasks and settings or keep an encrypted backup.',
+    title: 'Workspaces',
+    description: 'Choose where work happens or keep an encrypted backup.',
   },
   browser: {
     title: 'Browser companion',
@@ -324,6 +325,12 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                   Your tasks stay here. Each server keeps its own WhatsApp session and followed
                   chats; switching does not move or sign out a session.
                 </p>
+                {draft.desktopGateway.mode === 'remote' && (
+                  <p className="gateway-note">
+                    This workspace still pauses when this computer sleeps. To keep processing,
+                    switch to an always-on workspace under Workspaces.
+                  </p>
+                )}
                 {gatewayPending && (
                   <p className="gateway-restart" role="status">
                     {config.desktopGatewayRestartRequired && !hasChanges
@@ -773,7 +780,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
             <ShieldCheck size={18} />
             <p>
               {window.chat2tasksDesktop || window.chat2tasksTauri
-                ? 'API keys are encrypted on this computer and are not shown after saving. Conversations go only to your selected model connection. Use Move workspace to create an encrypted backup.'
+                ? 'API keys are encrypted on this computer and are not shown after saving. Conversations go only to your selected model connection. Use Workspaces to create an encrypted backup.'
                 : 'API keys are encrypted on your server and never sent back to this browser. Conversations go only to your selected model connection. Keep the data volume and its vault key backed up together.'}
             </p>
           </div>
@@ -795,6 +802,30 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
         <AttentionSettings notify={notify} />
       </div>
       <div hidden={section !== 'workspace'}>
+        {window.chat2tasksTauri && (
+          <section className="settings-card">
+            <div className="card-title">
+              <span className="card-icon green">
+                <Server size={20} />
+              </span>
+              <div>
+                <h2>Where work happens</h2>
+                <p>
+                  This workspace runs on this computer. Connect to an always-on server to keep
+                  processing while it sleeps.
+                </p>
+              </div>
+            </div>
+            <button
+              className="button secondary"
+              onClick={() =>
+                void openWorkspacePicker().catch((error) => notify(errorMessage(error)))
+              }
+            >
+              Switch workspace
+            </button>
+          </section>
+        )}
         <WorkspaceTransfer notify={notify} onImport={onImportWorkspace} />
       </div>
       {savesSettings && (

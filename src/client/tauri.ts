@@ -1,6 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+export function openWorkspacePicker() {
+  return invoke<void>('open_workspace_picker');
+}
+
 export function installTauriBridge() {
   if (!window.chat2tasksTauri || window.chat2tasksTauri.demo) return;
   window.chat2tasksDesktop = {

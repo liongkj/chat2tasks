@@ -18,6 +18,7 @@ import {
 } from '../shared/schema.js';
 import { api, OkSchema } from './api.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
+import { openWorkspacePicker } from './tauri.js';
 import './onboarding.css';
 
 const DesktopStatus = z.object({
@@ -228,6 +229,21 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   computer needs to be awake while it processes messages.
                 </p>
               </div>
+              {window.chat2tasksTauri && (
+                <div className="onboarding-import">
+                  <h2>Already have an always-on workspace?</h2>
+                  <p>Connect to it here. It can keep working while this computer sleeps.</p>
+                  <button
+                    className="button secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void openWorkspacePicker().catch((reason) => setError(message(reason)))
+                    }
+                  >
+                    Connect to a server
+                  </button>
+                </div>
+              )}
               {status?.imported ? (
                 <div className="onboarding-connected" role="status">
                   <CheckCircle2 size={20} /> Workspace imported. Continue to reconnect your
@@ -237,8 +253,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                 <div className="onboarding-import">
                   <h2>Already have a workspace?</h2>
                   <p>
-                    In your existing workspace, open Settings → Move workspace and download an
-                    encrypted transfer.
+                    In your existing workspace, open Settings → Workspaces and download an encrypted
+                    transfer.
                   </p>
                   <button
                     className="button secondary"

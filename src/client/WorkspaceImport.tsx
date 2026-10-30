@@ -55,7 +55,7 @@ export function WorkspaceImport({
           <Dialog.Popup className="modal workspace-import-dialog">
             <Dialog.Title>Import your workspace</Dialog.Title>
             <Dialog.Description>
-              In your other workspace, open Settings → Move workspace and download a transfer file.
+              In your other workspace, open Settings → Workspaces and download a transfer file.
             </Dialog.Description>
             <p>
               Your current workspace on this computer will be saved as a backup. After import,
