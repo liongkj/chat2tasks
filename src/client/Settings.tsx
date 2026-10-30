@@ -40,9 +40,10 @@ type Props = {
   config: PublicSettings;
   onSave: (config: PublicSettings) => void;
   notify: (text: string) => void;
+  onImportWorkspace?: () => void;
 };
 type DiscoveredEntry = { id: string; name: string };
-export function SettingsPanel({ tab, config, onSave, notify }: Props) {
+export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }: Props) {
   const [draft, setDraft] = useState(config.settings),
     [secrets, setSecrets] = useState<Record<string, string>>({}),
     [remove, setRemove] = useState<string[]>([]);
@@ -187,7 +188,11 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
               </span>
               <div>
                 <h2>OpenWA connection</h2>
-                <p>Your WhatsApp session, connected to your own server.</p>
+                <p>
+                  {window.chat2tasksDesktop
+                    ? 'Your WhatsApp connection runs on this Mac.'
+                    : 'Your WhatsApp session, connected to your own server.'}
+                </p>
               </div>
               <span className="label">No chat replies</span>
             </div>
@@ -200,13 +205,18 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
                   value={draft.openwaUrl}
                   onChange={(e) => setDraft({ ...draft, openwaUrl: e.target.value })}
                 />
-                <small>Use the address reachable from this Docker container.</small>
+                <small>
+                  {window.chat2tasksDesktop
+                    ? 'This local address is managed by Chat2Tasks.'
+                    : 'Use the address reachable from this Docker container.'}
+                </small>
               </div>
               {credential('openwa', 'OpenWA API key')}
             </div>
             <div className="card-footer">
               <span>
-                <ShieldCheck size={13} /> Keys stay on your server.
+                <ShieldCheck size={13} />{' '}
+                {window.chat2tasksDesktop ? 'Keys stay on this Mac.' : 'Keys stay on your server.'}
               </span>
               <button
                 className="button secondary"
@@ -606,9 +616,9 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
           <div className="privacy-strip">
             <ShieldCheck size={18} />
             <p>
-              API keys are encrypted on your server and never sent back to this browser.
-              Conversations go only to your selected model connection. Keep the data volume and its
-              vault key backed up together.
+              {window.chat2tasksDesktop
+                ? 'API keys are encrypted on this Mac and are not shown after saving. Conversations go only to your selected model connection. Use Move your workspace to create an encrypted backup.'
+                : 'API keys are encrypted on your server and never sent back to this browser. Conversations go only to your selected model connection. Keep the data volume and its vault key backed up together.'}
             </p>
           </div>
           <ModelDialog
@@ -624,7 +634,7 @@ export function SettingsPanel({ tab, config, onSave, notify }: Props) {
       )}
       {tab === 'models' && <CompanionSettings notify={notify} />}
       {tab === 'models' && <AttentionSettings notify={notify} />}
-      {tab === 'models' && <WorkspaceTransfer notify={notify} />}
+      {tab === 'models' && <WorkspaceTransfer notify={notify} onImport={onImportWorkspace} />}
       <div className="settings-save-bottom">
         <button className="button primary" disabled={saving} onClick={() => void save()}>
           <Check size={14} />
@@ -678,7 +688,13 @@ function AttentionSettings({ notify }: { notify: (text: string) => void }) {
   );
 }
 
-function WorkspaceTransfer({ notify }: { notify: (text: string) => void }) {
+function WorkspaceTransfer({
+  notify,
+  onImport,
+}: {
+  notify: (text: string) => void;
+  onImport?: () => void;
+}) {
   const [passphrase, setPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   async function downloadTransfer() {
@@ -713,8 +729,8 @@ function WorkspaceTransfer({ notify }: { notify: (text: string) => void }) {
         <div>
           <h2>Move your workspace</h2>
           <p>
-            Save tasks, notes, conversations, cached images and saved connection keys in an encrypted
-            file.
+            Save tasks, notes, conversations, cached images and saved connection keys in an
+            encrypted file.
           </p>
         </div>
       </div>
@@ -739,6 +755,17 @@ function WorkspaceTransfer({ notify }: { notify: (text: string) => void }) {
           {busy ? 'Preparing…' : 'Download transfer'}
         </button>
       </div>
+      {onImport && (
+        <div className="workspace-import-option">
+          <div>
+            <strong>Bring an existing workspace to this Mac</strong>
+            <p>Choose an encrypted transfer from your other workspace.</p>
+          </div>
+          <button className="button secondary" onClick={onImport}>
+            Import workspace
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -912,8 +939,14 @@ function ProfileCard({
         <div className="codex-hint">
           <ShieldCheck size={16} />
           <p>
-            Sign in to Codex inside the container once. Your session lives in the private{' '}
-            <code>codex-home</code> volume. No API key is needed.
+            {window.chat2tasksDesktop ? (
+              'Your Codex sign-in is stored on this Mac. No API key is needed.'
+            ) : (
+              <>
+                Sign in to Codex inside the container once. Your session lives in the private{' '}
+                <code>codex-home</code> volume. No API key is needed.
+              </>
+            )}
           </p>
         </div>
       )}

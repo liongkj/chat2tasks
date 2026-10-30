@@ -29,7 +29,7 @@ import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
-import { configureDesktopGateway, registerDesktop } from './desktop.js';
+import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
 
 const port = z.coerce
   .number()
@@ -359,32 +359,57 @@ server.post('/api/handoff', async (request, reply) => {
 if (process.env.CHAT2TASKS_DESKTOP === 'true')
   await registerDesktop(server, store, openwa, sync, webhooks);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
-await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
-if (
-  process.env.CHAT2TASKS_DESKTOP === 'true' &&
-  store.metaValue('desktop_setup_complete') === true
-) {
-  const sessions = [
-    ...new Set(
-      store
-        .settings()
-        .chats.filter((chat) => chat.enabled)
-        .map((chat) => chat.sessionId),
-    ),
-  ];
-  if (sessions.length)
-    try {
-      await webhooks.connect(sessions);
-    } catch {
-      store.status({ error: 'WhatsApp could not reconnect. Open Connections to retry.' });
-    }
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const startupAbort = new AbortController();
+if (desktop) {
+  sync.stop();
+  store.status({ syncing: true, phase: 'Starting WhatsApp connection…', error: null });
 }
-if (syncEnabled) sync.start();
-organiser.start();
+await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
+async function startBackground() {
+  if (desktop) {
+    try {
+      await waitForDesktopGateway(process.env.DESKTOP_OPENWA_URL ?? '', startupAbort.signal);
+    } catch {
+      if (!startupAbort.signal.aborted)
+        store.status({
+          syncing: false,
+          error: 'WhatsApp could not start. Quit Chat2Tasks and try again.',
+        });
+      return;
+    }
+    if (startupAbort.signal.aborted) return;
+    if (store.metaValue('desktop_setup_complete') === true) {
+      const sessions = [
+        ...new Set(
+          store
+            .settings()
+            .chats.filter((chat) => chat.enabled)
+            .map((chat) => chat.sessionId),
+        ),
+      ];
+      if (sessions.length) {
+        store.status({ phase: 'Connecting your conversations…' });
+        try {
+          await webhooks.connect(sessions);
+        } catch {
+          store.status({ error: 'WhatsApp could not reconnect. Open Connections to retry.' });
+        }
+      }
+    }
+    if (startupAbort.signal.aborted) return;
+    store.status({ syncing: false, phase: 'Workspace ready' });
+  }
+  if (syncEnabled) sync.start();
+  organiser.start();
+}
+const starting = startBackground();
 async function shutdown() {
+  startupAbort.abort();
   const threadJob = organiser.stop();
   sync.stop();
   await server.close();
+  await starting;
   await threadJob;
   store.close();
 }

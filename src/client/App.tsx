@@ -36,6 +36,7 @@ import { TaskFilters } from './TaskFilters.js';
 import { Overview } from './Overview.js';
 import { ReviewView } from './ReviewView.js';
 import { WaitingView } from './WaitingView.js';
+import { WorkspaceImport } from './WorkspaceImport.js';
 import { deskTitle, matchesTaskFilter, tasksForDesk } from './taskDesk.js';
 import { useWorkspaceLocation, type WorkspaceView } from './taskLocation.js';
 
@@ -70,6 +71,8 @@ export function App() {
   const [configError, setConfigError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [online, setOnline] = useState(true);
+  const [requestingSync, setRequestingSync] = useState(false);
+  const [workspaceImportOpen, setWorkspaceImportOpen] = useState(false);
   const [notice, setNoticeState] = useState<Notice | null>(null);
   const notify = useCallback((text: string) => setNoticeState({ kind: 'message', text }), []);
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -114,9 +117,12 @@ export function App() {
   useEffect(() => {
     void refresh();
     void refreshConfig();
-    const timer = setInterval(() => void refresh(), 5000);
-    return () => clearInterval(timer);
   }, [refresh, refreshConfig]);
+  useEffect(() => {
+    const interval = data.status.syncing || data.status.debouncing || requestingSync ? 1000 : 5000;
+    const timer = setInterval(() => void refresh(), interval);
+    return () => clearInterval(timer);
+  }, [refresh, data.status.syncing, data.status.debouncing, requestingSync]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNoticeState(null), 7000);
@@ -239,6 +245,23 @@ export function App() {
     });
   };
   useEffect(() => {
+    return window.chat2tasksDesktop?.onOpenSettings(() => {
+      setMobileMenu(false);
+      updateLocation({
+        view: 'settings',
+        message: null,
+        task: null,
+        wait: null,
+        tab: 'overview',
+        expanded: false,
+        chat: null,
+        query: '',
+        filter: 'open',
+        kind: 'all',
+      });
+    });
+  }, [updateLocation]);
+  useEffect(() => {
     if (location.view === 'tasks' && focusSearch.current) {
       search.current?.focus();
       focusSearch.current = false;
@@ -355,14 +378,18 @@ export function App() {
     }
   }
   async function sync() {
+    if (requestingSync || data.status.syncing) return;
+    setRequestingSync(true);
     try {
       await api('sync', OkSchema, {});
       notify(
-        data.demo ? 'Sample workspace · live analysis is disabled' : 'Task analysis requested',
+        data.demo ? 'Sample workspace · live analysis is disabled' : 'Checking your conversations',
       );
       await refresh();
     } catch (error) {
       notify(errorMessage(error));
+    } finally {
+      setRequestingSync(false);
     }
   }
   const openTask = (task: Task, expanded = true) => {
@@ -558,16 +585,28 @@ export function App() {
           className={`workspace-presence ${!online || data.status.error ? 'warning' : ''}`}
           title={
             !online
-              ? 'Workspace server unreachable'
+              ? 'Workspace unavailable'
               : (data.status.error ??
-                (data.demo ? 'Sample workspace' : 'Workspace server available'))
+                (data.demo
+                  ? 'Sample workspace'
+                  : window.chat2tasksDesktop
+                    ? 'Workspace on this Mac'
+                    : 'Workspace server available'))
           }
         >
           <span className="owner-avatar">Y</span>
           <span className="presence-copy">
             Your workspace
             <small>
-              {!online ? 'Server unavailable' : data.demo ? 'Sample data' : 'Server available'}
+              {!online
+                ? 'Reconnecting…'
+                : data.status.error
+                  ? 'Needs attention'
+                  : data.demo
+                    ? 'Sample data'
+                    : window.chat2tasksDesktop
+                      ? 'On this Mac'
+                      : 'Server available'}
             </small>
           </span>
         </span>
@@ -693,8 +732,10 @@ export function App() {
                         : data.status.error
                           ? 'Needs attention'
                           : data.status.syncing
-                            ? 'Analysing messages…'
-                            : 'Your workspace'}
+                            ? data.status.phase
+                            : data.status.debouncing
+                              ? 'Waiting to check…'
+                              : 'Your workspace'}
                   </span>
                 </header>
               )}
@@ -734,6 +775,19 @@ export function App() {
                 tasks={data.tasks}
                 waits={data.waiting_for}
                 pendingQuestions={data.questions.length}
+                loaded={loaded}
+                online={online}
+                messageCount={data.messages.length}
+                followedConversations={
+                  config ? config.settings.chats.filter((item) => item.enabled).length : null
+                }
+                status={data.status}
+                requestingSync={requestingSync}
+                onActivity={() => navigate('activity')}
+                onConnections={() => navigate('connections')}
+                onImportWorkspace={
+                  window.chat2tasksDesktop ? () => setWorkspaceImportOpen(true) : undefined
+                }
                 onOpenTask={openInDesk}
                 onOpenWait={(wait) =>
                   updateLocation({ view: 'waiting', wait: wait.id, task: null })
@@ -826,7 +880,7 @@ export function App() {
                 chats={chats}
                 location={location}
                 selectedTask={selectedTask}
-                syncing={data.status.syncing}
+                syncing={data.status.syncing || requestingSync}
                 search={search}
                 onLocation={updateLocation}
                 onSelectTask={openTask}
@@ -859,7 +913,12 @@ export function App() {
                 }
               />
             ) : location.view === 'activity' ? (
-              <ActivityView data={data} online={online} onSync={() => void sync()} />
+              <ActivityView
+                data={data}
+                online={online}
+                requestingSync={requestingSync}
+                onSync={() => void sync()}
+              />
             ) : (
               <div className="settings-shell">
                 <nav className="settings-navigation" aria-label="Settings sections">
@@ -886,6 +945,9 @@ export function App() {
                       void refresh();
                     }}
                     notify={notify}
+                    onImportWorkspace={
+                      window.chat2tasksDesktop ? () => setWorkspaceImportOpen(true) : undefined
+                    }
                   />
                 ) : (
                   <p className="empty-copy">Loading settings…</p>
@@ -928,6 +990,9 @@ export function App() {
           </Dialog.Portal>
         </div>
       </Dialog.Root>
+      {window.chat2tasksDesktop && (
+        <WorkspaceImport open={workspaceImportOpen} onOpenChange={setWorkspaceImportOpen} />
+      )}
       <Dialog.Root
         open={taskDialogOpen}
         onOpenChange={(open) => {

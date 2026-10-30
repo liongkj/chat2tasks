@@ -5,6 +5,7 @@ import {
   Check,
   CheckCircle2,
   CircleHelp,
+  LoaderCircle,
   MessageCircle,
   ShieldCheck,
   Sparkles,
@@ -38,15 +39,33 @@ function message(error: unknown) {
 }
 
 export function DesktopRoot({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState<boolean | null>(window.chat2tasksDesktop ? null : true);
+  const [ready, setReady] = useState<'loading' | 'ready' | 'setup' | 'error'>(
+    window.chat2tasksDesktop ? 'loading' : 'ready',
+  );
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!window.chat2tasksDesktop) return;
+    setReady('loading');
     void api('desktop/status', DesktopStatus)
-      .then((state) => setReady(state.setupComplete))
-      .catch(() => setReady(false));
-  }, []);
-  if (ready === null) return <main className="onboarding-loading">Starting your workspace…</main>;
-  return ready ? children : <Onboarding onDone={() => setReady(true)} />;
+      .then((state) => setReady(state.setupComplete ? 'ready' : 'setup'))
+      .catch(() => setReady('error'));
+  }, [retry]);
+  if (ready === 'loading')
+    return (
+      <main className="onboarding-loading" role="status">
+        <LoaderCircle className="spin" size={20} /> Opening your workspace…
+      </main>
+    );
+  if (ready === 'error')
+    return (
+      <main className="onboarding-loading" role="alert">
+        Couldn’t open your workspace.{' '}
+        <button className="text-button" onClick={() => setRetry((value) => value + 1)}>
+          Try again
+        </button>
+      </main>
+    );
+  return ready === 'ready' ? children : <Onboarding onDone={() => setReady('ready')} />;
 }
 
 function Onboarding({ onDone }: { onDone: () => void }) {
@@ -57,6 +76,9 @@ function Onboarding({ onDone }: { onDone: () => void }) {
     qr: null,
   });
   const [chats, setChats] = useState<z.infer<typeof Chats>['chats']>([]);
+  const [chatsLoaded, setChatsLoaded] = useState(false);
+  const [chatRefresh, setChatRefresh] = useState(0);
+  const [chatQuery, setChatQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [preferences, setPreferences] = useState<AttentionPreferences>(() =>
     AttentionPreferencesSchema.parse({}),
@@ -65,7 +87,10 @@ function Onboarding({ onDone }: { onDone: () => void }) {
   const [oldPaused, setOldPaused] = useState(false);
   const [fileSelected, setFileSelected] = useState(false);
   const [passphrase, setPassphrase] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<
+    'choosing' | 'importing' | 'whatsapp' | 'codex' | 'test' | 'continue' | null
+  >(null);
+  const busy = operation !== null;
   const [error, setError] = useState('');
   const [tested, setTested] = useState(false);
   async function refreshStatus() {
@@ -84,29 +109,42 @@ function Onboarding({ onDone }: { onDone: () => void }) {
         .then(setWhatsapp)
         .catch(() => undefined);
     refresh();
-    const timer = setInterval(refresh, 3000);
+    const timer = setInterval(refresh, 1500);
     return () => clearInterval(timer);
   }, [step]);
   useEffect(() => {
     if (step !== 2) return;
+    let cancelled = false;
+    setChatsLoaded(false);
+    setError('');
     void api('desktop/chats', Chats)
-      .then((result) => setChats(result.chats))
-      .catch((reason) => setError(message(reason)));
-  }, [step]);
+      .then((result) => {
+        if (!cancelled) setChats(result.chats);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(message(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setChatsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, chatRefresh]);
   useEffect(() => {
     if (step !== 3) return;
     const timer = setInterval(() => void refreshStatus().catch(() => undefined), 2500);
     return () => clearInterval(timer);
   }, [step]);
-  async function run(action: () => Promise<void>) {
+  async function run(name: NonNullable<typeof operation>, action: () => Promise<void>) {
     setError('');
-    setBusy(true);
+    setOperation(name);
     try {
       await action();
     } catch (reason) {
       setError(message(reason));
     } finally {
-      setBusy(false);
+      setOperation(null);
     }
   }
   async function importFile() {
@@ -118,7 +156,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
     window.location.reload();
   }
   async function next() {
-    await run(async () => {
+    await run('continue', async () => {
       if (step === 2) await api('desktop/chats', OkSchema, { ids: selected });
       if (step === 4) await api('preferences', AttentionPreferencesSchema, preferences);
       if (step === 5) {
@@ -132,10 +170,13 @@ function Onboarding({ onDone }: { onDone: () => void }) {
   const canContinue =
     step === 0 ||
     (step === 1 && whatsapp.status === 'ready') ||
-    (step === 2 && selected.length > 0) ||
+    (step === 2 && chatsLoaded && !error && selected.length > 0) ||
     (step === 3 && status?.codex.signedIn) ||
     step === 4 ||
     (step === 5 && (!status?.imported || oldPaused));
+  const matchingChats = chats.filter((chat) =>
+    chat.name.toLocaleLowerCase().includes(chatQuery.trim().toLocaleLowerCase()),
+  );
   return (
     <main className="onboarding-shell">
       <aside className="onboarding-sidebar">
@@ -187,41 +228,54 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   needs to be awake while it processes messages.
                 </p>
               </div>
-              <div className="onboarding-import">
-                <h2>Already have a workspace?</h2>
-                <p>
-                  In your existing workspace, open Settings → Move your workspace and download an
-                  encrypted transfer.
-                </p>
-                <button
-                  className="button secondary"
-                  onClick={() =>
-                    void run(async () => {
-                      setFileSelected((await window.chat2tasksDesktop?.chooseImport()) ?? false);
-                    })
-                  }
-                >
-                  Choose transfer file
-                </button>
-                {fileSelected && (
-                  <div className="onboarding-import-fields">
-                    <label htmlFor="import-passphrase">Transfer passphrase</label>
-                    <input
-                      id="import-passphrase"
-                      type="password"
-                      value={passphrase}
-                      onChange={(event) => setPassphrase(event.target.value)}
-                    />
-                    <button
-                      className="button secondary"
-                      disabled={busy || passphrase.length < 8}
-                      onClick={() => void run(importFile)}
-                    >
-                      Import workspace
-                    </button>
-                  </div>
-                )}
-              </div>
+              {status?.imported ? (
+                <div className="onboarding-connected" role="status">
+                  <CheckCircle2 size={20} /> Workspace imported. Continue to reconnect your
+                  accounts.
+                </div>
+              ) : (
+                <div className="onboarding-import">
+                  <h2>Already have a workspace?</h2>
+                  <p>
+                    In your existing workspace, open Settings → Move your workspace and download an
+                    encrypted transfer.
+                  </p>
+                  <button
+                    className="button secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void run('choosing', async () => {
+                        setFileSelected((await window.chat2tasksDesktop?.chooseImport()) ?? false);
+                      })
+                    }
+                  >
+                    {operation === 'choosing' ? 'Opening files…' : 'Choose transfer file'}
+                  </button>
+                  {fileSelected && (
+                    <div className="onboarding-import-fields">
+                      <label htmlFor="import-passphrase">Transfer passphrase</label>
+                      <input
+                        id="import-passphrase"
+                        type="password"
+                        value={passphrase}
+                        onChange={(event) => setPassphrase(event.target.value)}
+                      />
+                      <button
+                        className="button secondary"
+                        disabled={busy || passphrase.length < 8}
+                        onClick={() => void run('importing', importFile)}
+                      >
+                        {operation === 'importing' ? 'Importing…' : 'Import workspace'}
+                      </button>
+                      {operation === 'importing' && (
+                        <p role="status">
+                          Checking the file and restoring your workspace. This can take a moment.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
           {step === 1 && (
@@ -260,13 +314,13 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                     className="button primary"
                     disabled={!accepted || busy}
                     onClick={() =>
-                      void run(async () => {
+                      void run('whatsapp', async () => {
                         await api('desktop/whatsapp/start', z.object({ status: z.string() }), {});
                         setWhatsapp(await api('desktop/whatsapp/status', WhatsappStatus));
                       })
                     }
                   >
-                    {busy ? 'Starting…' : 'Connect WhatsApp'}
+                    {operation === 'whatsapp' ? 'Starting…' : 'Connect WhatsApp'}
                   </button>
                   {whatsapp.qr && (
                     <div className="onboarding-qr">
@@ -277,9 +331,14 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                       </p>
                     </div>
                   )}
-                  {whatsapp.status !== 'not_connected' && !whatsapp.qr && (
-                    <p className="onboarding-hint">
-                      Connection: {whatsapp.status.replaceAll('_', ' ')}
+                  {(operation === 'whatsapp' ||
+                    (whatsapp.status !== 'not_connected' && !whatsapp.qr)) && (
+                    <p className="onboarding-hint" role="status">
+                      {['failed', 'disconnected', 'action_required'].includes(whatsapp.status)
+                        ? 'WhatsApp is not connected. Try connecting again.'
+                        : whatsapp.status === 'authenticating'
+                          ? 'Finishing WhatsApp sign-in…'
+                          : 'Preparing your WhatsApp connection. The QR code will appear here.'}
                     </p>
                   )}
                 </>
@@ -297,12 +356,35 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                 Choose the conversations Chat2Tasks should process. You can change this later.
               </p>
               <p className="onboarding-hint">
-                Available history in selected chats can be processed after setup. Conversation text
-                and relevant screenshots go to the selected AI provider.
+                New messages and any history available to this connection can be processed after
+                setup. Conversation text and relevant screenshots go to the selected AI provider.
               </p>
+              {chatsLoaded && chats.length > 0 && (
+                <div className="field onboarding-search">
+                  <label htmlFor="onboarding-chat-search">Search conversations</label>
+                  <input
+                    id="onboarding-chat-search"
+                    value={chatQuery}
+                    onChange={(event) => setChatQuery(event.target.value)}
+                    placeholder="Search by name"
+                  />
+                  <small>{selected.length} selected</small>
+                </div>
+              )}
               <div className="onboarding-chat-list">
-                {chats.length ? (
-                  chats.map((chat) => (
+                {!chatsLoaded ? (
+                  <p className="onboarding-hint onboarding-wait" role="status">
+                    <LoaderCircle className="spin" size={16} /> Loading your conversations…
+                  </p>
+                ) : error ? (
+                  <button
+                    className="button secondary"
+                    onClick={() => setChatRefresh((value) => value + 1)}
+                  >
+                    Try again
+                  </button>
+                ) : matchingChats.length ? (
+                  matchingChats.map((chat) => (
                     <label key={chat.id}>
                       <span>{chat.name}</span>
                       <input
@@ -318,6 +400,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                       />
                     </label>
                   ))
+                ) : chats.length ? (
+                  <p>No conversations match your search.</p>
                 ) : (
                   <p>No conversations found yet. Make sure WhatsApp has finished syncing.</p>
                 )}
@@ -344,7 +428,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   className="button primary"
                   disabled={busy || !status?.codex.installed}
                   onClick={() =>
-                    void run(async () => {
+                    void run('codex', async () => {
                       const result = await api(
                         'desktop/codex/login',
                         z.object({ url: z.url() }),
@@ -355,10 +439,27 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                     })
                   }
                 >
-                  {status?.codex.signingIn
-                    ? 'Continue sign-in in your browser'
-                    : 'Continue with ChatGPT'}
+                  {operation === 'codex'
+                    ? 'Opening sign-in…'
+                    : status?.codex.signingIn
+                      ? 'Continue sign-in in your browser'
+                      : 'Continue with ChatGPT'}
                 </button>
+              )}
+              {!status && (
+                <p className="onboarding-hint" role="status">
+                  Checking your Codex connection…
+                </p>
+              )}
+              {status?.codex.signingIn && (
+                <p className="onboarding-hint" role="status">
+                  Finish signing in in your browser. This screen will update automatically.
+                </p>
+              )}
+              {status?.codex.failed && (
+                <p className="onboarding-error" role="alert">
+                  Sign-in didn’t finish. Please try again.
+                </p>
               )}
               {status && !status.codex.installed && (
                 <p className="onboarding-hint">
@@ -376,7 +477,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                     className="button secondary"
                     disabled={busy}
                     onClick={() =>
-                      void run(async () => {
+                      void run('test', async () => {
                         const config = await api('settings', PublicSettingsSchema);
                         const profile = config.settings.profiles.find(
                           (item) => item.kind === 'codex',
@@ -387,7 +488,11 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                       })
                     }
                   >
-                    {tested ? 'Connection works' : 'Test connection'}
+                    {operation === 'test'
+                      ? 'Testing connection…'
+                      : tested
+                        ? 'Connection works'
+                        : 'Test connection'}
                   </button>
                 </div>
               )}
@@ -467,7 +572,18 @@ function Onboarding({ onDone }: { onDone: () => void }) {
             disabled={busy || !canContinue}
             onClick={() => void next()}
           >
-            {step === 5 ? 'Open my workspace' : 'Continue'} <ArrowRight size={16} />
+            {operation === 'continue'
+              ? step === 2
+                ? 'Saving conversations…'
+                : step === 4
+                  ? 'Saving preferences…'
+                  : step === 5
+                    ? 'Connecting your workspace…'
+                    : 'Please wait…'
+              : step === 5
+                ? 'Open my workspace'
+                : 'Continue'}{' '}
+            <ArrowRight size={16} />
           </button>
         </div>
       </div>

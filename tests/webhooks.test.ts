@@ -240,3 +240,63 @@ test('a saved webhook batch reaches the decision API first; skip avoids Luna and
     f.close();
   }
 });
+
+test('processing stays visible while a decision is in progress', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let running: Promise<void> | undefined;
+  try {
+    f.store.saveSettings({
+      settings: {
+        ...f.store.settings(),
+        profiles: [
+          {
+            id: 'judge',
+            name: 'Decision',
+            kind: 'decision',
+            provider: 'jev',
+            model: 'fixture',
+            baseUrl: 'https://example.invalid/v1',
+          },
+          {
+            id: 'tasks',
+            name: 'Tasks',
+            kind: 'compatible',
+            model: 'fixture',
+            baseUrl: 'https://example.invalid/v1',
+          },
+        ],
+        activeProfileId: 'tasks',
+        trigger: { mode: 'automatic', decisionProfileId: 'judge' },
+      },
+      secrets: { 'judge:key': 'fixture' },
+      removeSecrets: [],
+    });
+    globalThis.fetch = async () => {
+      entered();
+      await waiting;
+      return new Response(
+        JSON.stringify({
+          answers: { trigger: { type: 'choice', choice: 'skip', confidence: 0.99 } },
+        }),
+      );
+    };
+    f.hooks.receive(f.raw, f.sign(f.raw));
+    running = f.sync.run(['active']);
+    await started;
+    assert.equal(f.store.status().syncing, true);
+  } finally {
+    release();
+    await running;
+    globalThis.fetch = original;
+    f.close();
+  }
+});
