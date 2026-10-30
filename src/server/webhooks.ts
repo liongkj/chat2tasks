@@ -151,13 +151,16 @@ export class Webhooks {
     this.sync.notify();
     return result;
   }
-  async connect() {
+  async connect(onlySessions?: string[]) {
     const settings = this.store.settings();
     if (!settings.webhookUrl)
       throw new Error('Enter the webhook callback URL reachable from OpenWA');
     if (new URL(settings.webhookUrl).pathname !== '/api/webhooks/openwa')
       throw new Error('The callback URL must end with /api/webhooks/openwa');
-    const sessions = [...new Set(settings.chats.map((c) => c.sessionId))];
+    const configured = new Set(settings.chats.map((c) => c.sessionId));
+    const sessions = onlySessions ?? [...configured];
+    if (sessions.some((session) => !configured.has(session)))
+      throw new Error('Add a conversation before connecting its webhooks');
     if (!sessions.length) throw new Error('Add a conversation before connecting its webhooks');
     const registered = z
       .record(z.string(), z.string())

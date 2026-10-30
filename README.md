@@ -6,6 +6,23 @@ Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and
 
 ![Overview with illustrative sample data](docs/qa/gtd-desk/overview.png)
 
+## macOS app
+
+The Mac app runs the workspace, an OpenWA gateway, and the Codex CLI on the Mac. On first launch it guides you through linking WhatsApp, choosing conversations, signing in to Codex in your browser, and setting your attention preferences. The workspace is stored on the Mac, and processing requires the Mac to be awake. Closing the window leaves the app running in the menu bar; choose **Quit Chat2Tasks** there to stop it.
+
+The bundled gateway is an unofficial WhatsApp connection. Its maintainers warn that accounts can be restricted and advise against linking a primary number. It may retain history separately from the conversations selected for processing. Selected conversation evidence and screenshots are sent to the configured model provider. Codex sign-in and an OpenAI Decisions API connection are separate; a ChatGPT subscription does not supply a Decisions API key.
+
+To build an unsigned local test app on the target Mac, install Node.js 24.13 or later, then run:
+
+```sh
+npm ci
+npm run mac:package
+```
+
+The build downloads the pinned OpenWA release and its matching browser, and places the app in `release/mac-arm64/Chat2Tasks.app` on Apple Silicon or the corresponding architecture directory on Intel. It is not signed or notarized for distribution. The OpenWA license is included with the bundled gateway. The build's process supervision and CLI onboarding are inspired by BB's open-source architecture; this implementation does not require BB to be installed.
+
+To move an existing workspace, first update the source installation to a version with **Settings → Move your workspace**. Download an encrypted transfer with a passphrase, then choose it on the Mac app's welcome screen. Tasks, evidence, notes, status, preferences, and cached images are copied; connections are paused and must be linked again. Pause the old workspace before finishing setup on the new one so only one copy processes messages. The old workspace is not deleted. The transfer contains saved provider credentials protected by the passphrase, so store it safely and delete it when no longer needed.
+
 ## Start with Docker
 
 ```sh
@@ -143,7 +160,7 @@ Notes, task completion, trigger decisions, and usage persist in SQLite. Export i
 
 The Docker service binds to host loopback by default. It is a single-owner workspace, not a multi-user service. Before exposing it beyond your computer, set its exact `PUBLIC_ORIGIN` and a strong `APP_PASSWORD`; the username is `admin`. Use HTTPS through your reverse proxy. If a proxy already authenticates every request, you may explicitly set `TRUST_PROXY_AUTH=true` instead.
 
-API keys are encrypted with AES-256-GCM in SQLite. The encryption key is `data/vault.key`, permission 0600, in the same persistent volume. This protects copied database files, **not a compromised host or complete volume**. Keep the database and key backed up together, protect the Docker host, and use disk encryption where appropriate. Credentials are write-only in the UI: a blank field keeps the existing key, a new value replaces it, and **Remove saved key** removes it on save. No keys enter browser storage or workspace exports.
+API keys are encrypted with AES-256-GCM in SQLite. The encryption key is `data/vault.key`, permission 0600, in the same persistent volume. This protects copied database files, **not a compromised host or complete volume**. Keep the database and key backed up together, protect the Docker host, and use disk encryption where appropriate. Credentials are write-only in the UI: a blank field keeps the existing key, a new value replaces it, and **Remove saved key** removes it on save. Keys do not enter browser storage or the ordinary JSON export; encrypted workspace transfer files include the database and its key.
 
 Activated chat messages go to your separately selected decision provider when the decision gate is enabled. Item review also sends relevant saved conversation text, item details, and screenshot readings to the selected decision provider, including explicitly linked evidence from manually merged conversations. Personal notes and owner-entered project, area, and date metadata are excluded from decision reviews. Task messages and screenshots go to your task-generation provider, and through Cloudflare when configured. Cloudflare request logging is disabled on requests from this app. Provider retention policies still apply. Self-hosted fonts and assets make no external browser requests. Do not commit `.env`, `config.json`, `data/`, Codex sessions, chat exports, or private images. These are excluded from both Git and Docker build context.
 

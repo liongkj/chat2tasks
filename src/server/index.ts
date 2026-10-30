@@ -1,7 +1,10 @@
 import Fastify from 'fastify';
 import staticFiles from '@fastify/static';
 import { timingSafeEqual } from 'node:crypto';
-import { resolve } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { Store, TaskTriageError } from './store.js';
 import { OpenWA } from './openwa.js';
@@ -25,6 +28,8 @@ import { Threads, ThreadError } from './threads.js';
 import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
+import { exportWorkspace } from './workspace-transfer.js';
+import { configureDesktopGateway, registerDesktop } from './desktop.js';
 
 const port = z.coerce
   .number()
@@ -33,6 +38,7 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
+if (process.env.CHAT2TASKS_DESKTOP === 'true') await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
 const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
@@ -116,7 +122,7 @@ server.setErrorHandler((error, request, reply) => {
   // Provider response bodies and supplied credentials never enter logs or API errors.
   const safe =
     error instanceof Error &&
-    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|The callback|Add a conversation|OpenWA could not|OpenWA returned)/.test(
+    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
       error.message,
     );
   if (safe) return reply.code(400).send({ error: error.message });
@@ -191,6 +197,8 @@ server.post('/api/waiting/confirm', (request) => {
   return store.confirmWait(value.id);
 });
 server.get('/api/settings', () => store.publicSettings());
+server.get('/api/preferences', () => store.preferences());
+server.post('/api/preferences', (request) => store.savePreferences(request.body));
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);
@@ -218,6 +226,23 @@ server.post('/api/sync', async () => {
   return { ok: true };
 });
 server.get('/api/export', () => store.snapshot());
+server.post('/api/workspace/transfer', async (request, reply) => {
+  const { passphrase } = z.object({ passphrase: z.string().min(8).max(1024) }).parse(request.body);
+  const directory = await mkdtemp(join(tmpdir(), 'chat2tasks-download-'));
+  const path = join(directory, 'workspace.c2t');
+  try {
+    await exportWorkspace(store, path, passphrase);
+    const stream = createReadStream(path);
+    stream.once('close', () => void rm(directory, { recursive: true, force: true }));
+    return reply
+      .header('Content-Disposition', 'attachment; filename="chat2tasks-workspace.c2t"')
+      .type('application/octet-stream')
+      .send(stream);
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+});
 server.post('/api/import', async (request) => {
   const { tasks } = z
     .object({ tasks: z.array(z.object({ id: z.string(), done: z.boolean() })).max(10000) })
@@ -331,8 +356,29 @@ server.post('/api/handoff', async (request, reply) => {
     handoffRunning = false;
   }
 });
+if (process.env.CHAT2TASKS_DESKTOP === 'true')
+  await registerDesktop(server, store, openwa, sync, webhooks);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
 await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
+if (
+  process.env.CHAT2TASKS_DESKTOP === 'true' &&
+  store.metaValue('desktop_setup_complete') === true
+) {
+  const sessions = [
+    ...new Set(
+      store
+        .settings()
+        .chats.filter((chat) => chat.enabled)
+        .map((chat) => chat.sessionId),
+    ),
+  ];
+  if (sessions.length)
+    try {
+      await webhooks.connect(sessions);
+    } catch {
+      store.status({ error: 'WhatsApp could not reconnect. Open Connections to retry.' });
+    }
+}
 if (syncEnabled) sync.start();
 organiser.start();
 async function shutdown() {

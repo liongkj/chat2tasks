@@ -1,0 +1,24 @@
+{
+  "appId": "com.chat2tasks.desktop",
+  "productName": "Chat2Tasks",
+  "artifactName": "Chat2Tasks-${version}-${arch}.${ext}",
+  "asar": true,
+  "afterPack": "desktop/verify-resources.cjs",
+  "directories": { "output": "release" },
+  "files": [
+    "desktop/main.cjs",
+    "desktop/preload.cjs",
+    "desktop/loading.html",
+    "package.json",
+    "!node_modules/**"
+  ],
+  "extraResources": [
+    { "from": "work/desktop/runtime", "to": "runtime" },
+    { "from": "work/desktop/runtime/node_modules", "to": "runtime/node_modules" },
+    { "from": "work/desktop/gateway", "to": "gateway" },
+    { "from": "work/desktop/gateway/node_modules", "to": "gateway/node_modules" },
+    { "from": "work/desktop/node", "to": "node" }
+  ],
+  "mac": { "category": "public.app-category.productivity", "identity": null, "notarize": false },
+  "npmRebuild": false
+}

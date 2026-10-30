@@ -1,5 +1,13 @@
 import { z } from 'zod';
 const text = z.string().trim().min(1).max(4000);
+export const AttentionPreferencesSchema = z.object({
+  sensitivity: z.enum(['focused', 'broader']).default('focused'),
+  screenshots: z.enum(['task', 'review']).default('task'),
+  includeReminders: z.boolean().default(true),
+  trackWaiting: z.boolean().default(true),
+  resolveReplies: z.enum(['automatically', 'review']).default('automatically'),
+});
+export type AttentionPreferences = z.infer<typeof AttentionPreferencesSchema>;
 export const ChatSchema = z.object({
   id: text,
   name: text,

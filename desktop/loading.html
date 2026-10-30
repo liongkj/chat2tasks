@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chat2Tasks</title>
+    <style>
+      body {
+        font:
+          14px -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        color: #454545;
+        display: grid;
+        place-items: center;
+        height: 100vh;
+        margin: 0;
+        background: #fafafa;
+      }
+      main {
+        max-width: 360px;
+        text-align: center;
+      }
+      strong {
+        display: block;
+        color: #222;
+        font-size: 20px;
+        margin-bottom: 12px;
+      }
+      p {
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <strong>Chat2Tasks</strong>
+      <p id="status">Starting your workspace…</p>
+    </main>
+    <script>
+      if (new URLSearchParams(location.search).has('error'))
+        document.getElementById('status').textContent =
+          'Chat2Tasks could not start its local services. Quit the app and try again.';
+    </script>
+  </body>
+</html>
