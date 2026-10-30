@@ -26,7 +26,8 @@
       "../work/tauri/gateway/": "gateway/",
       "../work/tauri/bun/": "bun/",
       "../desktop/tauri-runtime.cjs": "tauri-runtime.cjs",
-      "../desktop/workspace-replace.cjs": "workspace-replace.cjs"
+      "../desktop/workspace-replace.cjs": "workspace-replace.cjs",
+      "../desktop/gateway-mode.cjs": "gateway-mode.cjs"
     }
   }
 }

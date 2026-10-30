@@ -4,6 +4,8 @@ import { ItemKindSchema, TaskTriageSchema, type ItemKind, type Task } from '../s
 export type TaskTab = 'overview' | 'sources';
 export type TaskFilter = 'open' | 'all' | 'done' | Task['triage_state'];
 export type ItemKindFilter = 'all' | 'someday' | 'upcoming' | 'projects' | 'areas' | ItemKind;
+export type SettingsSection =
+  'conversations' | 'models' | 'automation' | 'attention' | 'workspace' | 'browser';
 export type WorkspaceView =
   | 'overview'
   | 'waiting'
@@ -25,12 +27,14 @@ export type WorkspaceLocation = {
   query: string;
   expanded: boolean;
   message?: string | null;
+  settingsSection?: SettingsSection;
 };
 
 function readLocation(): WorkspaceLocation {
   const params = new URLSearchParams(window.location.search);
   const view = params.get('view');
   const status = params.get('status');
+  const section = params.get('section');
   const state = TaskTriageSchema.shape.triage_state.safeParse(params.get('state'));
   const kind = ItemKindSchema.safeParse(params.get('kind'));
   return {
@@ -67,6 +71,15 @@ function readLocation(): WorkspaceLocation {
               : 'all',
     query: params.get('q') ?? '',
     expanded: params.get('panel') === 'task',
+    settingsSection:
+      view === 'connections'
+        ? 'conversations'
+        : section === 'automation' ||
+            section === 'attention' ||
+            section === 'workspace' ||
+            section === 'browser'
+          ? section
+          : 'models',
   };
 }
 
@@ -87,6 +100,10 @@ function locationUrl(location: WorkspaceLocation) {
     kind: location.kind === 'all' ? null : location.kind,
     q: location.query || null,
     panel: location.task && location.expanded ? 'task' : null,
+    section:
+      location.view === 'settings' && location.settingsSection !== 'models'
+        ? (location.settingsSection ?? null)
+        : null,
   };
   for (const [key, value] of Object.entries(values)) {
     if (value) url.searchParams.set(key, value);

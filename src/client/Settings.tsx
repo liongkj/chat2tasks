@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import {
   ArrowUpRight,
@@ -34,16 +34,44 @@ import { api, appFetch, OkSchema } from './api.js';
 import { errorMessage } from './App.js';
 import { CompanionSettings } from './CompanionSettings.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
+import type { SettingsSection } from './taskLocation.js';
 
 type Props = {
-  tab: 'chats' | 'models';
+  section: SettingsSection;
   config: PublicSettings;
   onSave: (config: PublicSettings) => void;
   notify: (text: string) => void;
   onImportWorkspace?: () => void;
 };
 type DiscoveredEntry = { id: string; name: string };
-export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }: Props) {
+const sectionCopy: Record<SettingsSection, { title: string; description: string }> = {
+  conversations: {
+    title: 'WhatsApp & chats',
+    description: 'Manage your WhatsApp server and choose which conversations to follow.',
+  },
+  models: { title: 'AI models', description: 'Choose and manage your AI connections.' },
+  automation: {
+    title: 'Automation',
+    description: 'Choose when Chat2Tasks reviews new messages.',
+  },
+  attention: {
+    title: 'Attention',
+    description: 'Choose what appears in your workspace.',
+  },
+  workspace: {
+    title: 'Move workspace',
+    description: 'Move your tasks and settings or keep an encrypted backup.',
+  },
+  browser: {
+    title: 'Browser companion',
+    description: 'Connect the browser extension to this workspace.',
+  },
+};
+export function SettingsPanel({ section, config, onSave, notify, onImportWorkspace }: Props) {
+  const page = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    page.current?.scrollTo({ top: 0 });
+  }, [section]);
   const [draft, setDraft] = useState(config.settings),
     [secrets, setSecrets] = useState<Record<string, string>>({}),
     [remove, setRemove] = useState<string[]>([]);
@@ -155,31 +183,74 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
     }
   }
   async function toggle(chat: Chat) {
+    const saved = config.settings.chats.find((item) => item.id === chat.id);
+    if (!saved) return;
     const next = {
       ...config.settings,
       chats: config.settings.chats.map((c) =>
-        c.id === chat.id ? { ...c, enabled: !c.enabled } : c,
+        c.id === chat.id ? { ...c, enabled: !saved.enabled } : c,
       ),
     };
-    await save(next, {}, []);
+    setSaving(true);
+    try {
+      const updated = await api('settings', PublicSettingsSchema, {
+        settings: next,
+        secrets: {},
+        removeSecrets: [],
+      });
+      onSave(updated);
+      setDraft((current) => ({
+        ...current,
+        chats: current.chats.map((item) =>
+          item.id === chat.id ? { ...item, enabled: !saved.enabled } : item,
+        ),
+      }));
+      notify(`${chat.name} ${saved.enabled ? 'paused' : 'activated'}.`);
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
   }
   const activeCount = draft.chats.filter((c) => c.enabled).length;
+  const desktop = Boolean(window.chat2tasksDesktop || window.chat2tasksTauri);
+  const gatewayPending =
+    desktop &&
+    (config.desktopGatewayRestartRequired ||
+      draft.desktopGateway.mode !== config.settings.desktopGateway.activeMode ||
+      (config.settings.desktopGateway.activeMode === 'remote' &&
+        (draft.desktopGateway.remoteUrl !== config.settings.desktopGateway.remoteUrl ||
+          Boolean(secrets['remote-openwa']?.trim()) ||
+          remove.includes('remote-openwa'))));
+  const savesSettings = ['conversations', 'models', 'automation'].includes(section);
+  const hasChanges =
+    JSON.stringify(draft) !== JSON.stringify(config.settings) ||
+    Object.values(secrets).some((value) => value.trim().length > 0) ||
+    remove.length > 0;
   return (
-    <div className="settings-page">
+    <div className="settings-page" ref={page}>
       <div className="settings-page-heading">
         <div>
-          <h1>{tab === 'chats' ? 'Connections' : 'Settings'}</h1>
-          <p className="page-description">
-            {tab === 'chats'
-              ? 'Connect WhatsApp and choose which conversations to follow.'
-              : 'Manage your models, API keys, and Chrome companion.'}
-          </p>
+          <h1>{sectionCopy[section].title}</h1>
+          <p className="page-description">{sectionCopy[section].description}</p>
         </div>
-        <button className="button primary" onClick={() => void save()} disabled={saving}>
-          {saving ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />} Save changes
-        </button>
+        {savesSettings && (
+          <button
+            className="button primary"
+            onClick={() => void save()}
+            disabled={saving || !hasChanges}
+          >
+            {saving ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />}{' '}
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        )}
       </div>
-      {tab === 'chats' ? (
+      {!savesSettings && hasChanges && (
+        <p className="settings-unsaved" role="status">
+          You have unsaved changes in other settings.
+        </p>
+      )}
+      {section === 'conversations' && (
         <>
           <section className="settings-card">
             <div className="card-title">
@@ -187,42 +258,107 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
                 <MessageSquare size={20} />
               </span>
               <div>
-                <h2>OpenWA connection</h2>
+                <h2>WhatsApp server</h2>
                 <p>
-                  {window.chat2tasksDesktop || window.chat2tasksTauri
-                    ? 'Your WhatsApp connection runs on this computer.'
+                  {desktop
+                    ? 'Choose where your WhatsApp connection runs.'
                     : 'Your WhatsApp session, connected to your own server.'}
                 </p>
               </div>
               <span className="label">No chat replies</span>
             </div>
-            <div className="form-grid">
-              <div className="field">
-                <label htmlFor="openwa-url">OpenWA API URL</label>
-                <input
-                  id="openwa-url"
-                  placeholder="http://openwa-api:2785"
-                  value={draft.openwaUrl}
-                  onChange={(e) => setDraft({ ...draft, openwaUrl: e.target.value })}
-                />
-                <small>
-                  {window.chat2tasksDesktop || window.chat2tasksTauri
-                    ? 'This local address is managed by Chat2Tasks.'
-                    : 'Use the address reachable from this Docker container.'}
-                </small>
+            {desktop ? (
+              <>
+                <div className="gateway-options">
+                  {(
+                    [
+                      ['local', 'This computer', 'Chat2Tasks runs its own WhatsApp server here.'],
+                      [
+                        'remote',
+                        'Another server',
+                        'Use an existing OpenWA server, such as Legion.',
+                      ],
+                    ] as const
+                  ).map(([mode, label, description]) => (
+                    <label
+                      className={`gateway-option ${draft.desktopGateway.mode === mode ? 'selected' : ''}`}
+                      key={mode}
+                    >
+                      <input
+                        type="radio"
+                        name="gateway-mode"
+                        value={mode}
+                        checked={draft.desktopGateway.mode === mode}
+                        onChange={() =>
+                          setDraft({ ...draft, desktopGateway: { ...draft.desktopGateway, mode } })
+                        }
+                      />
+                      <span>
+                        <strong>{label}</strong>
+                        <small>{description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {draft.desktopGateway.mode === 'remote' && (
+                  <div className="form-grid gateway-details">
+                    <div className="field">
+                      <label htmlFor="remote-openwa-url">Server address</label>
+                      <input
+                        id="remote-openwa-url"
+                        placeholder="https://your-server.example"
+                        value={draft.desktopGateway.remoteUrl}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            desktopGateway: { ...draft.desktopGateway, remoteUrl: e.target.value },
+                          })
+                        }
+                      />
+                      <small>Use the OpenWA address reachable from this computer.</small>
+                    </div>
+                    {credential('remote-openwa', 'Server API key')}
+                  </div>
+                )}
+                <p className="gateway-note">
+                  Your tasks stay here. Each server keeps its own WhatsApp session and followed
+                  chats; switching does not move or sign out a session.
+                </p>
+                {gatewayPending && (
+                  <p className="gateway-restart" role="status">
+                    {config.desktopGatewayRestartRequired && !hasChanges
+                      ? 'Quit and reopen Chat2Tasks to use the saved server.'
+                      : 'Save your changes, then quit and reopen Chat2Tasks to use this server.'}
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="openwa-url">OpenWA API URL</label>
+                  <input
+                    id="openwa-url"
+                    placeholder="http://openwa-api:2785"
+                    value={draft.openwaUrl}
+                    onChange={(e) => setDraft({ ...draft, openwaUrl: e.target.value })}
+                  />
+                  <small>
+                    {window.chat2tasksDesktop || window.chat2tasksTauri
+                      ? 'This local address is managed by Chat2Tasks.'
+                      : 'Use the address reachable from this Docker container.'}
+                  </small>
+                </div>
+                {credential('openwa', 'OpenWA API key')}
               </div>
-              {credential('openwa', 'OpenWA API key')}
-            </div>
+            )}
             <div className="card-footer">
               <span>
                 <ShieldCheck size={13} />{' '}
-                {window.chat2tasksDesktop || window.chat2tasksTauri
-                  ? 'Keys stay on this computer.'
-                  : 'Keys stay on your server.'}
+                {desktop ? 'Keys stay on this computer.' : 'Keys stay on your server.'}
               </span>
               <button
                 className="button secondary"
-                disabled={discovering || !draft.openwaUrl}
+                disabled={discovering || !draft.openwaUrl || gatewayPending}
                 onClick={() => void discover()}
               >
                 {discovering ? (
@@ -241,11 +377,19 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
               </span>
               <div>
                 <h2>
-                  Chat activator <span className="label">{activeCount} active</span>
+                  Followed conversations <span className="label">{activeCount} active</span>
                 </h2>
-                <p>Only active chats are sent to your selected AI connection.</p>
+                <p>
+                  {gatewayPending
+                    ? 'These are the chats for your currently connected server.'
+                    : 'Only active chats are sent to your selected AI connection.'}
+                </p>
               </div>
-              <button className="button secondary" onClick={() => setAddingChat(true)}>
+              <button
+                className="button secondary"
+                disabled={gatewayPending}
+                onClick={() => setAddingChat(true)}
+              >
                 <Plus size={14} /> Add chat
               </button>
             </div>
@@ -374,60 +518,62 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
               </div>
             )}
           </section>
-          <section className="settings-card">
-            <div className="card-title">
-              <span className="card-icon">
-                <Radio size={20} />
-              </span>
-              <div>
-                <h2>Live message delivery</h2>
-                <p>OpenWA sends signed events when a message arrives, changes, or is sent.</p>
+          {!desktop && (
+            <section className="settings-card">
+              <div className="card-title">
+                <span className="card-icon">
+                  <Radio size={20} />
+                </span>
+                <div>
+                  <h2>Live message delivery</h2>
+                  <p>OpenWA sends signed events when a message arrives, changes, or is sent.</p>
+                </div>
+                <span className="label">
+                  {config.webhook.registeredSessions ? 'Registered' : 'Not connected'}
+                </span>
               </div>
-              <span className="label">
-                {config.webhook.registeredSessions ? 'Registered' : 'Not connected'}
-              </span>
-            </div>
-            <div className="field">
-              <label htmlFor="webhook-url">Webhook callback URL</label>
-              <input
-                id="webhook-url"
-                value={draft.webhookUrl}
-                placeholder="http://chat2tasks:2786/api/webhooks/openwa"
-                onChange={(e) => setDraft({ ...draft, webhookUrl: e.target.value })}
-              />
-              <small>
-                Use the address reachable from OpenWA. Private hosts must be explicitly allowed in
-                OpenWA’s SSRF host allowlist.
-              </small>
-            </div>
-            <div className="card-footer">
-              <span>
-                {config.webhook.lastReceivedAt
-                  ? 'Last signed event: ' +
-                    new Date(config.webhook.lastReceivedAt * 1000).toLocaleString()
-                  : 'No signed event received yet'}
-              </span>
-              <button
-                className="button secondary"
-                disabled={saving || !draft.webhookUrl || !draft.chats.length}
-                onClick={async () => {
-                  if (!(await save())) return;
-                  setSaving(true);
-                  try {
-                    const next = await api('webhooks/connect', PublicSettingsSchema, {});
-                    onSave(next);
-                    notify('Webhooks connected. OpenWA delivered a signed test successfully.');
-                  } catch (e) {
-                    notify(errorMessage(e));
-                  } finally {
-                    setSaving(false);
-                  }
-                }}
-              >
-                <Radio size={14} /> Connect & test webhooks
-              </button>
-            </div>
-          </section>
+              <div className="field">
+                <label htmlFor="webhook-url">Webhook callback URL</label>
+                <input
+                  id="webhook-url"
+                  value={draft.webhookUrl}
+                  placeholder="http://chat2tasks:2786/api/webhooks/openwa"
+                  onChange={(e) => setDraft({ ...draft, webhookUrl: e.target.value })}
+                />
+                <small>
+                  Use the address reachable from OpenWA. Private hosts must be explicitly allowed in
+                  OpenWA’s SSRF host allowlist.
+                </small>
+              </div>
+              <div className="card-footer">
+                <span>
+                  {config.webhook.lastReceivedAt
+                    ? 'Last signed event: ' +
+                      new Date(config.webhook.lastReceivedAt * 1000).toLocaleString()
+                    : 'No signed event received yet'}
+                </span>
+                <button
+                  className="button secondary"
+                  disabled={saving || !draft.webhookUrl || !draft.chats.length}
+                  onClick={async () => {
+                    if (!(await save())) return;
+                    setSaving(true);
+                    try {
+                      const next = await api('webhooks/connect', PublicSettingsSchema, {});
+                      onSave(next);
+                      notify('Webhooks connected. OpenWA delivered a signed test successfully.');
+                    } catch (e) {
+                      notify(errorMessage(e));
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                >
+                  <Radio size={14} /> Connect & test webhooks
+                </button>
+              </div>
+            </section>
+          )}
           <div className="privacy-strip">
             <ShieldCheck size={18} />
             <p>
@@ -447,7 +593,7 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
             discovered={discovered?.sessionId === sessionId ? discovered.chats : null}
             discovering={discovering}
             discoveryError={discoveryError}
-            canDiscover={Boolean(draft.openwaUrl)}
+            canDiscover={Boolean(draft.openwaUrl) && !gatewayPending}
             onDiscoverSessions={() => discover()}
             onDiscoverChats={() => discover(sessionId)}
             existingChats={draft.chats}
@@ -457,7 +603,8 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
             }}
           />
         </>
-      ) : (
+      )}
+      {section === 'models' && (
         <>
           <section className="settings-card connection-explainer">
             <div className="card-title">
@@ -528,98 +675,105 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
               notify={notify}
             />
           ))}
-          <section className="settings-card">
-            <div className="card-title">
-              <span className="card-icon">
-                <Zap size={20} />
-              </span>
-              <div>
-                <h2>Give conversations a little room</h2>
-                <p>Wait for a quiet moment before turning a burst of messages into tasks.</p>
+        </>
+      )}
+      {section === 'automation' && (
+        <section className="settings-card">
+          <div className="card-title">
+            <span className="card-icon">
+              <Zap size={20} />
+            </span>
+            <div>
+              <h2>Give conversations a little room</h2>
+              <p>Wait for a quiet moment before turning a burst of messages into tasks.</p>
+            </div>
+          </div>
+          <div className="form-grid">
+            <div className="field full-width">
+              <label htmlFor="trigger-mode">When to run task analysis</label>
+              <select
+                id="trigger-mode"
+                value={draft.trigger.mode}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    trigger:
+                      e.target.value === 'manual'
+                        ? {
+                            mode: 'manual',
+                            decisionProfileId: draft.trigger.decisionProfileId ?? null,
+                          }
+                        : {
+                            mode: 'automatic',
+                            decisionProfileId: draft.trigger.decisionProfileId ?? null,
+                          },
+                  })
+                }
+              >
+                <option value="automatic">Automatically · debounce, then decide</option>
+                <option value="manual">Only when I choose Run now</option>
+              </select>
+            </div>
+            <div className="field full-width">
+              <label htmlFor="decision-connection">Decision connection</label>
+              <select
+                id="decision-connection"
+                value={draft.trigger.decisionProfileId ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    trigger: { ...draft.trigger, decisionProfileId: e.target.value || null },
+                  })
+                }
+              >
+                <option value="">Use the task model for reviews</option>
+                {draft.profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.model}
+                  </option>
+                ))}
+              </select>
+              <small>
+                OpenAI Decisions, Jev, Codex, or another configured connection. This connection
+                reviews item categories and proposed completions. In automatic mode it also decides
+                when to run. Uncertain results keep work visible or ask for confirmation.
+              </small>
+            </div>
+            <div className="field">
+              <label>Message delivery</label>
+              <div className="codex-hint">
+                <Radio size={16} />
+                <p>
+                  {desktop
+                    ? 'New messages trigger work as they arrive.'
+                    : 'OpenWA webhooks trigger work as messages arrive; no periodic message polling.'}
+                </p>
               </div>
             </div>
-            <div className="form-grid">
-              <div className="field full-width">
-                <label htmlFor="trigger-mode">When to run task analysis</label>
-                <select
-                  id="trigger-mode"
-                  value={draft.trigger.mode}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      trigger:
-                        e.target.value === 'manual'
-                          ? {
-                              mode: 'manual',
-                              decisionProfileId: draft.trigger.decisionProfileId ?? null,
-                            }
-                          : {
-                              mode: 'automatic',
-                              decisionProfileId: draft.trigger.decisionProfileId ?? null,
-                            },
-                    })
-                  }
-                >
-                  <option value="automatic">Automatically · debounce, then decide</option>
-                  <option value="manual">Only when I choose Run now</option>
-                </select>
-              </div>
-              <div className="field full-width">
-                <label htmlFor="decision-connection">Decision connection</label>
-                <select
-                  id="decision-connection"
-                  value={draft.trigger.decisionProfileId ?? ''}
-                  onChange={(e) =>
-                    setDraft({
-                      ...draft,
-                      trigger: { ...draft.trigger, decisionProfileId: e.target.value || null },
-                    })
-                  }
-                >
-                  <option value="">Use the task model for reviews</option>
-                  {draft.profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} · {p.model}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  OpenAI Decisions, Jev, Codex, or another configured connection. This connection
-                  reviews item categories and proposed completions. In automatic mode it also
-                  decides when to run. Uncertain results keep work visible or ask for confirmation.
-                </small>
-              </div>
-              <div className="field">
-                <label>Message delivery</label>
-                <div className="codex-hint">
-                  <Radio size={16} />
-                  <p>
-                    OpenWA webhooks. Messages trigger work as they arrive; no periodic message
-                    polling.
-                  </p>
-                </div>
-              </div>
-              <div className="field">
-                <label htmlFor="quiet">Wait for a quiet period of</label>
-                <select
-                  id="quiet"
-                  value={draft.quietSeconds}
-                  onChange={(e) => setDraft({ ...draft, quietSeconds: Number(e.target.value) })}
-                >
-                  {[0, 15, 30, 45, 60, 120].map((v) => (
-                    <option key={v} value={v}>
-                      {v ? `${v} seconds` : 'Process immediately'}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="field">
+              <label htmlFor="quiet">Wait for a quiet period of</label>
+              <select
+                id="quiet"
+                value={draft.quietSeconds}
+                onChange={(e) => setDraft({ ...draft, quietSeconds: Number(e.target.value) })}
+              >
+                {[0, 15, 30, 45, 60, 120].map((v) => (
+                  <option key={v} value={v}>
+                    {v ? `${v} seconds` : 'Process immediately'}
+                  </option>
+                ))}
+              </select>
             </div>
-          </section>
+          </div>
+        </section>
+      )}
+      {section === 'models' && (
+        <>
           <div className="privacy-strip">
             <ShieldCheck size={18} />
             <p>
               {window.chat2tasksDesktop || window.chat2tasksTauri
-                ? 'API keys are encrypted on this computer and are not shown after saving. Conversations go only to your selected model connection. Use Move your workspace to create an encrypted backup.'
+                ? 'API keys are encrypted on this computer and are not shown after saving. Conversations go only to your selected model connection. Use Move workspace to create an encrypted backup.'
                 : 'API keys are encrypted on your server and never sent back to this browser. Conversations go only to your selected model connection. Keep the data volume and its vault key backed up together.'}
             </p>
           </div>
@@ -634,16 +788,28 @@ export function SettingsPanel({ tab, config, onSave, notify, onImportWorkspace }
           />
         </>
       )}
-      {tab === 'models' && <CompanionSettings notify={notify} />}
-      {tab === 'models' && <AttentionSettings notify={notify} />}
-      {tab === 'models' && <WorkspaceTransfer notify={notify} onImport={onImportWorkspace} />}
-      <div className="settings-save-bottom">
-        <button className="button primary" disabled={saving} onClick={() => void save()}>
-          <Check size={14} />
-          {saving ? 'Saving…' : 'Save changes'}
-        </button>
-        <span>Changes are saved to this workspace.</span>
+      <div hidden={section !== 'browser'}>
+        <CompanionSettings notify={notify} />
       </div>
+      <div hidden={section !== 'attention'}>
+        <AttentionSettings notify={notify} />
+      </div>
+      <div hidden={section !== 'workspace'}>
+        <WorkspaceTransfer notify={notify} onImport={onImportWorkspace} />
+      </div>
+      {savesSettings && (
+        <div className="settings-save-bottom">
+          <button
+            className="button primary"
+            disabled={saving || !hasChanges}
+            onClick={() => void save()}
+          >
+            <Check size={14} />
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+          <span>{hasChanges ? 'You have unsaved changes.' : 'All changes saved.'}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -731,8 +897,8 @@ function WorkspaceTransfer({
         <div>
           <h2>Move your workspace</h2>
           <p>
-            Save tasks, notes, conversations, cached images and saved connection keys in an
-            encrypted file.
+            Save tasks, notes, conversations, cached images and saved model keys in an encrypted
+            file. This does not move your WhatsApp server or its linked session.
           </p>
         </div>
       </div>
@@ -750,7 +916,7 @@ function WorkspaceTransfer({
         </small>
       </div>
       <div className="card-footer">
-        <span>WhatsApp will need to be linked again on the new computer.</span>
+        <span>Your transfer file is encrypted.</span>
         <button
           className="button secondary"
           disabled={busy || passphrase.length < 8}

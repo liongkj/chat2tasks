@@ -31,13 +31,23 @@ export async function waitForDesktopGateway(url: string, signal: AbortSignal) {
   if (!signal.aborted) throw new Error('WhatsApp could not start. Quit Chat2Tasks and try again.');
 }
 
-export async function configureDesktopGateway(store: Store) {
-  const url = process.env.DESKTOP_OPENWA_URL;
-  const keyFile = process.env.DESKTOP_OPENWA_KEY_FILE;
-  const origin = process.env.PUBLIC_ORIGIN;
-  if (!url || !keyFile || !origin) return;
-  const key = (await readFile(keyFile, 'utf8')).trim();
+export async function configureDesktopGateway(store: Store, env: NodeJS.ProcessEnv = process.env) {
+  const mode = env.DESKTOP_GATEWAY_MODE === 'remote' ? 'remote' : 'local';
+  const origin = env.PUBLIC_ORIGIN;
+  if (!origin) return;
   const settings = store.settings();
+  const gateway = settings.desktopGateway;
+  const changed = gateway.activeMode !== mode;
+  const chats = changed
+    ? mode === 'local'
+      ? gateway.localChats
+      : gateway.remoteChats
+    : settings.chats;
+  const key =
+    mode === 'local'
+      ? (await readFile(env.DESKTOP_OPENWA_KEY_FILE!, 'utf8')).trim()
+      : store.secret('remote-openwa');
+  const url = mode === 'local' ? (env.DESKTOP_OPENWA_URL ?? '') : gateway.remoteUrl;
   const profiles = settings.profiles.some((profile) => profile.kind === 'codex')
     ? settings.profiles
     : [
@@ -49,11 +59,22 @@ export async function configureDesktopGateway(store: Store) {
       ...settings,
       profiles,
       openwaUrl: url,
-      webhookUrl: origin + '/api/webhooks/openwa',
+      webhookUrl: mode === 'local' ? origin + '/api/webhooks/openwa' : '',
+      chats,
+      desktopGateway: {
+        ...gateway,
+        activeMode: mode,
+        ...(changed
+          ? gateway.activeMode === 'local'
+            ? { localChats: settings.chats }
+            : { remoteChats: settings.chats }
+          : {}),
+      },
     },
-    secrets: { openwa: key },
-    removeSecrets: [],
+    secrets: key ? { openwa: key } : {},
+    removeSecrets: key ? [] : ['openwa'],
   });
+  store.setMeta('desktop_gateway_restart_required', false);
 }
 
 export async function registerDesktop(

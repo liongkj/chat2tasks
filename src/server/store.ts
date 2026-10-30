@@ -185,6 +185,13 @@ export class Store {
       this.saveSettings({
         settings: {
           openwaUrl: legacy.openwa_api_url ?? '',
+          desktopGateway: {
+            mode: 'local',
+            activeMode: 'local',
+            remoteUrl: '',
+            localChats: [],
+            remoteChats: [],
+          },
           chats:
             legacy.session_id && legacy.chat_id
               ? [
@@ -334,6 +341,9 @@ export class Store {
         .all()
         .map((r) => IdRow.parse(r).id)
         .filter((id) => id !== 'webhook-signing'),
+      desktopGatewayRestartRequired:
+        this.settings().desktopGateway.mode !== this.settings().desktopGateway.activeMode ||
+        this.metaValue('desktop_gateway_restart_required') === true,
       webhook: {
         registeredSessions:
           this.settings().webhookUrl === this.metaValue('registered_webhook_url')
@@ -400,6 +410,7 @@ export class Store {
   saveSettings(update: SettingsUpdate) {
     const allowed = new Set([
       'openwa',
+      'remote-openwa',
       ...update.settings.profiles.flatMap((p) => [p.id + ':key', p.id + ':gateway']),
     ]);
     if ([...Object.keys(update.secrets), ...update.removeSecrets].some((id) => !allowed.has(id)))

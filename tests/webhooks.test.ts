@@ -11,6 +11,8 @@ import { Sync } from '../src/server/sync.js';
 import { Webhooks } from '../src/server/webhooks.js';
 import { MessageSchema } from '../src/shared/schema.js';
 import { Threads } from '../src/server/threads.js';
+import { Server as SocketServer } from 'socket.io';
+import { RemoteEvents } from '../src/server/remote-events.js';
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-webhook-')),
     store = new Store(dir);
@@ -53,6 +55,65 @@ function fixture() {
     },
   };
 }
+
+test('a remote server delivers messages and reconnects without enabling automatic processing', async () => {
+  const f = fixture();
+  const upstream = createServer();
+  const io = new SocketServer(upstream);
+  const events = io.of('/events');
+  let subscribed = 0;
+  events.use((socket, next) =>
+    next(socket.handshake.auth.apiKey === 'sample-key' ? undefined : new Error('unauthorized')),
+  );
+  events.on('connection', (socket) =>
+    socket.on('message', (value: { type: string; sessionId: string }) => {
+      if (value.type !== 'subscribe') return;
+      subscribed++;
+      socket.emit('message', { type: 'subscribed', sessionId: value.sessionId });
+    }),
+  );
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+  f.store.saveSettings({
+    settings: {
+      ...f.store.settings(),
+      openwaUrl: `http://127.0.0.1:${address.port}`,
+      trigger: { mode: 'manual' },
+    },
+    secrets: { openwa: 'sample-key' },
+    removeSecrets: [],
+  });
+  const remote = new RemoteEvents(f.store, f.hooks, f.sync);
+  const waitFor = async (condition: () => boolean) => {
+    const deadline = Date.now() + 5000;
+    while (!condition() && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(condition());
+  };
+  try {
+    remote.start();
+    await waitFor(() => subscribed === 1 && f.store.jobs().length === 1);
+    f.store.db.exec('DELETE FROM chat_jobs');
+    events.emit('message', {
+      type: 'event',
+      payload: {
+        event: 'message.received',
+        sessionId: 's',
+        data: { id: 'fake-message', chatId: 'chat', body: 'Sample request' },
+      },
+    });
+    await waitFor(() => f.store.messages().some((message) => message.body === 'Sample request'));
+    assert.equal(f.store.jobs().length, 0);
+    assert.equal(f.store.snapshot().usage.calls, 0);
+    for (const socket of events.sockets.values()) socket.conn.close();
+    await waitFor(() => subscribed >= 2 && f.store.jobs().length === 1);
+  } finally {
+    remote.stop();
+    await new Promise<void>((resolve) => io.close(() => resolve()));
+    f.close();
+  }
+});
 test('only the exact signed body can enqueue work, and webhook retries do not reset the quiet period', () => {
   const f = fixture();
   try {

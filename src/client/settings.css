@@ -1,5 +1,5 @@
 .settings-page {
-  max-width: 1100px;
+  max-width: 920px;
   width: 100%;
   padding: 36px 32px 60px;
   margin: 0 auto;
@@ -31,6 +31,63 @@
 }
 .settings-page-heading .page-description {
   margin-bottom: 0;
+}
+.settings-unsaved {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.gateway-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.gateway-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border, #e4e7e6);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.gateway-option.selected {
+  border-color: #2d806b;
+  background: #f2faf6;
+}
+.gateway-option input {
+  margin-top: 3px;
+  accent-color: #26775f;
+}
+.gateway-option span {
+  display: grid;
+  gap: 5px;
+}
+.gateway-option small,
+.gateway-note {
+  color: #606f69;
+  line-height: 1.5;
+}
+.gateway-details {
+  margin-top: 20px;
+}
+.gateway-note {
+  margin: 16px 0 0;
+  font-size: 13px;
+}
+.gateway-restart {
+  margin: 14px 0 0;
+  padding: 11px 13px;
+  border-radius: 8px;
+  background: #fff6df;
+  color: #704e12;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .gateway-options {
+    grid-template-columns: 1fr;
+  }
 }
 .settings-card {
   border: 1px solid var(--line);

@@ -162,10 +162,17 @@ export async function importWorkspace(source: string, destination: string, passp
           ...settings,
           openwaUrl: '',
           webhookUrl: '',
+          desktopGateway: {
+            mode: 'local',
+            activeMode: 'local',
+            remoteUrl: '',
+            localChats: [],
+            remoteChats: [],
+          },
           chats: settings.chats.map((chat) => ({ ...chat, enabled: false })),
         },
         secrets: {},
-        removeSecrets: ['openwa'],
+        removeSecrets: ['openwa', 'remote-openwa'],
       });
       restored.db.exec('DELETE FROM chat_jobs');
       restored.setMeta('registered_webhook_url', '');

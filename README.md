@@ -8,7 +8,9 @@ Self-hosted, Docker based, and written in TypeScript: React + Vite, Fastify, and
 
 ## macOS app
 
-The Mac app runs the workspace, an OpenWA gateway, and the Codex CLI on the Mac. On first launch it guides you through linking WhatsApp, choosing conversations, signing in to Codex in your browser, and setting your attention preferences. The workspace is stored on the Mac, and processing requires the Mac to be awake. Closing the window leaves the app running in the menu bar; choose **Quit Chat2Tasks** there to stop it.
+The Mac app runs the workspace and Codex CLI on the Mac, with either its own OpenWA gateway or an existing remote OpenWA server. On first launch it guides you through linking WhatsApp, choosing conversations, signing in to Codex in your browser, and setting your attention preferences. The workspace is stored on the Mac, and processing requires the Mac to be awake. Closing the window leaves the app running in the menu bar; choose **Quit Chat2Tasks** there to stop it.
+
+After setup, open **Settings → WhatsApp & chats** to choose **This computer** or **Another server**. For a remote server, enter its OpenWA address and API key, save, then quit and reopen Chat2Tasks. The server must be reachable from the Mac and support OpenWA's `/events` Socket.IO interface as well as its API. Find its sessions and choose the conversations to follow. The local gateway does not start in remote mode. Each server retains its own session and followed-chat selection; switching does not move or sign out a WhatsApp session, and the workspace stays on the Mac. On reconnect, Chat2Tasks checks for newer messages; edits to older messages during a disconnection may be missed.
 
 The bundled gateway is an unofficial WhatsApp connection. Its maintainers warn that accounts can be restricted and advise against linking a primary number. It may retain history separately from the conversations selected for processing. Selected conversation evidence and screenshots are sent to the configured model provider. Codex sign-in and an OpenAI Decisions API connection are separate; a ChatGPT subscription does not supply a Decisions API key.
 
@@ -21,7 +23,7 @@ npm run mac:package
 
 The build downloads the pinned OpenWA release and its matching browser, and places the app in `release/mac-arm64/Chat2Tasks.app` on Apple Silicon or the corresponding architecture directory on Intel. It is not signed or notarized for distribution. The OpenWA license is included with the bundled gateway. The build's process supervision and CLI onboarding are inspired by BB's open-source architecture; this implementation does not require BB to be installed.
 
-To move an existing workspace, first update the source installation to a version with **Settings → Move your workspace**. Download an encrypted transfer with a passphrase, then choose it on the Mac app's welcome screen. Tasks, evidence, notes, status, preferences, and cached images are copied; connections are paused and must be linked again. Pause the old workspace before finishing setup on the new one so only one copy processes messages. The old workspace is not deleted. The transfer contains saved provider credentials protected by the passphrase, so store it safely and delete it when no longer needed.
+To move an existing workspace, first update the source installation to a version with **Settings → Move workspace**. Download an encrypted transfer with a passphrase, then choose it on the Mac app's welcome screen. Tasks, evidence, notes, status, preferences, and cached images are copied; connections are paused and must be linked again. Pause the old workspace before finishing setup on the new one so only one copy processes messages. The old workspace is not deleted. The transfer contains saved provider credentials protected by the passphrase, so store it safely and delete it when no longer needed.
 
 ## Start with Docker
 
@@ -32,7 +34,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open **http://127.0.0.1:2786**. Open **Settings → Connections** and enter your OpenWA server URL and API key. Find a session and its chats, or add a chat by ID. New chats start paused; activate only the conversations you want to follow. Enter a callback URL reachable from OpenWA, ending in `/api/webhooks/openwa`, then choose **Connect & test webhooks**. The app registers signed message and session events and verifies a delivery. For a private Docker hostname, add only that exact receiver hostname to OpenWA’s `SSRF_ALLOWED_HOSTS`; keep SSRF protection enabled.
+Open **http://127.0.0.1:2786**. Open **Settings → WhatsApp & chats** and enter your OpenWA server URL and API key. Find a session and its chats, or add a chat by ID. New chats start paused; activate only the conversations you want to follow. Enter a callback URL reachable from OpenWA, ending in `/api/webhooks/openwa`, then choose **Connect & test webhooks**. The app registers signed message and session events and verifies a delivery. For a private Docker hostname, add only that exact receiver hostname to OpenWA’s `SSRF_ALLOWED_HOSTS`; keep SSRF protection enabled.
 
 OpenWA is a separate prerequisite. Point Chat2Tasks at an existing compatible OpenWA installation. If it is another Compose stack, attach Chat2Tasks to that stack’s network with a Compose override. `localhost` inside the container refers to Chat2Tasks, not your host; on Docker Desktop use `host.docker.internal` for a host service. On Linux configure `host-gateway` or a shared Docker network.
 

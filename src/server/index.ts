@@ -30,6 +30,7 @@ import { registerThreadRoutes } from './thread-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
 import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
+import { RemoteEvents } from './remote-events.js';
 
 const port = z.coerce
   .number()
@@ -38,7 +39,9 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
-if (process.env.CHAT2TASKS_DESKTOP === 'true') await configureDesktopGateway(store);
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
+if (desktop) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
 const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
@@ -52,6 +55,8 @@ const organiser = new Threading(
   () => sync.running || store.status().debouncing,
 );
 const webhooks = new Webhooks(store, openwa, sync);
+const remoteEvents =
+  remoteGateway && syncEnabled ? new RemoteEvents(store, webhooks, sync) : undefined;
 const server = Fastify({
   logger: { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie'] },
   bodyLimit: 2_000_000,
@@ -151,7 +156,7 @@ server.setErrorHandler((error, request, reply) => {
   // Provider response bodies and supplied credentials never enter logs or API errors.
   const safe =
     error instanceof Error &&
-    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
+    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|Enter the remote WhatsApp|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
       error.message,
     );
   if (safe) return reply.code(400).send({ error: error.message });
@@ -231,7 +236,23 @@ server.post('/api/preferences', (request) => store.savePreferences(request.body)
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);
+  const previous = store.settings();
+  if (desktop && update.settings.desktopGateway.mode === 'remote') {
+    const hasKey =
+      Boolean(update.secrets['remote-openwa']?.trim()) ||
+      (!update.removeSecrets.includes('remote-openwa') && Boolean(store.secret('remote-openwa')));
+    if (!update.settings.desktopGateway.remoteUrl || !hasKey)
+      throw new Error('Enter the remote WhatsApp server address and API key.');
+  }
   store.saveSettings(update);
+  if (
+    remoteGateway &&
+    (previous.desktopGateway.remoteUrl !== update.settings.desktopGateway.remoteUrl ||
+      Boolean(update.secrets['remote-openwa']?.trim()) ||
+      update.removeSecrets.includes('remote-openwa'))
+  )
+    store.setMeta('desktop_gateway_restart_required', true);
+  remoteEvents?.reconfigure();
   if (syncEnabled) sync.reconfigure();
   return store.publicSettings();
 });
@@ -388,7 +409,6 @@ server.post('/api/handoff', async (request, reply) => {
 if (process.env.CHAT2TASKS_DESKTOP === 'true')
   await registerDesktop(server, store, openwa, sync, webhooks);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
-const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
 const startupAbort = new AbortController();
 if (desktop) {
   sync.stop();
@@ -398,7 +418,8 @@ await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
 async function startBackground() {
   if (desktop) {
     try {
-      await waitForDesktopGateway(process.env.DESKTOP_OPENWA_URL ?? '', startupAbort.signal);
+      if (!remoteGateway)
+        await waitForDesktopGateway(process.env.DESKTOP_OPENWA_URL ?? '', startupAbort.signal);
     } catch {
       if (!startupAbort.signal.aborted)
         store.status({
@@ -408,7 +429,7 @@ async function startBackground() {
       return;
     }
     if (startupAbort.signal.aborted) return;
-    if (store.metaValue('desktop_setup_complete') === true) {
+    if (!remoteGateway && store.metaValue('desktop_setup_complete') === true) {
       const sessions = [
         ...new Set(
           store
@@ -430,6 +451,7 @@ async function startBackground() {
     store.status({ syncing: false, phase: 'Workspace ready' });
   }
   if (syncEnabled) sync.start();
+  remoteEvents?.start();
   organiser.start();
 }
 const starting = startBackground();
@@ -437,6 +459,7 @@ async function shutdown() {
   startupAbort.abort();
   const threadJob = organiser.stop();
   sync.stop();
+  remoteEvents?.stop();
   await server.close();
   await starting;
   await threadJob;

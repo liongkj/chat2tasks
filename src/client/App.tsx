@@ -38,7 +38,16 @@ import { ReviewView } from './ReviewView.js';
 import { WaitingView } from './WaitingView.js';
 import { WorkspaceImport } from './WorkspaceImport.js';
 import { deskTitle, matchesTaskFilter, tasksForDesk } from './taskDesk.js';
-import { useWorkspaceLocation, type WorkspaceView } from './taskLocation.js';
+import { useWorkspaceLocation, type SettingsSection, type WorkspaceView } from './taskLocation.js';
+
+const settingsSections: { id: SettingsSection; label: string }[] = [
+  { id: 'conversations', label: 'WhatsApp & chats' },
+  { id: 'models', label: 'AI models' },
+  { id: 'automation', label: 'Automation' },
+  { id: 'attention', label: 'Attention' },
+  { id: 'workspace', label: 'Move workspace' },
+  { id: 'browser', label: 'Browser' },
+];
 
 const empty: Snapshot = {
   demo: false,
@@ -242,6 +251,7 @@ export function App() {
       query: '',
       filter: 'open',
       kind: 'all',
+      settingsSection: view === 'connections' ? 'conversations' : 'models',
     });
   };
   useEffect(() => {
@@ -258,6 +268,7 @@ export function App() {
         query: '',
         filter: 'open',
         kind: 'all',
+        settingsSection: 'models',
       });
     });
   }, [updateLocation]);
@@ -922,23 +933,28 @@ export function App() {
             ) : (
               <div className="settings-shell">
                 <nav className="settings-navigation" aria-label="Settings sections">
-                  <button
-                    className={location.view === 'settings' ? 'selected' : ''}
-                    onClick={() => navigate('settings')}
-                  >
-                    Models & automation
-                  </button>
-                  <button
-                    className={location.view === 'connections' ? 'selected' : ''}
-                    onClick={() => navigate('connections')}
-                  >
-                    Connections
-                  </button>
+                  {settingsSections.map((section) => {
+                    const selected = (location.settingsSection ?? 'models') === section.id;
+                    return (
+                      <button
+                        key={section.id}
+                        className={selected ? 'selected' : ''}
+                        aria-current={selected ? 'page' : undefined}
+                        onClick={() =>
+                          updateLocation({
+                            view: section.id === 'conversations' ? 'connections' : 'settings',
+                            settingsSection: section.id,
+                          })
+                        }
+                      >
+                        {section.label}
+                      </button>
+                    );
+                  })}
                 </nav>
                 {config ? (
                   <SettingsPanel
-                    key={location.view}
-                    tab={location.view === 'connections' ? 'chats' : 'models'}
+                    section={location.settingsSection ?? 'models'}
                     config={config}
                     onSave={(next) => {
                       setConfig(next);

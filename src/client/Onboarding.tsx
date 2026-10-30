@@ -237,7 +237,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                 <div className="onboarding-import">
                   <h2>Already have a workspace?</h2>
                   <p>
-                    In your existing workspace, open Settings → Move your workspace and download an
+                    In your existing workspace, open Settings → Move workspace and download an
                     encrypted transfer.
                   </p>
                   <button

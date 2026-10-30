@@ -5,6 +5,7 @@ const { createServer } = require('node:net');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { replaceWorkspace } = require('./workspace-replace.cjs');
+const { workspaceGatewayMode } = require('./gateway-mode.cjs');
 
 const resources = process.env.C2T_TAURI_RESOURCES;
 const data = process.env.C2T_TAURI_DATA;
@@ -32,7 +33,11 @@ const codex = join(
   'bin',
   process.platform === 'win32' ? 'codex.exe' : 'codex',
 );
-let gateway, server, gatewayPort, serverPort;
+let gateway,
+  server,
+  gatewayPort,
+  serverPort,
+  gatewayMode = 'local';
 let stopping = false;
 
 function cleanEnv() {
@@ -64,8 +69,7 @@ function freePort() {
 }
 async function ready(port, child, name) {
   for (let attempt = 0; attempt < 120; attempt++) {
-    if (child.exitCode !== null || child.signalCode !== null)
-      throw new Error(`${name} stopped.`);
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error(`${name} stopped.`);
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
         signal: AbortSignal.timeout(500),
@@ -120,6 +124,26 @@ async function startGateway() {
 async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  if (!demo) {
+    gatewayMode = workspaceGatewayMode(workspace);
+    if (gatewayMode === 'remote') {
+      await stop(gateway);
+      gateway = undefined;
+    } else if (!gateway || gateway.exitCode !== null || gateway.signalCode !== null) {
+      const existingKey = await access(join(gatewayData, 'data', '.api-key')).then(
+        () => true,
+        () => false,
+      );
+      const gatewayReady = startGateway().then(
+        () => null,
+        (error) => error,
+      );
+      if (!existingKey) {
+        const error = await gatewayReady;
+        if (error) throw error;
+      }
+    }
+  }
   const origin = `http://127.0.0.1:${serverPort}`;
   server = spawn(process.execPath, [join(runtime, 'dist', 'server', 'index.js')], {
     cwd: runtime,
@@ -140,6 +164,7 @@ async function startServer() {
       CODEX_BIN: codex,
       DESKTOP_OPENWA_URL: `http://127.0.0.1:${gatewayPort}`,
       DESKTOP_OPENWA_KEY_FILE: join(gatewayData, 'data', '.api-key'),
+      DESKTOP_GATEWAY_MODE: gatewayMode,
       CHAT2TASKS_TAURI_ORIGIN: tauriOrigin,
       CHAT2TASKS_TAURI_TOKEN: token,
     },
@@ -174,22 +199,14 @@ async function main() {
   do {
     serverPort = await freePort();
   } while (serverPort === gatewayPort);
-  if (!demo) {
-    const existingKey = await access(join(gatewayData, 'data', '.api-key')).then(
-      () => true,
-      () => false,
-    );
-    const gatewayReady = startGateway().then(
-      () => null,
-      (error) => error,
-    );
-    if (!existingKey) {
-      const error = await gatewayReady;
-      if (error) throw error;
-    }
-  }
   await startServer();
-  report({ type: 'ready', origin: `http://127.0.0.1:${serverPort}`, token, demo });
+  report({
+    type: 'ready',
+    origin: `http://127.0.0.1:${serverPort}`,
+    token,
+    demo,
+    ...(testDiagnostics ? { gatewayMode, localGatewayRunning: Boolean(gateway) } : {}),
+  });
 }
 let queue = Promise.resolve();
 const input = createInterface({ input: process.stdin });

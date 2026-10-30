@@ -54,6 +54,13 @@ export class Webhooks {
       throw new Error('Webhook event header mismatch');
     if (idempotencyHeader && event.idempotencyKey && idempotencyHeader !== event.idempotencyKey)
       throw new Error('Webhook identity mismatch');
+    return this.acceptEvent(event, raw, idempotencyHeader);
+  }
+  receiveRemote(payload: unknown) {
+    const event = EventSchema.parse(payload);
+    return this.acceptEvent(event, Buffer.from(JSON.stringify(event)));
+  }
+  private acceptEvent(event: z.infer<typeof EventSchema>, raw: Buffer, idempotencyHeader?: string) {
     const key = hash([
       event.sessionId,
       event.event,
