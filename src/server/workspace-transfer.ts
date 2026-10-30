@@ -176,7 +176,15 @@ export async function importWorkspace(source: string, destination: string, passp
       restored.close();
     }
     await rename(staged, destination);
-  } finally {
-    await rm(staged, { recursive: true, force: true });
+  } catch (error) {
+    try {
+      await rm(staged, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Could not restore the workspace or remove its temporary files.',
+      );
+    }
+    throw error;
   }
 }
