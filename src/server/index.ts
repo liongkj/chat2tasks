@@ -30,6 +30,13 @@ import { registerThreadRoutes } from './thread-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
 import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
+import { RemoteEvents } from './remote-events.js';
+import {
+  desktopSessionCookie,
+  desktopSignInCsp,
+  desktopSignInPage,
+  validDesktopSession,
+} from './desktop-session.js';
 
 const port = z.coerce
   .number()
@@ -38,7 +45,9 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
-if (process.env.CHAT2TASKS_DESKTOP === 'true') await configureDesktopGateway(store);
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
+if (desktop) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
 const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
@@ -52,11 +61,37 @@ const organiser = new Threading(
   () => sync.running || store.status().debouncing,
 );
 const webhooks = new Webhooks(store, openwa, sync);
+const remoteEvents =
+  remoteGateway && syncEnabled ? new RemoteEvents(store, webhooks, sync) : undefined;
 const server = Fastify({
   logger: { level: 'info', redact: ['req.headers.authorization', 'req.headers.cookie'] },
   bodyLimit: 2_000_000,
   disableRequestLogging: true,
 });
+const additionalOrigins = (process.env.ADDITIONAL_ORIGINS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map((value) => {
+    const url = new URL(value);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== '/' ||
+      url.search ||
+      url.hash
+    )
+      throw new Error(
+        'ADDITIONAL_ORIGINS must contain exact HTTP(S) origins without paths or credentials.',
+      );
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+      if (url.protocol !== 'https:') throw new Error('Remote workspace addresses must use HTTPS.');
+      if (!process.env.APP_PASSWORD)
+        throw new Error('Set APP_PASSWORD before adding a remote workspace address.');
+    }
+    return url.origin;
+  });
 const origins = new Set([
   `http://127.0.0.1:${port}`,
   `http://localhost:${port}`,
@@ -64,6 +99,7 @@ const origins = new Set([
     ? ['http://127.0.0.1:5173', 'http://localhost:5173']
     : []),
   ...(process.env.PUBLIC_ORIGIN ? [new URL(process.env.PUBLIC_ORIGIN).origin] : []),
+  ...additionalOrigins,
 ]);
 const allowedHosts = new Set([...origins].map((origin) => new URL(origin).host));
 const tauriOrigin = process.env.CHAT2TASKS_TAURI_ORIGIN;
@@ -103,6 +139,12 @@ server.addHook('onRequest', async (request, reply) => {
       .code(403)
       .send({ error: 'Host is not allowed. Set PUBLIC_ORIGIN for your reverse proxy.' });
   if (request.url === '/api/health') return;
+  if (request.url === '/desktop-sign-in' && ['GET', 'POST'].includes(request.method)) {
+    // WebKit sends a null Origin for form posts under no-referrer, so retain the
+    // origin only for this same-origin sign-in page.
+    reply.header('Referrer-Policy', 'same-origin');
+    return;
+  }
   if (request.url.startsWith('/api/companion/')) return;
   if (request.routeOptions.url === '/mcp') return;
   if (tauriOrigin && request.headers.origin === tauriOrigin) {
@@ -125,7 +167,10 @@ server.addHook('onRequest', async (request, reply) => {
   if (password) {
     const expected = Buffer.from(`Basic ${Buffer.from(`admin:${password}`).toString('base64')}`),
       actual = Buffer.from(request.headers.authorization ?? '');
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual))
+    if (
+      (expected.length !== actual.length || !timingSafeEqual(expected, actual)) &&
+      !validDesktopSession(request.headers.cookie ?? '', store.key, password)
+    )
       return reply
         .header('WWW-Authenticate', 'Basic realm="Chat2Tasks", charset="UTF-8"')
         .code(401)
@@ -151,7 +196,7 @@ server.setErrorHandler((error, request, reply) => {
   // Provider response bodies and supplied credentials never enter logs or API errors.
   const safe =
     error instanceof Error &&
-    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
+    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|Enter the remote WhatsApp|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
       error.message,
     );
   if (safe) return reply.code(400).send({ error: error.message });
@@ -161,6 +206,45 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.addContentTypeParser(
+  'application/x-www-form-urlencoded',
+  { parseAs: 'string', bodyLimit: 4096 },
+  (_request, body, done) => {
+    done(null, Object.fromEntries(new URLSearchParams(String(body))));
+  },
+);
+server.get('/desktop-sign-in', (request, reply) => {
+  if (
+    !process.env.APP_PASSWORD ||
+    validDesktopSession(request.headers.cookie ?? '', store.key, process.env.APP_PASSWORD)
+  )
+    return reply.code(303).header('Location', '/').send();
+  return reply
+    .header('Content-Security-Policy', desktopSignInCsp)
+    .type('text/html')
+    .send(desktopSignInPage());
+});
+server.post('/desktop-sign-in', (request, reply) => {
+  const origin = request.headers.origin;
+  if (!origin || !origins.has(origin) || new URL(origin).host !== request.headers.host)
+    return reply.code(403).send({ error: 'Invalid request origin' });
+  const password = process.env.APP_PASSWORD;
+  if (!password) return reply.code(303).header('Location', '/').send();
+  const input = z.object({ password: z.string().max(1024) }).safeParse(request.body);
+  const expected = Buffer.from(password);
+  const actual = Buffer.from(input.success ? input.data.password : '');
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual))
+    return reply
+      .code(401)
+      .header('Content-Security-Policy', desktopSignInCsp)
+      .type('text/html')
+      .send(desktopSignInPage(true));
+  return reply
+    .code(303)
+    .header('Location', '/')
+    .header('Set-Cookie', desktopSessionCookie(store.key, password, origin.startsWith('https://')))
+    .send();
+});
 await registerCompanion(
   server,
   new Companion(store, sync, syncEnabled),
@@ -231,7 +315,23 @@ server.post('/api/preferences', (request) => store.savePreferences(request.body)
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);
+  const previous = store.settings();
+  if (desktop && update.settings.desktopGateway.mode === 'remote') {
+    const hasKey =
+      Boolean(update.secrets['remote-openwa']?.trim()) ||
+      (!update.removeSecrets.includes('remote-openwa') && Boolean(store.secret('remote-openwa')));
+    if (!update.settings.desktopGateway.remoteUrl || !hasKey)
+      throw new Error('Enter the remote WhatsApp server address and API key.');
+  }
   store.saveSettings(update);
+  if (
+    remoteGateway &&
+    (previous.desktopGateway.remoteUrl !== update.settings.desktopGateway.remoteUrl ||
+      Boolean(update.secrets['remote-openwa']?.trim()) ||
+      update.removeSecrets.includes('remote-openwa'))
+  )
+    store.setMeta('desktop_gateway_restart_required', true);
+  remoteEvents?.reconfigure();
   if (syncEnabled) sync.reconfigure();
   return store.publicSettings();
 });
@@ -388,7 +488,6 @@ server.post('/api/handoff', async (request, reply) => {
 if (process.env.CHAT2TASKS_DESKTOP === 'true')
   await registerDesktop(server, store, openwa, sync, webhooks);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
-const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
 const startupAbort = new AbortController();
 if (desktop) {
   sync.stop();
@@ -398,7 +497,8 @@ await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
 async function startBackground() {
   if (desktop) {
     try {
-      await waitForDesktopGateway(process.env.DESKTOP_OPENWA_URL ?? '', startupAbort.signal);
+      if (!remoteGateway)
+        await waitForDesktopGateway(process.env.DESKTOP_OPENWA_URL ?? '', startupAbort.signal);
     } catch {
       if (!startupAbort.signal.aborted)
         store.status({
@@ -408,7 +508,7 @@ async function startBackground() {
       return;
     }
     if (startupAbort.signal.aborted) return;
-    if (store.metaValue('desktop_setup_complete') === true) {
+    if (!remoteGateway && store.metaValue('desktop_setup_complete') === true) {
       const sessions = [
         ...new Set(
           store
@@ -430,6 +530,7 @@ async function startBackground() {
     store.status({ syncing: false, phase: 'Workspace ready' });
   }
   if (syncEnabled) sync.start();
+  remoteEvents?.start();
   organiser.start();
 }
 const starting = startBackground();
@@ -437,6 +538,7 @@ async function shutdown() {
   startupAbort.abort();
   const threadJob = organiser.stop();
   sync.stop();
+  remoteEvents?.stop();
   await server.close();
   await starting;
   await threadJob;

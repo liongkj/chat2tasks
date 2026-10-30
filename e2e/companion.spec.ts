@@ -313,9 +313,11 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await expect(moreTasks).toBeFocused();
     await expect(page.getByRole('menu')).not.toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Browser', exact: true }).click();
     await expect(
       page.getByRole('heading', { name: 'Chrome companion', exact: true }),
     ).toBeVisible();
+    await page.getByRole('button', { name: 'AI models', exact: true }).click();
     await page.getByRole('button', { name: 'Add connection', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCSS('transition-duration', '0.2s, 0.2s');
@@ -786,7 +788,7 @@ test('add conversation dialog selects a discovered chat from the chosen session'
     });
     await page.goto(base + '?view=tasks');
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Connections', exact: true }).click();
+    await page.getByRole('button', { name: 'WhatsApp & chats', exact: true }).click();
     await page.getByLabel('OpenWA API URL').fill('http://127.0.0.1:9999');
     await page.getByRole('button', { name: 'Add chat' }).click();
     const dialog = page.getByRole('dialog');

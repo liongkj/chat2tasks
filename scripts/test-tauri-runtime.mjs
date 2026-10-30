@@ -64,6 +64,7 @@ async function start(demo) {
     const headers = { Origin: origin, 'X-Chat2Tasks-Session': ready.token };
     return {
       data,
+      ready,
       clearDiagnostics() {
         diagnostics = '';
       },
@@ -150,7 +151,82 @@ try {
   );
   response = await preview.fetch('/api/desktop/whatsapp/status');
   assert.equal((await response.json()).status, 'not_connected');
-  process.stdout.write('Bun sample, unlinked gateway, and workspace transfer passed.\n');
+  const gatewayKey = await readFile(join(preview.data, 'gateway', 'data', '.api-key'));
+  response = await preview.fetch('/api/settings');
+  let config = await response.json();
+  response = await preview.fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        ...config.settings,
+        desktopGateway: {
+          ...config.settings.desktopGateway,
+          mode: 'remote',
+          remoteUrl: 'http://127.0.0.1:1',
+        },
+      },
+      secrets: { 'remote-openwa': 'fictional-key' },
+      removeSecrets: [],
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).desktopGatewayRestartRequired, true);
+  await preview.stop();
+  preview = await start(false);
+  assert.equal(preview.ready.gatewayMode, 'remote');
+  assert.equal(preview.ready.localGatewayRunning, false);
+  config = await (await preview.fetch('/api/settings')).json();
+  assert.equal(config.settings.desktopGateway.activeMode, 'remote');
+  assert.equal((await (await preview.fetch('/api/state')).json()).tasks.length, 8);
+  assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  imported = await preview.request({ action: 'import', path: transfer, passphrase });
+  assert.equal(imported.ok, true, imported.error);
+  assert.equal(imported.gatewayMode, 'local');
+  assert.equal(imported.resumeSessions, false);
+  assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  config = await (await preview.fetch('/api/settings')).json();
+  response = await preview.fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        ...config.settings,
+        desktopGateway: {
+          ...config.settings.desktopGateway,
+          mode: 'remote',
+          remoteUrl: 'http://127.0.0.1:1',
+        },
+      },
+      secrets: { 'remote-openwa': 'fictional-key' },
+      removeSecrets: [],
+    }),
+  });
+  assert.equal(response.status, 200);
+  await preview.stop();
+  preview = await start(false);
+  config = await (await preview.fetch('/api/settings')).json();
+  response = await preview.fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        ...config.settings,
+        desktopGateway: { ...config.settings.desktopGateway, mode: 'local' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    }),
+  });
+  assert.equal(response.status, 200);
+  await preview.stop();
+  preview = await start(false);
+  assert.equal(preview.ready.gatewayMode, 'local');
+  assert.equal(preview.ready.resumeSessions, false);
+  assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  process.stdout.write(
+    'Bun sample, workspace transfer, and local/remote server switching passed.\n',
+  );
 } finally {
   await sample?.stop();
   await preview?.stop();

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
+import { createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +12,7 @@ import { Store, hash } from '../src/server/store.js';
 import { OpenWA } from '../src/server/openwa.js';
 import { Sync } from '../src/server/sync.js';
 import { connectionRequest } from '../src/server/ai.js';
+import { desktopSessionCookie, validDesktopSession } from '../src/server/desktop-session.js';
 import { SettingsSchema, MessageSchema } from '../src/shared/schema.js';
 
 test('a desktop workspace opens while WhatsApp starts and reports when it is ready', async () => {
@@ -129,6 +131,291 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     gateway.closeAllConnections();
     await new Promise<void>((resolve) => gateway.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('changing the workspace password invalidates a desktop session', () => {
+  const key = Buffer.alloc(32, 1);
+  const cookie = desktopSessionCookie(key, 'original-password', true);
+  assert.equal(validDesktopSession(cookie, key, 'original-password'), true);
+  assert.equal(validDesktopSession(cookie, key, 'new-password'), false);
+  assert.equal(validDesktopSession(cookie, Buffer.alloc(32, 2), 'original-password'), false);
+});
+
+test('an extra remote workspace address requires an app password even behind another proxy', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'chat2tasks-remote-auth-'));
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      DEMO: 'false',
+      SYNC_DISABLED: 'true',
+      CHAT2TASKS_DESKTOP: 'false',
+      PORT: '2786',
+      PUBLIC_ORIGIN: 'http://127.0.0.1:2786',
+      ADDITIONAL_ORIGINS: 'https://fixture.tailnet.ts.net',
+      APP_PASSWORD: '',
+      TRUST_PROXY_AUTH: 'true',
+      DATA_DIR: directory,
+    },
+  });
+  let error = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    error += chunk.toString();
+  });
+  try {
+    const code = await new Promise<number | null>((resolve) => child.once('exit', resolve));
+    assert.notEqual(code, 0);
+    assert.match(error, /Set APP_PASSWORD before adding a remote workspace address/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a server workspace processes a new message without a connected desktop client', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-always-on-'));
+  const workspace = join(dir, 'workspace');
+  const change = {
+    id: null,
+    title: 'Prepare the report',
+    scope: 'Reporting',
+    note: 'A fictional request',
+    source_ids: [hash(['session', 'chat', 'fixture-message'])],
+    action_steps: ['Prepare the report'],
+    done_when: ['The report is ready'],
+    priority: 'normal',
+    triage_state: 'ready',
+    blocking_question: null,
+  };
+  const upstream = createServer(async (request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    if (request.url?.startsWith('/api/sessions/')) {
+      response.end(JSON.stringify({ messages: [] }));
+      return;
+    }
+    let raw = '';
+    for await (const chunk of request) raw += String(chunk);
+    const body = z
+      .object({ messages: z.array(z.object({ content: z.unknown() })) })
+      .parse(JSON.parse(raw));
+    const review = String(body.messages[1]?.content).startsWith('Evaluate each named question');
+    response.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(
+                review
+                  ? {
+                      answers: [
+                        { name: 'candidate_0', type: 'choice', choice: 'keep', confidence: 0.99 },
+                      ],
+                    }
+                  : { changes: [change] },
+              ),
+            },
+          },
+        ],
+        usage: { total_tokens: 12 },
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+  const store = new Store(workspace);
+  store.saveSettings({
+    settings: {
+      ...store.settings(),
+      openwaUrl: `http://127.0.0.1:${address.port}`,
+      chats: [
+        { id: 'active', name: 'Sample chat', sessionId: 'session', chatId: 'chat', enabled: true },
+      ],
+      profiles: [
+        {
+          id: 'fake',
+          name: 'Fictional model',
+          kind: 'compatible',
+          model: 'fixture',
+          baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        },
+      ],
+      activeProfileId: 'fake',
+      quietSeconds: 0,
+      trigger: { mode: 'automatic', decisionProfileId: null },
+    },
+    secrets: { openwa: 'fake-gateway-key', 'fake:key': 'fake-model-key' },
+    removeSecrets: [],
+  });
+  const signingKey = store.webhookSecret();
+  store.close();
+  const reservation = createServer();
+  await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const reserved = reservation.address();
+  assert.ok(reserved && typeof reserved !== 'string');
+  const port = reserved.port;
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+    cwd: process.cwd(),
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      DEMO: 'false',
+      SYNC_DISABLED: 'false',
+      CHAT2TASKS_DESKTOP: 'false',
+      PORT: String(port),
+      PUBLIC_ORIGIN: base,
+      BIND_HOST: '127.0.0.1',
+      APP_PASSWORD: 'fictional-password',
+      ADDITIONAL_ORIGINS: 'https://fixture.tailnet.ts.net',
+      DATA_DIR: workspace,
+    },
+  });
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 300 && !ready; attempt++) {
+      try {
+        ready = (await fetch(base + '/api/health')).ok;
+      } catch {
+        /* Server is starting. */
+      }
+      if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(ready, 'the separate workspace server started');
+    const call = (path: string, method: string, headers: Record<string, string>, body = '') =>
+      new Promise<number>((resolve, reject) => {
+        const request = httpRequest(base + path, { method, headers }, (response) => {
+          response.resume();
+          response.once('end', () => resolve(response.statusCode ?? 0));
+        });
+        request.once('error', reject);
+        request.end(body);
+      });
+    const tailnetHeaders = {
+      Host: 'fixture.tailnet.ts.net',
+      Origin: 'https://fixture.tailnet.ts.net',
+    };
+    const signIn = (password: string, origin = tailnetHeaders.Origin) =>
+      new Promise<{ status: number; cookie: string; referrerPolicy: string }>((resolve, reject) => {
+        const request = httpRequest(
+          base + '/desktop-sign-in',
+          {
+            method: 'POST',
+            headers: {
+              ...tailnetHeaders,
+              Origin: origin,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          },
+          (response) => {
+            response.resume();
+            response.once('end', () =>
+              resolve({
+                status: response.statusCode ?? 0,
+                cookie: response.headers['set-cookie']?.[0] ?? '',
+                referrerPolicy: String(response.headers['referrer-policy'] ?? ''),
+              }),
+            );
+          },
+        );
+        request.once('error', reject);
+        request.end(new URLSearchParams({ password }).toString());
+      });
+    const signInPage = await fetch(base + '/desktop-sign-in', { headers: tailnetHeaders });
+    assert.equal(signInPage.status, 200);
+    assert.equal(signInPage.headers.get('referrer-policy'), 'same-origin');
+    assert.equal((await signIn('fictional-password', 'https://unexpected.example')).status, 403);
+    const wrongPassword = await signIn('wrong-password');
+    assert.equal(wrongPassword.status, 401);
+    assert.equal(wrongPassword.referrerPolicy, 'same-origin');
+    const signedIn = await signIn('fictional-password');
+    assert.equal(signedIn.status, 303);
+    assert.match(signedIn.cookie, /HttpOnly/);
+    assert.match(signedIn.cookie, /Secure/);
+    assert.match(signedIn.cookie, /SameSite=Strict/);
+    const session = signedIn.cookie.split(';')[0]!;
+    assert.equal(
+      await call('/desktop-sign-in', 'GET', { ...tailnetHeaders, Cookie: session }),
+      303,
+    );
+    assert.equal(await call('/api/state', 'GET', { ...tailnetHeaders, Cookie: session }), 200);
+    assert.equal(
+      await call('/api/state', 'GET', { ...tailnetHeaders, Cookie: session + 'invalid' }),
+      401,
+    );
+    assert.equal(await call('/api/state', 'GET', tailnetHeaders), 401);
+    const authorization = 'Basic ' + Buffer.from('admin:fictional-password').toString('base64');
+    assert.equal(
+      await call('/api/state', 'GET', { ...tailnetHeaders, Authorization: authorization }),
+      200,
+    );
+    assert.equal(
+      await call('/api/state', 'GET', { Host: 'unexpected.example', Authorization: authorization }),
+      403,
+    );
+    assert.equal(
+      await call(
+        '/api/preferences',
+        'POST',
+        {
+          ...tailnetHeaders,
+          Origin: 'https://unexpected.example',
+          Authorization: authorization,
+          'Content-Type': 'application/json',
+        },
+        '{}',
+      ),
+      403,
+    );
+    assert.equal(
+      await call(
+        '/api/preferences',
+        'POST',
+        { ...tailnetHeaders, Authorization: authorization, 'Content-Type': 'application/json' },
+        '{}',
+      ),
+      200,
+    );
+    const payload = JSON.stringify({
+      event: 'message.received',
+      sessionId: 'session',
+      data: { id: 'fixture-message', chatId: 'chat', body: 'Please prepare the report' },
+    });
+    const response = await fetch(base + '/api/webhooks/openwa', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-OpenWA-Signature':
+          'sha256=' + createHmac('sha256', signingKey).update(payload).digest('hex'),
+      },
+      body: payload,
+    });
+    assert.equal(response.status, 200);
+    const database = new DatabaseSync(join(workspace, 'tasks.sqlite'), { readOnly: true });
+    try {
+      let task: unknown;
+      for (let attempt = 0; attempt < 300 && !task; attempt++) {
+        task = database.prepare('SELECT title FROM tasks WHERE title=?').get(change.title);
+        if (!task) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.ok(task, 'the server created a task without a desktop client');
+    } finally {
+      database.close();
+    }
+  } finally {
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 5000);
+    timeout.unref();
+    await exited;
+    clearTimeout(timeout);
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   }
 });

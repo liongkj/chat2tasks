@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "workspace-picker",
+  "description": "Choose which local or remote workspace this app opens.",
+  "windows": ["workspace-picker"],
+  "permissions": [
+    "core:default",
+    "allow-get-workspace-target",
+    "allow-set-workspace-target",
+    "allow-close-workspace-picker"
+  ]
+}

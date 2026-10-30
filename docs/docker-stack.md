@@ -29,6 +29,16 @@ tasks.example.com {
 
 Preserve the original `Host` and `Origin`. The server validates the workspace origin for owner mutations. Companion requests use their own extension origin, a device token, and `X-Chat2Tasks-Extension`; the proxy must pass those headers through. Do not replace all origins with localhost or add wildcard CORS.
 
+## Tailscale access
+
+Join the server and desktop to the same tailnet. Enable HTTPS for the tailnet, inspect `tailscale serve status`, and choose a free HTTPS port. For a Chat2Tasks service published on the server's loopback port 2786, a route can be created with:
+
+```sh
+tailscale serve --bg --https=8443 http://127.0.0.1:2786
+```
+
+The existing Tailscale configuration may already use that port; choose another rather than replacing it. Keep the existing `PUBLIC_ORIGIN`, and add the exact resulting HTTPS origin to `ADDITIONAL_ORIGINS`. Set a strong `APP_PASSWORD` before enabling a remote additional origin. This requirement also applies when `TRUST_PROXY_AUTH=true`: a direct Tailscale route does not pass through the other proxy's sign-in. Apply these settings using your existing deployment files and restart the service only when ready. Use the Tailscale URL in the desktop preview's workspace selector, then enter the workspace password. Desktop sign-in uses a 30-day, HTTP-only session cookie; changing the workspace password invalidates it. The remote workspace continues running only while the server, its WhatsApp connection and its configured processing are active.
+
 ## MCP access
 
 Set a separate random `MCP_TOKEN` of at least 32 characters in your private `.env`, then recreate the service. The Compose file passes it to Chat2Tasks; without it, `/mcp` returns 404. Connect a Streamable HTTP MCP client to your HTTPS workspace origin followed by `/mcp`, with `Authorization: Bearer YOUR_MCP_TOKEN`. See [MCP issue triage](../README.md#mcp-issue-triage) for the tools and write boundaries.

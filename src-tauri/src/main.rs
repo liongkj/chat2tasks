@@ -3,6 +3,8 @@
     windows_subsystem = "windows"
 )]
 
+mod workspace_target;
+
 use serde_json::{json, Value};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -22,6 +24,7 @@ use tauri::{
 };
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+use workspace_target::WorkspaceTarget;
 
 struct Supervisor {
     child: Child,
@@ -72,7 +75,7 @@ impl Supervisor {
 }
 
 struct Host {
-    runtime: Arc<Mutex<Supervisor>>,
+    runtime: Option<Arc<Mutex<Supervisor>>>,
     selected_import: Mutex<Option<PathBuf>>,
 }
 
@@ -108,7 +111,10 @@ async fn import_workspace(
     let Some(source) = source else {
         return Ok(json!({"ok": false, "error": "Choose a transfer file first."}));
     };
-    let runtime = host.runtime.clone();
+    let runtime = host
+        .runtime
+        .clone()
+        .ok_or("The local workspace is not running.")?;
     tauri::async_runtime::spawn_blocking(move || {
         runtime
             .lock()
@@ -132,21 +138,123 @@ fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
         .map_err(|_| "Could not open your browser.".into())
 }
 
+fn show_workspace_picker(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("workspace-picker") {
+        window
+            .show()
+            .map_err(|_| "Could not open workspace choices.")?;
+        window
+            .set_focus()
+            .map_err(|_| "Could not open workspace choices.")?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        app,
+        "workspace-picker",
+        WebviewUrl::App("index.html?desktop=workspace".into()),
+    )
+    .title("Choose a workspace")
+    .inner_size(590.0, 730.0)
+    .min_inner_size(480.0, 560.0)
+    .build()
+    .map_err(|_| "Could not open workspace choices.".to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_workspace_picker(app: tauri::AppHandle) -> Result<(), String> {
+    show_workspace_picker(&app)
+}
+
+#[tauri::command]
+fn get_workspace_target(app: tauri::AppHandle) -> Result<WorkspaceTarget, String> {
+    workspace_target::read(
+        &app.path()
+            .app_data_dir()
+            .map_err(|_| "Could not find app data.")?,
+    )
+}
+
+#[tauri::command]
+fn set_workspace_target(app: tauri::AppHandle, target: WorkspaceTarget) -> Result<(), String> {
+    let data = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Could not find app data.")?;
+    workspace_target::save(&data, target)?;
+    app.request_restart();
+    Ok(())
+}
+
+#[tauri::command]
+fn close_workspace_picker(window: tauri::WebviewWindow) -> Result<(), String> {
+    window
+        .close()
+        .map_err(|_| "Could not close workspace choices.".into())
+}
+
 fn show_main(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app
+        .get_webview_window("main")
+        .or_else(|| app.get_webview_window("remote"))
+        .or_else(|| app.get_webview_window("workspace-picker"))
+    {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+fn show_remote_workspace(app: &tauri::AppHandle, address: &str) -> Result<(), String> {
+    let url = tauri::Url::parse(address)
+        .map_err(|_| "Invalid server address.")?
+        .join("desktop-sign-in")
+        .map_err(|_| "Invalid server address.")?;
+    let origin = url.origin();
+    let hostname = url.host_str().unwrap_or("server").to_string();
+    let title = format!("Chat2Tasks · {hostname}");
+    let external = app.clone();
+    let window = WebviewWindowBuilder::new(app, "remote", WebviewUrl::External(url))
+        .title("Chat2Tasks · Connecting to server…")
+        .inner_size(1140.0, 800.0)
+        .min_inner_size(680.0, 580.0)
+        .on_navigation(move |url| url.origin() == origin)
+        .on_page_load(move |window, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                let _ = window.set_title(&title);
+            }
+        })
+        .on_new_window(move |url, _| {
+            if url.scheme() == "https" {
+                let _ = external.opener().open_url(url.to_string(), None::<&str>);
+            }
+            NewWindowResponse::Deny
+        })
+        .build()
+        .map_err(|_| "Could not open the server workspace.".to_string())?;
+    let close_window = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = close_window.hide();
+        }
+    });
+    Ok(())
 }
 
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external])
+        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, get_workspace_target, set_workspace_target, close_workspace_picker])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
-            "settings" => { show_main(app); let _ = app.emit("open-settings", ()); },
+            "settings" => {
+                show_main(app);
+                if let Some(window) = app.get_webview_window("remote") {
+                    if let Ok(mut url) = window.url() { url.set_path("/"); url.set_query(Some("view=settings")); let _ = window.navigate(url); }
+                } else { let _ = app.emit("open-settings", ()); }
+            },
+            "workspaces" => { let _ = show_workspace_picker(app); },
             "quit-preview" => app.exit(0),
             _ => (),
         })
@@ -154,6 +262,39 @@ fn main() {
             let resources = app.path().resource_dir()?;
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data)?;
+            let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+            let workspaces = MenuItem::with_id(app, "workspaces", "Switch Workspace…", true, None::<&str>)?;
+            let quit = PredefinedMenuItem::quit(app, None)?;
+            let app_menu = Submenu::with_items(app, "Chat2Tasks Preview", true, &[&settings, &workspaces, &quit])?;
+            let edit_menu = Submenu::with_items(app, "Edit", true, &[
+                &PredefinedMenuItem::undo(app, None)?, &PredefinedMenuItem::redo(app, None)?,
+                &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::cut(app, None)?,
+                &PredefinedMenuItem::copy(app, None)?, &PredefinedMenuItem::paste(app, None)?,
+                &PredefinedMenuItem::select_all(app, None)?,
+            ])?;
+            app.set_menu(Menu::with_items(app, &[&app_menu, &edit_menu])?)?;
+            let show = MenuItem::with_id(app, "open", "Open Chat2Tasks Preview", true, None::<&str>)?;
+            let tray_workspaces = MenuItem::with_id(app, "workspaces", "Switch Workspace…", true, None::<&str>)?;
+            let tray_quit = MenuItem::with_id(app, "quit-preview", "Quit Chat2Tasks Preview", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show, &tray_workspaces, &tray_quit])?;
+            let mut tray = TrayIconBuilder::new().menu(&tray_menu).tooltip("Chat2Tasks Preview");
+            if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+            tray.build(app)?;
+
+            match workspace_target::read(&data) {
+                Ok(WorkspaceTarget::Remote { url }) => {
+                    app.manage(Host { runtime: None, selected_import: Mutex::new(None) });
+                    show_remote_workspace(app.handle(), &url)?;
+                    return Ok(());
+                }
+                Err(_) => {
+                    app.manage(Host { runtime: None, selected_import: Mutex::new(None) });
+                    show_workspace_picker(app.handle())?;
+                    return Ok(());
+                }
+                Ok(WorkspaceTarget::Local) => {}
+            }
+
             let bun = resources.join("bun").join(if cfg!(windows) { "bun.exe" } else { "bun" });
             let mut command = Command::new(bun);
             command.arg(resources.join("tauri-runtime.cjs"))
@@ -169,24 +310,7 @@ fn main() {
             let input = child.stdin.take().ok_or("Could not start the local service.")?;
             let output = BufReader::new(child.stdout.take().ok_or("Could not start the local service.")?);
             let runtime = Arc::new(Mutex::new(Supervisor { child, input, output }));
-            app.manage(Host { runtime: runtime.clone(), selected_import: Mutex::new(None) });
-
-            let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
-            let quit = PredefinedMenuItem::quit(app, None)?;
-            let app_menu = Submenu::with_items(app, "Chat2Tasks Preview", true, &[&settings, &quit])?;
-            let edit_menu = Submenu::with_items(app, "Edit", true, &[
-                &PredefinedMenuItem::undo(app, None)?, &PredefinedMenuItem::redo(app, None)?,
-                &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::cut(app, None)?,
-                &PredefinedMenuItem::copy(app, None)?, &PredefinedMenuItem::paste(app, None)?,
-                &PredefinedMenuItem::select_all(app, None)?,
-            ])?;
-            app.set_menu(Menu::with_items(app, &[&app_menu, &edit_menu])?)?;
-            let show = MenuItem::with_id(app, "open", "Open Chat2Tasks Preview", true, None::<&str>)?;
-            let tray_quit = MenuItem::with_id(app, "quit-preview", "Quit Chat2Tasks Preview", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&show, &tray_quit])?;
-            let mut tray = TrayIconBuilder::new().menu(&tray_menu).tooltip("Chat2Tasks Preview");
-            if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
-            tray.build(app)?;
+            app.manage(Host { runtime: Some(runtime.clone()), selected_import: Mutex::new(None) });
 
             WebviewWindowBuilder::new(app, "startup", WebviewUrl::App("tauri-startup.html".into()))
                 .title("Chat2Tasks Preview").inner_size(1140.0, 800.0).min_inner_size(680.0, 580.0).build()?;
@@ -232,8 +356,10 @@ fn main() {
     app.run(|app, event| {
         if let RunEvent::Exit = event {
             if let Some(host) = app.try_state::<Host>() {
-                if let Ok(mut runtime) = host.runtime.lock() {
-                    runtime.shutdown();
+                if let Some(runtime) = host.runtime.as_ref() {
+                    if let Ok(mut runtime) = runtime.lock() {
+                        runtime.shutdown();
+                    }
                 }
             }
         }

@@ -49,6 +49,21 @@ export const SettingsSchema = z
   .object({
     openwaUrl: z.union([z.literal(''), endpoint]),
     chats: z.array(ChatSchema).max(100),
+    desktopGateway: z
+      .object({
+        mode: z.enum(['local', 'remote']).default('local'),
+        activeMode: z.enum(['local', 'remote']).default('local'),
+        remoteUrl: z.union([z.literal(''), endpoint]).default(''),
+        localChats: z.array(ChatSchema).max(100).default([]),
+        remoteChats: z.array(ChatSchema).max(100).default([]),
+      })
+      .default({
+        mode: 'local',
+        activeMode: 'local',
+        remoteUrl: '',
+        localChats: [],
+        remoteChats: [],
+      }),
     profiles: z.array(ProfileSchema).min(1).max(30),
     activeProfileId: text,
     webhookUrl: z.union([z.literal(''), endpoint]).default(''),
@@ -309,6 +324,7 @@ export const SnapshotSchema = z.object({
 export const PublicSettingsSchema = z.object({
   settings: SettingsSchema,
   configuredSecrets: z.array(z.string()),
+  desktopGatewayRestartRequired: z.boolean().default(false),
   webhook: z
     .object({ registeredSessions: z.number(), lastReceivedAt: z.number().nullable() })
     .default({ registeredSessions: 0, lastReceivedAt: null }),

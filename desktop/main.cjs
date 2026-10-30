@@ -3,12 +3,21 @@ const { spawn } = require('node:child_process');
 const { access, mkdir, readFile, rename } = require('node:fs/promises');
 const { createServer } = require('node:net');
 const { join } = require('node:path');
+const { workspaceGatewayLaunch } = require('./gateway-mode.cjs');
 
 app.setName('Chat2Tasks');
 if (process.env.CHAT2TASKS_DATA_DIR) app.setPath('userData', process.env.CHAT2TASKS_DATA_DIR);
 else if (!app.isPackaged) app.setPath('userData', join(app.getPath('appData'), 'Chat2Tasks Dev'));
 
-let window, tray, gateway, server, gatewayPort, serverPort, selectedImport;
+let window,
+  tray,
+  gateway,
+  server,
+  gatewayPort,
+  serverPort,
+  selectedImport,
+  gatewayMode = 'local',
+  resumeSessions = false;
 let quitting = false;
 const resources = app.isPackaged ? process.resourcesPath : process.cwd();
 const runtime = app.isPackaged ? join(resources, 'runtime') : process.cwd();
@@ -104,7 +113,7 @@ async function startGateway() {
       PORT: String(gatewayPort),
       LOG_LEVEL: 'error',
       UPDATE_CHECK_ENABLED: 'false',
-      AUTO_START_SESSIONS: 'true',
+      AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
       SSRF_ALLOWED_HOSTS: '127.0.0.1',
       PUPPETEER_EXECUTABLE_PATH: browser,
       PUPPETEER_ARGS: '--disable-gpu',
@@ -116,6 +125,24 @@ async function startGateway() {
 async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  ({ mode: gatewayMode, resumeSessions } = workspaceGatewayLaunch(workspace));
+  if (gatewayMode === 'remote') {
+    await stop(gateway);
+    gateway = undefined;
+  } else if (!gateway || gateway.exitCode !== null || gateway.signalCode !== null) {
+    const existingKey = await access(join(gatewayData, 'data', '.api-key')).then(
+      () => true,
+      () => false,
+    );
+    const gatewayReady = startGateway().then(
+      () => null,
+      (error) => error,
+    );
+    if (!existingKey) {
+      const error = await gatewayReady;
+      if (error) throw error;
+    }
+  }
   const origin = `http://127.0.0.1:${serverPort}`;
   server = spawn(node, [join(runtime, 'dist', 'server', 'index.js')], {
     cwd: runtime,
@@ -132,6 +159,7 @@ async function startServer() {
       CODEX_BIN: codex,
       DESKTOP_OPENWA_URL: `http://127.0.0.1:${gatewayPort}`,
       DESKTOP_OPENWA_KEY_FILE: join(gatewayData, 'data', '.api-key'),
+      DESKTOP_GATEWAY_MODE: gatewayMode,
     },
   });
   await ready(serverPort, server);
@@ -288,18 +316,6 @@ app.whenReady().then(async () => {
       serverPort = await freePort();
     } while (serverPort === gatewayPort);
     window.webContents.send('startup:progress', 'Starting your WhatsApp connection…');
-    const existingKey = await access(join(gatewayData, 'data', '.api-key')).then(
-      () => true,
-      () => false,
-    );
-    const gatewayReady = startGateway().then(
-      () => null,
-      (error) => error,
-    );
-    if (!existingKey) {
-      const error = await gatewayReady;
-      if (error) throw error;
-    }
     window.webContents.send('startup:progress', 'Opening your workspace…');
     await startServer();
     const origin = `http://127.0.0.1:${serverPort}`;
@@ -313,7 +329,6 @@ app.whenReady().then(async () => {
     await window.loadURL(origin);
     // Keep the saved workspace accessible if WhatsApp fails to start. The
     // workspace reports the connection error when its readiness check ends.
-    await gatewayReady;
   } catch {
     await window.loadFile(join(__dirname, 'loading.html'), { query: { error: '1' } });
   }

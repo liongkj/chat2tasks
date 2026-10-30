@@ -1502,28 +1502,31 @@ select:focus-visible {
 }
 .settings-shell {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 0;
   flex: 1;
 }
 .settings-navigation {
   display: flex;
-  padding: 20px 32px 0;
-  max-width: 1100px;
-  width: 100%;
-  margin: auto;
-  gap: 22px;
+  flex: 0 0 200px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 30px 12px 24px 18px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
 }
 .settings-navigation button {
-  padding: 10px 0;
+  padding: 10px 12px;
   font-size: 13px;
   color: var(--muted);
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
+  text-align: left;
+  border-radius: 8px;
 }
 .settings-navigation .selected {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--text);
+  background: var(--hover);
+  font-weight: 600;
 }
 .settings-page h1 {
   font-family: var(--title);
@@ -1935,9 +1938,23 @@ select:focus-visible {
     font-size: 12px;
     width: max-content;
   }
+  .settings-shell {
+    flex-direction: column;
+  }
   .settings-navigation {
-    padding: 14px 24px 0;
-    gap: 24px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex: none;
+    gap: 4px;
+    padding: 12px 18px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    overflow: visible;
+  }
+  .settings-navigation button {
+    padding: 9px 5px;
+    text-align: center;
+    font-size: 12px;
   }
   .settings-page {
     padding: 25px 22px 50px;
@@ -1955,6 +1972,9 @@ select:focus-visible {
   }
   .card-title {
     flex-wrap: wrap;
+  }
+  .settings-card .card-title > div {
+    flex: 1 1 180px;
   }
   .card-footer {
     margin: 20px -20px -20px;

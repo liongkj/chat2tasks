@@ -9,6 +9,7 @@
     "desktop/main.cjs",
     "desktop/preload.cjs",
     "desktop/loading.html",
+    "desktop/gateway-mode.cjs",
     "package.json",
     "!node_modules/**"
   ],
