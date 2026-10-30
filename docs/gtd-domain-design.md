@@ -1,9 +1,9 @@
 # Chat2Tasks domain: a GTD-inspired design
 
-**Status: design proposal, not a description of fully implemented behavior.** The
-current draft implementation has Tasks, Questions, and Reminders. The additional
-concepts below are proposed so the domain can handle more kinds of conversation
-without turning everything into a task.
+**Status: domain design, not a description of fully implemented behavior.** The
+current draft implementation has Tasks, Questions, and Reminders. The owner has
+also chosen an Actions section and a Waiting For view; those are not yet
+implemented. Other concepts below are recommendations for consideration.
 
 ## Purpose
 
@@ -19,10 +19,10 @@ and [key definitions](https://gettingthingsdone.com/2010/10/some-key-gtd-definit
 The product adapts those ideas to the owner's language and preferences; its
 categories need not reproduce the book's list names.
 
-The owner has already chosen separate Tasks, Questions, and Reminders sections.
-Questions are only for things the owner needs to answer. Reminders are in-app only,
-including when a source mentions a time. The app does not send messages or perform
-the work.
+The owner has chosen separate Tasks, Actions, Questions, and Reminders sections,
+plus a Waiting For view for requests made to other people. Questions are only for
+things the owner needs to answer. Reminders are in-app only, including when a
+source mentions a time. The app does not send messages or perform the work.
 
 ## The things the owner can track
 
@@ -44,14 +44,14 @@ An ordinary greeting, acknowledgement, irrelevant status message, or unselected
 idea need not produce any tracked item. The original conversation stays available.
 The system should not fill a Reference collection with everything it reads.
 
-**Proposed navigation:** retain Tasks, Questions, and Reminders as separate
-sections; add an Actions section for standalone actions and a Waiting For view.
-Add Someday/Maybe and an in-app Upcoming view when those needs are established;
-reference can begin as saved source material rather than a prominent section. A
-Review view can hold meaningful items whose kind or ownership is uncertain without
-claiming they are confirmed work for the owner.
-The exact placement of short actions and whether Waiting For is automatic are
-owner choices, not assumptions in this proposal.
+**Chosen navigation:** Tasks, Actions, Questions, and Reminders are separate
+sections; Waiting For shows requests the owner is waiting on. The additional
+sections are not yet implemented in the current draft.
+
+**Further proposals:** add Someday/Maybe and an in-app Upcoming view when those
+needs are established; reference can begin as saved source material rather than a
+prominent section. A Review view can hold meaningful items whose kind or ownership
+is uncertain without claiming they are confirmed work for the owner.
 
 ## Kinds, states, and views are different
 
@@ -108,9 +108,10 @@ or the passage of a follow-up date is not proof that the wait ended. Ambiguity
 stays reviewable. No follow-up is sent automatically.
 
 Questions the owner asks other people do not appear under Questions for the owner
-to answer. If tracking that reply is desired, they can appear under Waiting For.
-Whether such waits are suggested automatically or only created by the owner is an
-open product choice.
+to answer. Track a clearly outstanding request in Waiting For, as the owner has
+chosen. If the request or matching reply is ambiguous, keep it reviewable; do not
+infer that every outgoing message needs an answer. An already-received answer does
+not create a new open wait.
 
 ## Time and reminders
 
@@ -185,22 +186,22 @@ thresholds require evaluation against owner-labeled examples.
 
 ## Examples and acceptance rules
 
-| Evidence                                                                                   | Expected treatment                                                                                                 |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| “Can you send me the PDF?” directed to the owner.                                          | One standalone Action, if that section is adopted.                                                                 |
-| “Which option should we choose?” directed to the owner, followed by their specific answer. | One Question; mark answered only when the answer matches it.                                                       |
-| The owner asks someone else for a PDF.                                                     | Not a Question for the owner. Propose or create a Waiting For record according to the owner's tracking preference. |
-| A colleague sends the requested PDF while an investigation remains unfinished.             | Mark the matching wait received; leave the investigation open and reassess its next action.                        |
-| A screenshot reports an operational problem that needs investigation.                      | A Task, even without a caption.                                                                                    |
-| A screenshot contains a status update and a separate question.                             | Potentially a Reminder and a Question; confirm the question's recipient instead of assuming it.                    |
-| A message says “meeting Tuesday at 10” and the owner's involvement is clear.               | An Event in the in-app Upcoming view; preserve any timezone uncertainty and do not send a notification.            |
-| “Maybe we could add an integration next year.”                                             | A possible Someday/Maybe idea only if the owner wants to retain it; not committed work.                            |
-| A useful link with no request or reminder.                                                 | Searchable source or owner-saved Reference; not an open task.                                                      |
-| “Please read the specification before the meeting.”                                        | An Action to read it, linked to the specification; the specification itself is Reference.                          |
-| A reminder says “check again Friday.”                                                      | Display the stated timing in the app when supported; do not create a notification.                                 |
-| The owner explicitly asks for a weekly review.                                             | An in-app recurring action; completing this week's occurrence does not complete next week's.                       |
-| A question is answered, but the message also requested a separate implementation.          | Resolve only the question; the implementation remains open.                                                        |
-| The owner corrects a category or reopens an item.                                          | Keep the correction and completion history through later analysis.                                                 |
+| Evidence                                                                                   | Expected treatment                                                                                      |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| “Can you send me the PDF?” directed to the owner.                                          | One standalone Action.                                                                                  |
+| “Which option should we choose?” directed to the owner, followed by their specific answer. | One Question; mark answered only when the answer matches it.                                            |
+| The owner asks someone else for a PDF and is awaiting it.                                  | Track it under Waiting For, not as a Question for the owner.                                            |
+| A colleague sends the requested PDF while an investigation remains unfinished.             | Mark the matching wait received; leave the investigation open and reassess its next action.             |
+| A screenshot reports an operational problem that needs investigation.                      | A Task, even without a caption.                                                                         |
+| A screenshot contains a status update and a separate question.                             | Potentially a Reminder and a Question; confirm the question's recipient instead of assuming it.         |
+| A message says “meeting Tuesday at 10” and the owner's involvement is clear.               | An Event in the in-app Upcoming view; preserve any timezone uncertainty and do not send a notification. |
+| “Maybe we could add an integration next year.”                                             | A possible Someday/Maybe idea only if the owner wants to retain it; not committed work.                 |
+| A useful link with no request or reminder.                                                 | Searchable source or owner-saved Reference; not an open task.                                           |
+| “Please read the specification before the meeting.”                                        | An Action to read it, linked to the specification; the specification itself is Reference.               |
+| A reminder says “check again Friday.”                                                      | Display the stated timing in the app when supported; do not create a notification.                      |
+| The owner explicitly asks for a weekly review.                                             | An in-app recurring action; completing this week's occurrence does not complete next week's.            |
+| A question is answered, but the message also requested a separate implementation.          | Resolve only the question; the implementation remains open.                                             |
+| The owner corrects a category or reopens an item.                                          | Keep the correction and completion history through later analysis.                                      |
 
 ## How this relates to the current draft
 
