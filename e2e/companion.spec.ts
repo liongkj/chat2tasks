@@ -151,7 +151,9 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
       .getByRole('button', { name: `${linkedTask.reference} · ${linkedTask.title}` })
       .click();
     await expect(page.getByRole('heading', { name: 'Someday / Maybe', exact: true })).toBeVisible();
-    await owner('tasks/gtd', { id: linkedTask.id, gtd: linkedTask.gtd });
+    const restore = await owner('tasks/gtd', { id: linkedTask.id, gtd: linkedTask.gtd });
+    expect(restore.ok).toBe(true);
+    await page.reload();
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
     await expect(
       page.getByRole('button', {
