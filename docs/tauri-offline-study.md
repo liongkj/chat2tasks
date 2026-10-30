@@ -32,6 +32,19 @@ connections blocked by macOS. The gateway reported `baileys` as its active engin
 OpenWA's existing offline inbound-message suite passed 13 cases, including text, images, edits and
 reactions; it uses the real Baileys parser but does not download media or contact WhatsApp.
 
+To repeat the synthetic parser workload on a Mac after `npm run mac:prepare`, run:
+
+```sh
+CHAT2TASKS_OPENWA_SOURCE="$PWD/work/openwa-source" \
+  sandbox-exec -f scripts/baileys-offline.sb \
+  node --import ./scripts/baileys-offline-workload.mjs -e 'console.log("Offline workload complete")'
+```
+
+The command requires the prepared OpenWA source and runs under a macOS sandbox that blocks outbound
+network access except localhost. The script does not start a gateway, create a session, persist
+messages, or download media. For the 310 MB sample below, the same workload was preloaded into a
+separate, unlinked Baileys gateway process.
+
 The unlinked gateway's macOS physical footprint was 267 MB in five samples. In a separate run,
 the same gateway loaded the real Baileys library and parsed 1,000 fictional text messages before
 starting; its footprint was 310 MB in five samples. The synthetic handler did not persist those
