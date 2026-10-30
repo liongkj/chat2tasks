@@ -4,16 +4,32 @@ The Tauri preview uses a separate application identifier and data directory. It 
 existing Electron workspace or reuse its WhatsApp session. An encrypted workspace transfer can be
 selected explicitly; the previous preview workspace is kept as a backup.
 
-On macOS, install the project dependencies and Rust, then run `npm run build`,
-`npm run mac:prepare`, and `npm run tauri:build -- --bundles app`. The resulting preview is in
-`src-tauri/target/release/bundle/macos/`. Windows packaging has not yet been implemented or tested.
+The Tauri preview uses a bundled Bun runtime for its supervisor, app service, gateway and transfer
+process. The existing Electron build retains its Node runtime and separate data directory.
+
+On the target Mac or Windows machine, install Node 24, Bun 1.4.3, Rust and the project dependencies.
+Run `npm run tauri:stage` once to prepare the isolated runtime and browser, then run
+`npm run tauri:build -- --bundles app` on macOS or `npm run tauri:build -- --bundles nsis` on
+Windows. The staging step downloads dependencies; it does not use an existing app workspace.
+
+On macOS, the following command tests the staged Bun services with fictional data and non-local
+outbound network access blocked:
+
+```sh
+sandbox-exec -f scripts/baileys-offline.sb node scripts/test-tauri-runtime.mjs
+```
+
+It exercises the sample workspace, an unlinked gateway, the separate Codex installation check,
+encrypted export, failed and successful import, and preservation of the old preview workspace as
+a backup. The Windows workflow applies firewall rules to the installed preview before running the
+same check.
 
 For an isolated interface sample, start the preview with `--sample`. This uses fictional data and
 does not start a WhatsApp gateway or synchronize messages.
 
 ## Desktop memory comparison
 
-On one Mac, both windows displayed the same Overview and fictional tasks. Five interleaved macOS
+Before the switch to Bun, both windows displayed the same Overview and fictional tasks on one Mac. Five interleaved macOS
 physical-footprint samples gave a median of 132 MB for an Electron sample window and its helpers,
 and 121 MB for the Tauri window and its WebKit helpers. Including the local sample service and the
 Tauri supervisor, the medians were 187 MB for Electron and 205 MB for Tauri; the Tauri samples ranged
@@ -22,8 +38,12 @@ full shipping app. The Tauri supervisor was a separate Node process that used ab
 sample. Neither sample included a WhatsApp gateway or a running Codex process.
 
 These are point-in-time sample measurements on a busy Mac, not a prediction of either app's full
-connected memory use. The Tauri Mac preview bundle is about 1.35 GiB because it still contains the
-existing WhatsApp browser and runtime.
+connected memory use. The Tauri preview still contains the existing WhatsApp browser and runtime.
+
+After switching the Tauri runtime to Bun 1.4.3, a separate run of the same fictional Overview used a
+median physical footprint of 178 MB across five samples (178–181 MB), including its supervisor,
+service and WebKit helpers. The earlier Node and later Bun readings were taken at different times;
+neither included the WhatsApp gateway or a running Codex process.
 
 ## Offline WhatsApp evidence
 

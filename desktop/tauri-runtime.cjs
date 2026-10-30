@@ -99,6 +99,7 @@ async function startGateway() {
   gateway = spawn(process.execPath, [join(gatewayRuntime, 'dist', 'main.js')], {
     cwd: gatewayData,
     stdio: 'ignore',
+    windowsHide: true,
     env: {
       ...cleanEnv(),
       NODE_ENV: 'production',
@@ -122,6 +123,7 @@ async function startServer() {
   server = spawn(process.execPath, [join(runtime, 'dist', 'server', 'index.js')], {
     cwd: runtime,
     stdio: 'ignore',
+    windowsHide: true,
     env: {
       ...cleanEnv(),
       NODE_ENV: 'production',
@@ -148,7 +150,7 @@ function runImport(source, destination, passphrase) {
     const child = spawn(
       process.execPath,
       [join(runtime, 'dist', 'desktop', 'transfer-cli.js'), source, destination],
-      { cwd: runtime, env: cleanEnv(), stdio: ['pipe', 'ignore', 'ignore'] },
+      { cwd: runtime, env: cleanEnv(), stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true },
     );
     child.once('error', () => resolve(false));
     child.once('close', (code) => resolve(code === 0));

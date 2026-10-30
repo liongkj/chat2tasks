@@ -1,4 +1,11 @@
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
+
 use serde_json::{json, Value};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     io::{BufRead, BufReader, Write},
     path::PathBuf,
@@ -147,12 +154,14 @@ fn main() {
             let resources = app.path().resource_dir()?;
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data)?;
-            let node = resources.join("node").join(if cfg!(windows) { "node.exe" } else { "node" });
-            let mut command = Command::new(node);
+            let bun = resources.join("bun").join(if cfg!(windows) { "bun.exe" } else { "bun" });
+            let mut command = Command::new(bun);
             command.arg(resources.join("tauri-runtime.cjs"))
                 .env("C2T_TAURI_RESOURCES", &resources)
                 .env("C2T_TAURI_DATA", &data)
                 .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+            #[cfg(target_os = "windows")]
+            command.creation_flags(0x08000000);
             if std::env::args().any(|arg| arg == "--sample") {
                 command.env("C2T_TAURI_DEMO", "1");
             }

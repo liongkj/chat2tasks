@@ -22,9 +22,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../work/desktop/runtime/": "runtime/",
-      "../work/desktop/gateway/": "gateway/",
-      "../work/desktop/node/": "node/",
+      "../work/tauri/runtime/": "runtime/",
+      "../work/tauri/gateway/": "gateway/",
+      "../work/tauri/bun/": "bun/",
       "../desktop/tauri-runtime.cjs": "tauri-runtime.cjs",
       "../desktop/workspace-replace.cjs": "workspace-replace.cjs"
     }

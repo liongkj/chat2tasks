@@ -19,7 +19,8 @@
     "test:extension": "playwright test",
     "mac:prepare": "node scripts/prepare-macos.mjs",
     "mac:package": "npm run build && npm run mac:prepare && electron-builder --config desktop/electron-builder.json --mac dir --publish never",
-    "tauri:prepare": "npm run build && node scripts/prepare-tauri.mjs",
+    "tauri:stage": "node scripts/prepare-tauri-deps.mjs",
+    "tauri:prepare": "npm run build && bun scripts/prepare-tauri.mjs",
     "tauri:build": "npm run tauri:prepare && tauri build"
   },
   "dependencies": {
