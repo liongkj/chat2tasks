@@ -8,12 +8,13 @@ import { Store } from '../src/server/store.js';
 import { configureDesktopGateway } from '../src/server/desktop.js';
 
 const require = createRequire(import.meta.url);
-const { workspaceGatewayLaunch } = require('../desktop/gateway-mode.cjs') as {
+const { workspaceGatewayLaunch, workspaceSharingPort } = require('../desktop/gateway-mode.cjs') as {
   workspaceGatewayLaunch(path: string): {
     mode: 'local' | 'remote';
     engine: 'whatsapp-web.js' | 'baileys';
     resumeSessions: boolean;
   };
+  workspaceSharingPort(path: string): number | undefined;
 };
 const { replaceWorkspace } = require('../desktop/workspace-replace.cjs') as {
   replaceWorkspace(options: {
@@ -76,6 +77,29 @@ test('a successful desktop import keeps the old workspace as a backup', async ()
     );
     assert.ok(backup);
     assert.equal(await readFile(join(root, backup, 'marker'), 'utf8'), 'original');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('desktop sharing keeps a stable local port and its password across settings saves', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'chat2tasks-desktop-sharing-'));
+  try {
+    assert.equal(workspaceSharingPort(root), undefined);
+    const store = new Store(root);
+    try {
+      store.saveDesktopSharing({
+        kind: 'enabled',
+        origin: 'https://shared.example:8443',
+        port: 2786,
+        password: 'fictional-sharing-password',
+      });
+      store.saveSettings({ settings: store.settings(), secrets: {}, removeSecrets: [] });
+      assert.equal(store.secret('desktop-sharing-password'), 'fictional-sharing-password');
+    } finally {
+      store.close();
+    }
+    assert.equal(workspaceSharingPort(root), 2786);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -38,6 +38,7 @@ The desktop preview uses [OpenWA](https://github.com/rmyndharis/OpenWA). The sta
 
 - [Desktop builds, connections, and workspace transfer](docs/desktop.md)
 - [Server setup and secure access](docs/docker-stack.md)
+- [One server, multiple computers: Windows, macOS, and Linux](docs/cross-platform.md)
 - [Technical reference, model connections, and companion](docs/technical-reference.md)
 - [Work-item categories](docs/work-item-domain.md)
 

@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { z } from 'zod';
+import { DesktopSharingStatusSchema } from '../shared/desktop-sharing.js';
 import {
   AttentionPreferencesSchema,
   PublicSettingsSchema,
@@ -50,13 +51,20 @@ export function DesktopRoot({ children }: { children: React.ReactNode }) {
         ? false
         : (await api('setup-mode', z.object({ managedServer: z.boolean() }))).managedServer;
       setManagedServer(managed);
-      if (!window.chat2tasksDesktop && !managed) {
-        setReady('ready');
-        return;
-      }
+      if (!window.chat2tasksDesktop && !managed) return 'ready' as const;
       const state = await api('desktop/status', DesktopStatus);
-      setReady(state.setupComplete ? 'ready' : 'setup');
-    })().catch(() => setReady('error'));
+      if (state.setupComplete || !window.chat2tasksTauri)
+        return state.setupComplete ? 'ready' : 'setup';
+      const sharing = await api('desktop/sharing', DesktopSharingStatusSchema).catch(() => null);
+      if (sharing?.unavailableReason !== 'port_in_use') return 'setup';
+      const location = new URL(window.location.href);
+      location.searchParams.set('view', 'settings');
+      location.searchParams.set('section', 'workspace');
+      window.history.replaceState(null, '', location);
+      return 'ready';
+    })()
+      .then(setReady)
+      .catch(() => setReady('error'));
   }, [retry]);
   if (ready === 'loading')
     return (

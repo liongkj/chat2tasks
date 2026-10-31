@@ -20,12 +20,14 @@ const Frame = z.discriminatedUnion('type', [
 export class RemoteEvents {
   private socket?: Socket;
   private sessions = '';
+  private stopped = true;
   constructor(
     readonly store: Store,
     readonly webhooks: Webhooks,
     readonly sync: Sync,
   ) {}
   start() {
+    this.stopped = false;
     const url = this.store.settings().openwaUrl;
     const key = this.store.secret('openwa');
     if (!url || !key) return;
@@ -36,10 +38,12 @@ export class RemoteEvents {
       autoConnect: false,
     });
     this.socket.on('connect', () => {
+      if (this.stopped) return;
       for (const sessionId of this.activeSessions())
         this.socket?.emit('message', { type: 'subscribe', sessionId, events: EVENTS });
     });
     this.socket.on('message', (raw: unknown) => {
+      if (this.stopped) return;
       const result = Frame.safeParse(raw);
       if (!result.success) return;
       const frame = result.data;
@@ -64,11 +68,13 @@ export class RemoteEvents {
       }
     });
     this.socket.on('connect_error', () => {
+      if (this.stopped) return;
       this.store.status({
         error: 'Could not connect to the remote WhatsApp server. Check its address and key.',
       });
     });
     this.socket.on('disconnect', (reason) => {
+      if (this.stopped) return;
       if (reason !== 'io client disconnect')
         this.store.status({ error: 'Reconnecting to the remote WhatsApp server…' });
     });
@@ -93,6 +99,8 @@ export class RemoteEvents {
     }
   }
   stop() {
+    this.stopped = true;
     this.socket?.disconnect();
+    this.socket = undefined;
   }
 }

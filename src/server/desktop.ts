@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { CodexLogin } from './codex-login.js';
@@ -14,6 +15,39 @@ const Session = z.object({
   engineLoaded: z.boolean(),
 });
 const Chat = z.object({ id: z.string(), name: z.string().nullish() });
+
+export async function stopManagedGateway() {
+  if (!process.send || !process.connected)
+    throw new Error('The desktop supervisor is unavailable.');
+  const id = randomUUID();
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      process.off('message', message);
+      process.off('disconnect', disconnected);
+    };
+    const fail = () => {
+      cleanup();
+      reject(new Error('Could not stop the local WhatsApp connection.'));
+    };
+    const message = (input: unknown) => {
+      const result = z
+        .object({ type: z.literal('gateway-stopped'), id: z.string() })
+        .safeParse(input);
+      if (result.success && result.data.id === id) {
+        cleanup();
+        resolve();
+      }
+    };
+    const disconnected = () => fail();
+    const timer = setTimeout(fail, 15000);
+    process.on('message', message);
+    process.once('disconnect', disconnected);
+    process.send?.({ type: 'stop-gateway', id }, (error) => {
+      if (error) fail();
+    });
+  });
+}
 
 export async function waitForDesktopGateway(url: string, signal: AbortSignal) {
   const deadline = Date.now() + 30_000;

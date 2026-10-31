@@ -160,6 +160,7 @@ function similarity(a: Uint8Array, b: Uint8Array) {
 export class LocalSearch {
   private indexJob: { controller: AbortController; generation: number } | null = null;
   private mediaJob: { controller: AbortController; generation: number } | null = null;
+  private mediaJobs = new Set<Promise<void>>();
   private unavailable = false;
   private generation = 0;
   constructor(
@@ -185,6 +186,17 @@ export class LocalSearch {
     return row
       ? SearchSettingsSchema.parse(JSON.parse(z.object({ value: z.string() }).parse(row).value))
       : { kind: 'workspace' };
+  }
+  stop() {
+    this.generation++;
+    this.indexJob?.controller.abort();
+    this.indexJob = null;
+    this.mediaJob?.controller.abort();
+    this.mediaJob = null;
+  }
+  async stopAndWait() {
+    this.stop();
+    await Promise.all(this.mediaJobs);
   }
   saveSettings(value: unknown): SearchSettings {
     const next = SearchSettingsSchema.parse(value);
@@ -257,7 +269,7 @@ export class LocalSearch {
     const embed = options.embed ?? ollamaMediaEmbed;
     const job = { controller: new AbortController(), generation: this.generation };
     this.mediaJob = job;
-    void (async () => {
+    const running = (async () => {
       try {
         for (const candidate of candidates) {
           if (job.controller.signal.aborted) return;
@@ -265,6 +277,7 @@ export class LocalSearch {
           let failed = false;
           try {
             const attachment = await options.load(candidate.message);
+            if (job.controller.signal.aborted || job.generation !== this.generation) return;
             if (!attachment) throw new Error('Attachment unavailable');
             const parts = await options.prepare(attachment, candidate.kind, job.controller.signal);
             let batch: MediaInput[] = [];
@@ -275,6 +288,7 @@ export class LocalSearch {
               batch = [];
             };
             for await (const part of parts) {
+              if (job.controller.signal.aborted || job.generation !== this.generation) return;
               batch.push(part);
               if (batch.length === 4) await flush();
             }
@@ -308,6 +322,8 @@ export class LocalSearch {
     })().catch(() => {
       if (this.mediaJob === job) this.mediaJob = null;
     });
+    this.mediaJobs.add(running);
+    void running.finally(() => this.mediaJobs.delete(running));
   }
   private findMedia(
     messages: Message[],
