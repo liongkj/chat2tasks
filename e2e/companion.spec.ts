@@ -1590,3 +1590,39 @@ test('Spotlight opens matching audio and video messages with playback controls',
     await browser.close();
   }
 });
+
+test('desktop opens its workspace when the server becomes available after startup', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        value: {
+          invoke: async (command: string) => {
+            if (command !== 'retry_remote_workspace') return;
+            const attempts = Number(sessionStorage.getItem('reconnect-attempts') ?? 0) + 1;
+            sessionStorage.setItem('reconnect-attempts', String(attempts));
+            if (attempts === 2) window.location.assign('/');
+          },
+        },
+      });
+    });
+    await page.clock.install();
+    await page.goto(`${base}/?desktop=connecting`);
+    await expect(page.getByRole('heading', { name: 'Connecting to your server' })).toBeVisible();
+    await page.clock.fastForward(10000);
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem('reconnect-attempts')))
+      .toBe('1');
+    await page.clock.fastForward(10000);
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+    await page.clock.fastForward(30000);
+    expect(await page.evaluate(() => sessionStorage.getItem('reconnect-attempts'))).toBe('2');
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
