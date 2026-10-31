@@ -20,14 +20,20 @@ const gatewayData = join(data, 'gateway');
 const codexHome = join(data, 'codex');
 const token = randomBytes(32).toString('hex');
 const tauriOrigin = process.platform === 'win32' ? 'http://tauri.localhost' : 'tauri://localhost';
-const codexPlatform = process.platform === 'win32' ? 'win32' : 'darwin';
+const codexTargets = {
+  darwin: 'apple-darwin',
+  linux: 'unknown-linux-musl',
+  win32: 'pc-windows-msvc',
+};
+const codexTarget = codexTargets[process.platform];
+if (!codexTarget || !['x64', 'arm64'].includes(process.arch))
+  throw new Error('This desktop architecture is not supported.');
 const codexArch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-const codexTarget = process.platform === 'win32' ? 'pc-windows-msvc' : 'apple-darwin';
 const codex = join(
   runtime,
   'node_modules',
   '@openai',
-  `codex-${codexPlatform}-${process.arch}`,
+  `codex-${process.platform}-${process.arch}`,
   'vendor',
   `${codexArch}-${codexTarget}`,
   'bin',

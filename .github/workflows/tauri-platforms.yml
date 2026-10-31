@@ -1,0 +1,84 @@
+name: macOS and Linux Tauri previews
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop-preview:
+    name: Desktop preview (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x64
+            bundle: deb
+          - os: macos-15
+            platform: macos-arm64
+            bundle: app
+          - os: macos-15-intel
+            platform: macos-x64
+            bundle: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install Linux desktop build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool
+      - run: npm ci
+      - run: npm run tauri:stage
+      - run: npm run tauri:prepare
+      - name: Check the staged runtime offline on macOS
+        if: runner.os == 'macOS'
+        run: sandbox-exec -f scripts/baileys-offline.sb node scripts/test-tauri-runtime.mjs
+      - name: Check the staged runtime on Linux
+        if: runner.os == 'Linux'
+        run: node scripts/test-tauri-runtime.mjs
+      - name: Build the desktop preview
+        run: npx tauri build --bundles ${{ matrix.bundle }}
+      - name: Package the macOS app
+        if: runner.os == 'macOS'
+        run: tar -czf "$RUNNER_TEMP/chat2tasks-${{ matrix.platform }}.tar.gz" -C src-tauri/target/release/bundle/macos .
+      - name: Upload the macOS preview
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat2tasks-${{ matrix.platform }}-preview
+          path: ${{ runner.temp }}/chat2tasks-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Install and launch the Linux preview
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./src-tauri/target/release/bundle/deb/*.deb
+          dbus-run-session -- xvfb-run -a bash -c '
+            chat2tasks-tauri --sample &
+            app=$!
+            trap "kill $app 2>/dev/null || true" EXIT
+            for attempt in $(seq 1 90); do
+              kill -0 "$app" || exit 1
+              if xdotool search --onlyvisible --name "Chat2Tasks Preview" >/dev/null 2>&1; then exit 0; fi
+              sleep 1
+            done
+            echo "The installed preview window did not appear." >&2
+            exit 1
+          '
+      - name: Upload the Linux preview installer
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat2tasks-linux-x64-preview
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7

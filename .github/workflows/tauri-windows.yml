@@ -85,6 +85,13 @@ jobs:
           } finally {
             if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
           }
+      - name: Upload the Windows preview installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat2tasks-windows-x64-preview
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7
   windows-transfer:
     runs-on: windows-latest
     timeout-minutes: 10

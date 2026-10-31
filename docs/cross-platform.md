@@ -42,6 +42,6 @@ There is no automatic election or failover. To change which computer hosts the w
 
 ## Checks and platform limits
 
-GitHub Actions checks the application on Linux, macOS, and Windows. Its Linux job also runs the extension browser journey and builds the Docker image. A separate Windows workflow builds and checks the Tauri preview. These checks do not publish a release or automatically update a running server. See [the workflows](../.github/workflows).
+GitHub Actions checks the application on Linux, macOS, and Windows. Its Linux job also runs the extension browser journey and builds the Docker image. Separate workflows build desktop previews and make their installers available as workflow artifacts. These checks do not publish a release or automatically update a running server. See [the workflows](../.github/workflows).
 
-The Docker-based server is the shared setup described here. A packaged native desktop server on every platform, automatic server discovery, and automatic failover are not provided by this setup.
+The Docker-based server is the shared setup described here. A desktop-hosted shared server, automatic server discovery, and automatic failover are not provided by this setup.
