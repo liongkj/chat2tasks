@@ -1515,3 +1515,60 @@ test('Spotlight finds items and opens matching saved messages without a model', 
     await browser.close();
   }
 });
+
+test('Spotlight opens matching audio and video messages with playback controls', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const original = snapshot.messages[0];
+  if (!original) throw Error('The sample needs a saved message');
+  const attachments = ['audio', 'video'].map((type) => ({
+    ...original,
+    id: `spotlight-${type}`,
+    type,
+    body: '',
+    mediaMimetype: type === 'audio' ? 'audio/ogg' : 'video/mp4',
+    image_reading: undefined,
+  }));
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const state = SnapshotSchema.parse(await response.json());
+      await route.fulfill({
+        response,
+        json: { ...state, messages: [...state.messages, ...attachments] },
+      });
+    });
+    await page.route('**/api/search', async (route) => {
+      const { query } = route.request().postDataJSON();
+      const type = query === 'video' ? 'video' : 'audio';
+      await route.fulfill({
+        json: {
+          moreExact: false,
+          status: { kind: 'ready' },
+          media: { kind: 'ready', indexed: 2, total: 2 },
+          results: [{ kind: 'message', id: `spotlight-${type}`, match: 'related' }],
+        },
+      });
+    });
+    await page.goto(base);
+    await page.getByRole('button', { name: 'Spotlight', exact: true }).click();
+    const input = page.getByRole('textbox', { name: 'Search workspace' });
+    for (const type of ['audio', 'video']) {
+      await input.fill(type);
+      await page.getByRole('button', { name: new RegExp(`^${type}`, 'i') }).click();
+      await expect(page.locator(`[data-message-id="spotlight-${type}"] ${type}`)).toHaveAttribute(
+        'controls',
+        '',
+      );
+      await page.keyboard.press('Meta+k');
+    }
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});

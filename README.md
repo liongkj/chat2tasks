@@ -62,12 +62,13 @@ Choose **Conversations** to read a followed chat's cached messages and linked ta
 
 ## Spotlight: search across your workspace
 
-Choose **Spotlight** in the sidebar or press **⌘/Ctrl K** to search all saved items and conversation messages. Exact matches work without a model. Related results use the text-only **EmbeddingGemma 2** model, run with Ollama on the workspace host. The first search builds a local index; later searches reuse it. Spotlight includes saved image readings when available, but does not inspect image or audio files itself. Results are suggestions and may miss a match or include unrelated material.
+Choose **Spotlight** in the sidebar or press **⌘/Ctrl K** to search saved items and conversation messages. Exact matches work without a model. Related results use **EmbeddingGemma 2** through Ollama, including the contents of available image, audio, and video attachments. Audio is indexed in 30-second segments; video uses frames sampled every five seconds and its audio, when present. Indexing runs in the background and later searches reuse the index. Results are suggestions and may miss a match or include unrelated material; embeddings do not produce a transcript.
 
 On a Mac or a directly hosted workspace, [install and start Ollama](https://ollama.com/download), then download the model once:
 
 ```sh
 ollama pull embeddinggemma-2:270m-q8_0-text
+ollama pull embeddinggemma-2:740m-q8_0
 ```
 
 For Docker, an optional local CPU service is included in `compose.search.yml`. It publishes no host port and does not replace the existing Chat2Tasks image. Apply it alongside your existing Compose files, then download the model into its persistent volume:
@@ -75,9 +76,10 @@ For Docker, an optional local CPU service is included in `compose.search.yml`. I
 ```sh
 docker compose -f compose.yml -f compose.search.yml up -d --build
 docker compose -f compose.yml -f compose.search.yml exec search-model ollama pull embeddinggemma-2:270m-q8_0-text
+docker compose -f compose.yml -f compose.search.yml exec search-model ollama pull embeddinggemma-2:740m-q8_0
 ```
 
-The Ollama image is several gigabytes; the text model is about 304 MB. The service works on CPU, though initial indexing may take longer than with a GPU. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in the search screen and enter its address. Search queries and indexed text are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
+The Ollama image is several gigabytes; the full model is about 1.3 GB and shares its text weights with the smaller model. The service works on CPU, though first-time media indexing can take longer than with a GPU. Audio and video indexing requires FFmpeg and FFprobe on the workspace machine; they are included in the Docker image. Spotlight can index attachments already cached locally or still available from the configured WhatsApp gateway, up to 20 MB per image and 100 MB per audio or video attachment. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in Spotlight and enter its address. Search queries, indexed text, and media are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
 
 Search does not use your configured task-generation or decision models. Your separate task-generation and decision-provider settings still determine where task-processing evidence is sent. Search currently covers the full workspace, independent of the item filters and the Chrome companion's task filter.
 

@@ -6,7 +6,7 @@ COPY . .
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates bubblewrap \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates bubblewrap ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && npm install --global @openai/codex@0.163.0
 WORKDIR /app
