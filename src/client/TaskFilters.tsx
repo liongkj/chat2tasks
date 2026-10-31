@@ -73,7 +73,7 @@ export function TaskFilters({
         <p className="nav-section-label">Categories</p>
         <button
           className={`nav-item ${location.view === 'overview' ? 'active' : ''}`}
-          aria-pressed={location.view === 'overview'}
+          aria-current={location.view === 'overview' ? 'page' : undefined}
           onClick={() => onLocation({ view: 'overview', task: null, wait: null })}
         >
           <LayoutDashboard size={16} />
@@ -85,7 +85,9 @@ export function TaskFilters({
             <button
               key={value}
               className={`nav-item ${location.view === 'tasks' && location.kind === value ? 'active' : ''}`}
-              aria-pressed={location.view === 'tasks' && location.kind === value}
+              aria-current={
+                location.view === 'tasks' && location.kind === value ? 'page' : undefined
+              }
               onClick={() =>
                 choose({ kind: value, filter: 'open', chat: context.chat, query: context.query })
               }
@@ -106,7 +108,7 @@ export function TaskFilters({
           ))}
         <button
           className={`nav-item ${location.view === 'waiting' ? 'active' : ''}`}
-          aria-pressed={location.view === 'waiting'}
+          aria-current={location.view === 'waiting' ? 'page' : undefined}
           onClick={() => onLocation({ view: 'waiting', task: null, wait: null })}
         >
           <Clock3 size={16} />
@@ -119,7 +121,7 @@ export function TaskFilters({
         </button>
         <button
           className={`nav-item ${location.view === 'review' ? 'active' : ''}`}
-          aria-pressed={location.view === 'review'}
+          aria-current={location.view === 'review' ? 'page' : undefined}
           onClick={() => onLocation({ view: 'review', task: null, wait: null })}
         >
           <CircleAlert size={16} />
@@ -143,7 +145,9 @@ export function TaskFilters({
             <button
               key={value}
               className={`nav-item ${location.view === 'tasks' && location.kind === value ? 'active' : ''}`}
-              aria-pressed={location.view === 'tasks' && location.kind === value}
+              aria-current={
+                location.view === 'tasks' && location.kind === value ? 'page' : undefined
+              }
               onClick={() =>
                 choose({ kind: value, filter: 'open', chat: context.chat, query: context.query })
               }

@@ -317,7 +317,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     );
     await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark complete', exact: true })).toBeVisible();
-    await expect(page.getByRole('status')).toContainText('Could not save completion');
+    await expect(page.getByRole('alert')).toContainText('Could not save completion');
     await expect(page.locator('.toast.error')).toBeVisible();
     expect(await soundCount(page)).toBe(beforeCompletionSound + 2);
     const moreTasks = page.getByRole('button', { name: 'More task actions' });
@@ -1226,7 +1226,7 @@ test('a conversation switch shows its pending state until the server confirms', 
     await expect(row).toContainText('Pausing…');
     release();
     await expect(
-      page.getByRole('status').filter({ hasText: 'Fictional save failed' }),
+      page.getByRole('alert').filter({ hasText: 'Fictional save failed' }),
     ).toBeVisible();
     await expect(toggle).toBeEnabled();
     await expect(toggle).toHaveAttribute('aria-checked', 'true');

@@ -296,6 +296,14 @@ select:focus-visible {
 .button.secondary:hover {
   background: var(--hover);
 }
+.button.ghost {
+  background: transparent;
+  color: var(--muted);
+}
+.button.ghost:hover {
+  background: var(--hover);
+  color: var(--text);
+}
 .text-button {
   display: inline-flex;
   align-items: center;
