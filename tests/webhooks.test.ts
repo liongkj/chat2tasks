@@ -398,6 +398,14 @@ test('processing stays visible while a decision is in progress', async () => {
     running = f.sync.run(['active']);
     await started;
     assert.equal(f.store.status().syncing, true);
+    let drained = false;
+    const draining = f.sync.stopAndWait().then(() => {
+      drained = true;
+    });
+    assert.equal(drained, false, 'handover waits for analysis already in progress');
+    release();
+    await draining;
+    assert.equal(f.sync.running, false);
   } finally {
     release();
     await running;

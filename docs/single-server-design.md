@@ -40,4 +40,4 @@ Use synthetic conversations and local fake services. Check first-run role select
 
 ## Next step
 
-Add the separate, journaled move operation after the first-run role choice and secure desktop sharing. Do not enable a move control until source fencing, target activation, recovery, and the affected desktop journeys are verified together.
+The durable ownership record, target-bound grant, and old-server restart guard are groundwork only. They are not connected to a move control. Add quiescence, transfer, destination promotion, and recovery before exposing the move operation, and verify the affected desktop journeys together.

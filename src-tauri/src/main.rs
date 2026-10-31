@@ -370,6 +370,8 @@ fn main() {
                     if let Some(window) = handle.get_webview_window("startup") {
                         let message = if result.as_ref().is_some_and(|value| value["code"] == "already_running") {
                             "document.getElementById('status').textContent = 'Chat2Tasks is already running.'; document.getElementById('detail').textContent = 'Open the existing window or quit the other copy first.';"
+                        } else if result.as_ref().is_some_and(|value| value["code"] == "move_recovery") {
+                            "document.getElementById('status').textContent = 'This workspace is being moved.'; document.getElementById('detail').textContent = 'The old server cannot restart until the move is resolved.';"
                         } else {
                             "document.getElementById('status').textContent = 'The preview could not start.'; document.getElementById('detail').textContent = 'Quit the preview and try again.';"
                         };

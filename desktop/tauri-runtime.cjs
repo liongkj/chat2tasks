@@ -219,6 +219,10 @@ async function shutdown() {
 }
 async function main() {
   desktopLock = acquireLock(join(data, demo ? 'sample-control' : 'workspace-control'));
+  if (!demo) {
+    const { WorkspaceOwnership } = require(join(runtime, 'dist', 'desktop', 'ownership.cjs'));
+    WorkspaceOwnership.open(join(workspace, '.ownership'), 'server').assertCanRun();
+  }
   const sharingPort = demo ? undefined : workspaceSharingPort(workspace);
   sharingUnavailable = sharingPort !== undefined && !(await portAvailable(sharingPort));
   const availableSharingPort = sharingUnavailable ? undefined : sharingPort;
@@ -275,7 +279,11 @@ main().catch((error) => {
   if (testDiagnostics) console.error(error.message);
   report({
     type: 'error',
-    ...(error.code === 'CHAT2TASKS_IN_USE' ? { code: 'already_running' } : {}),
+    ...(error.code === 'CHAT2TASKS_IN_USE'
+      ? { code: 'already_running' }
+      : error.code === 'CHAT2TASKS_MOVE_RECOVERY'
+        ? { code: 'move_recovery' }
+        : {}),
   });
   void shutdown();
 });

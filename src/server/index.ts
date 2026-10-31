@@ -35,6 +35,7 @@ import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
 import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
 import { RemoteEvents } from './remote-events.js';
+import { WorkspaceOwnership } from './workspace-ownership.js';
 import {
   desktopSessionCookie,
   desktopSignInCsp,
@@ -51,6 +52,7 @@ const port = z.coerce
 const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
 const dataDirectory = resolve(process.env.DATA_DIR ?? 'data');
 const workspaceLock = desktop ? acquireLock(dataDirectory) : undefined;
+if (desktop) WorkspaceOwnership.open(join(dataDirectory, '.ownership'), 'server').assertCanRun();
 const store = new Store(dataDirectory);
 const localSearch = new LocalSearch(store.db, () => store.snapshot());
 const configuredDesktopSharing: DesktopSharing = desktop
@@ -624,6 +626,8 @@ async function shutdown() {
   await server.close();
   await starting;
   await threadJob;
+  await sync.stopAndWait();
+  localSearch.stop();
   store.close();
   workspaceLock?.close();
 }

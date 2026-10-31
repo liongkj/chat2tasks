@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, parse, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { createRequire } from 'node:module';
 
 const resources = resolve(process.env.CHAT2TASKS_TAURI_TEST_RESOURCES ?? 'work/tauri');
 const supervisor = resolve(
@@ -103,6 +104,21 @@ async function start(demo) {
   }
 }
 
+async function finishRejected(child, unexpectedlyReady) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, 'exit');
+  const timeout = setTimeout(() => child.kill(), 5000);
+  if (unexpectedlyReady) {
+    child.stdin.on('error', () => undefined);
+    child.stdin.end('{"action":"shutdown"}\n');
+  }
+  try {
+    await exited;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 let sample;
 let preview;
 let reservation;
@@ -141,17 +157,15 @@ try {
     stdio: ['pipe', 'pipe', 'ignore'],
   });
   const duplicateLines = createInterface({ input: duplicate.stdout });
+  let duplicateReady = false;
   try {
     const [line] = await once(duplicateLines, 'line');
     const result = JSON.parse(line);
+    duplicateReady = result.type === 'ready';
     assert.equal(result.type, 'error', 'The same local workspace must not start twice.');
     assert.equal(result.code, 'already_running');
   } finally {
-    if (duplicate.exitCode === null && duplicate.signalCode === null) {
-      const exited = once(duplicate, 'exit');
-      duplicate.stdin.write('{"action":"shutdown"}\n');
-      await exited;
-    }
+    await finishRejected(duplicate, duplicateReady);
     duplicateLines.close();
   }
   assert.equal((await preview.fetch('/api/state')).status, 200);
@@ -329,8 +343,44 @@ try {
     (await remoteCall('/api/state', 'GET', { ...remoteHeaders, Cookie: session })).status,
     200,
   );
+  const data = preview.data;
+  await preview.stop();
+  preview = undefined;
+  const { WorkspaceOwnership } = createRequire(import.meta.url)(
+    join(resources, 'runtime', 'dist', 'desktop', 'ownership.cjs'),
+  );
+  const owner = WorkspaceOwnership.open(join(data, 'workspace', '.ownership'), 'server');
+  const target = WorkspaceOwnership.open(join(root, 'other-computer'), 'client');
+  const move = {
+    id: '3a1dfe2b-e1fc-4f4c-84f1-4b30c01a5a08',
+    target: target.identity(),
+    targetOrigin: 'https://target.example',
+  };
+  owner.prepare(move);
+  owner.fence(move.id, 'a'.repeat(64));
+  const retired = spawn(bun, [supervisor], {
+    env: {
+      ...process.env,
+      C2T_TAURI_RESOURCES: resources,
+      C2T_TAURI_DATA: data,
+      C2T_TAURI_DEMO: '0',
+    },
+    stdio: ['pipe', 'pipe', 'ignore'],
+  });
+  const retiredLines = createInterface({ input: retired.stdout });
+  let retiredReady = false;
+  try {
+    const [line] = await once(retiredLines, 'line');
+    const result = JSON.parse(line);
+    retiredReady = result.type === 'ready';
+    assert.equal(result.type, 'error', 'The old server must remain stopped after a move.');
+    assert.equal(result.code, 'move_recovery');
+  } finally {
+    await finishRejected(retired, retiredReady);
+    retiredLines.close();
+  }
   process.stdout.write(
-    'Bun sample, workspace transfer, local/remote server switching, and desktop sharing passed.\n',
+    'Bun sample, workspace transfer, desktop sharing, and ownership restart checks passed.\n',
   );
 } finally {
   await sample?.stop();

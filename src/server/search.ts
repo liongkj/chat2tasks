@@ -130,6 +130,11 @@ export class LocalSearch {
       ? SearchSettingsSchema.parse(JSON.parse(z.object({ value: z.string() }).parse(row).value))
       : { kind: 'workspace' };
   }
+  stop() {
+    this.generation++;
+    this.indexJob?.controller.abort();
+    this.indexJob = null;
+  }
   saveSettings(value: unknown): SearchSettings {
     const next = SearchSettingsSchema.parse(value);
     if (JSON.stringify(next) !== JSON.stringify(this.settings())) {
