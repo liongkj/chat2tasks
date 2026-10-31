@@ -8,7 +8,7 @@ import {
   type SearchResponse,
   type SearchSettings,
 } from '../shared/search.js';
-import type { Image } from './ai.js';
+import type { Attachment } from './openwa.js';
 import { mediaKind, type MediaInput, type MediaKind } from './search-media.js';
 
 const model = 'embeddinggemma-2:270m-q8_0-text';
@@ -25,9 +25,9 @@ type MediaEmbed = (args: {
   signal: AbortSignal;
 }) => Promise<number[][]>;
 type MediaOptions = {
-  load: (message: Message) => Promise<Image | null>;
+  load: (message: Message) => Promise<Attachment | null>;
   prepare: (
-    attachment: Image,
+    attachment: Attachment,
     kind: MediaKind,
     signal: AbortSignal,
   ) => AsyncIterable<MediaInput> | Promise<MediaInput[]>;

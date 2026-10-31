@@ -6,6 +6,8 @@ import { MessageSchema, type Chat, type Message } from '../shared/schema.js';
 import { Store, hash } from './store.js';
 import type { Image } from './ai.js';
 
+export type Attachment = { mime: string; bytes: Buffer };
+
 const RawSchema = z.object({
   id: z.string(),
   sessionId: z.string().optional(),
@@ -63,7 +65,7 @@ export class OpenWA {
     if (message.type !== 'image') return null;
     return this.attachment(message);
   }
-  async attachment(message: Message): Promise<Image | null> {
+  async attachment(message: Message): Promise<Attachment | null> {
     if (!['image', 'audio', 'ptt', 'video'].includes(message.type)) return null;
     const maximum = message.type === 'image' ? 20_000_000 : 100_000_000;
     const fallbackMime =

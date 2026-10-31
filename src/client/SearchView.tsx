@@ -45,6 +45,7 @@ export function SearchView({
   const [serverUrl, setServerUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
+  const consumedRetry = useRef(0);
   const sourceRevision = useMemo(() => JSON.stringify([tasks, messages]), [tasks, messages]);
 
   useEffect(() => {
@@ -70,9 +71,11 @@ export function SearchView({
     setError('');
     const run = async (first: boolean) => {
       try {
+        const retryNow = first && retry > consumedRetry.current;
+        if (retryNow) consumedRetry.current = retry;
         const found = await api('search', SearchResponseSchema, {
           query: query.trim(),
-          retry: first && retry > 0,
+          retry: retryNow,
         });
         if (cancelled) return;
         setResult(found);
@@ -108,6 +111,7 @@ export function SearchView({
       setDraft(saved);
       setSettings(saved);
       setRetry(0);
+      consumedRetry.current = 0;
     } catch {
       setError('Could not save the search server. Try again.');
     } finally {

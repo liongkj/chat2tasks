@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { Image } from './ai.js';
+import type { Attachment } from './openwa.js';
 
 const run = promisify(execFile);
 
@@ -17,7 +17,7 @@ export function mediaKind(type: string): MediaKind | null {
 }
 
 export async function* prepareSearchMedia(
-  attachment: Image,
+  attachment: Attachment,
   kind: MediaKind,
   signal: AbortSignal,
 ): AsyncGenerator<MediaInput> {

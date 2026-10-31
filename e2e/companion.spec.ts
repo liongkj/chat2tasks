@@ -1535,6 +1535,7 @@ test('Spotlight opens matching audio and video messages with playback controls',
   });
   try {
     const page = await context.newPage();
+    const searches: { query: string; retry: boolean }[] = [];
     await page.route('**/api/state', async (route) => {
       const response = await route.fetch();
       const state = SnapshotSchema.parse(await response.json());
@@ -1544,13 +1545,20 @@ test('Spotlight opens matching audio and video messages with playback controls',
       });
     });
     await page.route('**/api/search', async (route) => {
-      const { query } = route.request().postDataJSON();
+      const { query, retry } = z
+        .object({ query: z.string(), retry: z.boolean() })
+        .parse(route.request().postDataJSON());
+      searches.push({ query, retry });
       const type = query === 'video' ? 'video' : 'audio';
       await route.fulfill({
         json: {
           moreExact: false,
           status: { kind: 'ready' },
-          media: { kind: 'ready', indexed: 2, total: 2 },
+          media: {
+            kind: query === 'audio' && !retry ? 'unavailable' : 'ready',
+            indexed: 2,
+            total: 2,
+          },
           results: [{ kind: 'message', id: `spotlight-${type}`, match: 'related' }],
         },
       });
@@ -1560,6 +1568,16 @@ test('Spotlight opens matching audio and video messages with playback controls',
     const input = page.getByRole('textbox', { name: 'Search workspace' });
     for (const type of ['audio', 'video']) {
       await input.fill(type);
+      if (type === 'audio') {
+        await page.getByRole('button', { name: 'Retry', exact: true }).click();
+        await expect
+          .poll(() => searches.some((item) => item.query === 'audio' && item.retry))
+          .toBe(true);
+      } else {
+        await expect
+          .poll(() => searches.some((item) => item.query === 'video' && !item.retry))
+          .toBe(true);
+      }
       await page.getByRole('button', { name: new RegExp(`^${type}`, 'i') }).click();
       await expect(page.locator(`[data-message-id="spotlight-${type}"] ${type}`)).toHaveAttribute(
         'controls',
