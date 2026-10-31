@@ -16,6 +16,19 @@ import { ThreadSnapshotSchema } from '../src/shared/threads.js';
 
 let directory: string, backend: ChildProcess, base: string;
 const password = 'isolated-extension-fixture';
+async function countSounds(page: Page) {
+  await page.addInitScript(() => {
+    const start = OscillatorNode.prototype.start;
+    OscillatorNode.prototype.start = function (when = 0) {
+      const root = document.documentElement;
+      root.dataset.soundStarts = String(Number(root.dataset.soundStarts ?? '0') + 1);
+      return start.call(this, when);
+    };
+  });
+}
+async function soundCount(page: Page) {
+  return Number((await page.locator('html').getAttribute('data-sound-starts')) ?? '0');
+}
 async function expectReadableTasks(page: Page, selector: string) {
   const text = await page
     .locator(selector)
@@ -111,6 +124,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
   });
   try {
     const page = await context.newPage();
+    await countSounds(page);
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(base);
@@ -240,6 +254,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
       await heldCompletion;
       await route.continue();
     });
+    const beforeCompletionSound = await soundCount(page);
     await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
     await expect(
       page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
@@ -250,6 +265,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
         (task) => task.title === title,
       )?.done,
     ).toBe(false);
+    expect(await soundCount(page)).toBe(beforeCompletionSound);
     releaseCompletion();
     await expect
       .poll(
@@ -259,6 +275,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
           )?.done,
       )
       .toBe(true);
+    await expect.poll(() => soundCount(page)).toBe(beforeCompletionSound + 1);
     await page.unroute('**/api/tick');
     await page.getByRole('button', { name: 'Undo', exact: true }).click();
     await expect
@@ -269,6 +286,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
           )?.done,
       )
       .toBe(false);
+    expect(await soundCount(page)).toBe(beforeCompletionSound + 1);
     await expect(
       page.getByRole('button', { name: `Open task: ${title}`, exact: true }),
     ).toBeVisible();
@@ -281,6 +299,7 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
           )?.done,
       )
       .toBe(true);
+    await expect.poll(() => soundCount(page)).toBe(beforeCompletionSound + 2);
     await page.getByRole('button', { name: 'Completed', exact: true }).click();
     await page.getByRole('button', { name: `Open task: ${title}`, exact: true }).click();
     await page.getByRole('button', { name: 'Reopen task', exact: true }).click();
@@ -299,6 +318,8 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark complete', exact: true })).toBeVisible();
     await expect(page.getByRole('status')).toContainText('Could not save completion');
+    await expect(page.locator('.toast.error')).toBeVisible();
+    expect(await soundCount(page)).toBe(beforeCompletionSound + 2);
     const moreTasks = page.getByRole('button', { name: 'More task actions' });
     await moreTasks.focus();
     await page.keyboard.press('ArrowDown');
@@ -313,6 +334,45 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await expect(moreTasks).toBeFocused();
     await expect(page.getByRole('menu')).not.toBeVisible();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Attention', exact: true }).click();
+    await expect(page.getByRole('checkbox', { name: 'Task completion sound' })).toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Clarification sound' })).toBeChecked();
+    await expect(page.getByRole('slider', { name: 'Sound volume' })).toHaveValue('30');
+    await page.getByRole('checkbox', { name: 'Task completion sound' }).uncheck();
+    let releaseSoundSave!: () => void;
+    const heldSoundSave = new Promise<void>((resolve) => {
+      releaseSoundSave = resolve;
+    });
+    await page.route(
+      '**/api/sound-preferences',
+      async (route) => {
+        await heldSoundSave;
+        await route.continue();
+      },
+      { times: 1 },
+    );
+    await page.getByRole('button', { name: 'Save sound settings' }).click();
+    await expect(page.getByRole('checkbox', { name: 'Task completion sound' })).toBeDisabled();
+    await expect(page.getByRole('checkbox', { name: 'Clarification sound' })).toBeDisabled();
+    await expect(page.getByRole('slider', { name: 'Sound volume' })).toBeDisabled();
+    releaseSoundSave();
+    await expect(page.getByText('Sound settings saved.', { exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'Clarification sound' }).uncheck();
+    await expect(page.getByText('Sound settings saved.', { exact: true })).not.toBeVisible();
+    await page.getByRole('checkbox', { name: 'Clarification sound' }).check();
+    await expect
+      .poll(async () => SnapshotSchema.parse(await (await owner('state')).json()).sound.completion)
+      .toBe(false);
+    await page.reload();
+    await expect(page.getByRole('checkbox', { name: 'Task completion sound' })).not.toBeChecked();
+    await page.getByRole('checkbox', { name: 'Task completion sound' }).check();
+    await page.getByRole('button', { name: 'Save sound settings' }).click();
+    await expect
+      .poll(async () => SnapshotSchema.parse(await (await owner('state')).json()).sound.completion)
+      .toBe(true);
+    const beforePreview = await soundCount(page);
+    await page.getByRole('button', { name: 'Preview completion' }).click();
+    await expect.poll(() => soundCount(page)).toBe(beforePreview + 1);
     await page.getByRole('button', { name: 'Browser', exact: true }).click();
     await expect(
       page.getByRole('heading', { name: 'Chrome companion', exact: true }),
@@ -376,6 +436,112 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     expect(errors).toEqual([]);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('a new clarification sounds once and existing questions stay quiet after reload', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const message = snapshot.messages[0];
+  if (!message) throw Error('The sample workspace needs a message');
+  const question = {
+    message_id: message.id,
+    action: 'ask' as const,
+    task_ids: [],
+    evidence_quote: message.body,
+    reason: 'Needs clarification',
+  };
+  let addQuestion = false;
+  let reads = 0;
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await countSounds(page);
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const current = SnapshotSchema.parse(await response.json());
+      current.questions = [
+        { ...question, id: 'existing-question', question: 'Existing question?' },
+        ...(addQuestion ? [{ ...question, id: 'new-question', question: 'New question?' }] : []),
+      ];
+      reads++;
+      await route.fulfill({ response, json: current });
+    });
+    await page.goto(base + '?view=tasks');
+    await expect(page.getByText('Existing question?', { exact: true })).toBeVisible();
+    await page
+      .getByRole('button', { name: /^Open task:/ })
+      .first()
+      .click();
+    expect(await soundCount(page)).toBe(0);
+    addQuestion = true;
+    await expect(page.getByText('New question?', { exact: true })).toBeVisible({ timeout: 8000 });
+    await expect.poll(() => soundCount(page)).toBe(2);
+    const readsAfterArrival = reads;
+    await expect.poll(() => reads, { timeout: 8000 }).toBeGreaterThan(readsAfterArrival);
+    expect(await soundCount(page)).toBe(2);
+    await page.reload();
+    await expect(page.getByText('New question?', { exact: true })).toBeVisible();
+    await page
+      .getByRole('button', { name: /^Open task:/ })
+      .first()
+      .click();
+    expect(await soundCount(page)).toBe(0);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('the last-item celebration waits for a confirmed completion', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const task = snapshot.tasks.find(
+    (item) => !item.done && item.kind === 'task' && !item.gtd.recurrence,
+  );
+  if (!task) throw Error('The sample workspace needs an open task');
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const current = SnapshotSchema.parse(await response.json());
+      current.tasks = current.tasks.filter((item) => item.id === task.id);
+      await route.fulfill({ response, json: current });
+    });
+    await page.goto(base + '?view=tasks');
+    await expect(page.getByRole('button', { name: 'Mark complete', exact: true })).toBeVisible();
+    await page.getByRole('textbox', { name: 'Search items' }).fill('no matching task');
+    await expect(page.locator('.completion-celebration')).toHaveCount(0);
+    await page.getByRole('textbox', { name: 'Search items' }).clear();
+    await page.getByRole('button', { name: `Open task: ${task.title}` }).click();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route('**/api/tick', async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.getByRole('button', { name: 'Mark complete', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'No open items here' })).toBeVisible();
+    await expect(page.locator('.completion-celebration')).toHaveCount(0);
+    const celebrated = expect(page.locator('.completion-celebration')).toBeVisible();
+    release();
+    await celebrated;
+    await page.unroute('**/api/tick');
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (item) => item.id === task.id,
+          )?.done,
+      )
+      .toBe(false);
   } finally {
     await context.close();
     await browser.close();
@@ -532,12 +698,69 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const id = new URL(worker.url()).host;
     const page = await context.newPage();
+    await countSounds(page);
     await page.goto('chrome-extension://' + id + '/index.html');
     const code = PairCodeSchema.parse(await (await owner('extensions/pairing', {})).json());
     await page.getByLabel('Server address').fill(base);
     await page.getByLabel('Pairing code').fill(code.code);
     await page.getByRole('button', { name: 'Connect workspace' }).click();
     await expect(page.getByRole('heading', { name: 'My items' })).toBeVisible();
+    await expect(page.locator('.notice.paired')).toContainText('Connected to your workspace.');
+    await page.getByRole('button', { name: 'More options' }).click();
+    await page.getByRole('menuitem', { name: 'Sound settings' }).click();
+    let soundDialog = page.getByRole('dialog', { name: 'Sound settings' });
+    await expect(
+      soundDialog.getByRole('checkbox', { name: 'Task completion sound' }),
+    ).toBeChecked();
+    await expect(soundDialog).toHaveCSS('opacity', '1');
+    await page.screenshot({
+      path: test.info().outputPath('sound-settings.png'),
+      animations: 'disabled',
+    });
+    await soundDialog.getByRole('checkbox', { name: 'Task completion sound' }).uncheck();
+    await soundDialog.getByRole('button', { name: 'Save sound settings' }).click();
+    await expect
+      .poll(async () => SnapshotSchema.parse(await (await owner('state')).json()).sound)
+      .toEqual({ completion: false, attention: true, volume: 0.3 });
+    await soundDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    const mutedTask = SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+      (task) => task.title === 'Review the onboarding flow before Friday',
+    );
+    if (!mutedTask) throw Error('The sample task is missing');
+    const beforeMutedCompletion = await soundCount(page);
+    await page.getByRole('button', { name: `Mark Complete: ${mutedTask.title}` }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
+            (task) => task.id === mutedTask.id,
+          )?.done,
+      )
+      .toBe(true);
+    expect(await soundCount(page)).toBe(beforeMutedCompletion);
+    await owner('tick', { id: mutedTask.id, done: false });
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'My items' })).toBeVisible();
+    await expect(page.locator('.notice.paired')).not.toBeVisible();
+    await page.getByRole('button', { name: 'More options' }).click();
+    await page.getByRole('menuitem', { name: 'Sound settings' }).click();
+    soundDialog = page.getByRole('dialog', { name: 'Sound settings' });
+    await expect(
+      soundDialog.getByRole('checkbox', { name: 'Task completion sound' }),
+    ).not.toBeChecked();
+    await expect(soundDialog.getByRole('slider', { name: 'Sound volume' })).toHaveValue('30');
+    await soundDialog.getByRole('slider', { name: 'Sound volume' }).press('Home');
+    await soundDialog.getByRole('button', { name: 'Save sound settings' }).click();
+    await expect
+      .poll(async () => SnapshotSchema.parse(await (await owner('state')).json()).sound)
+      .toEqual({ completion: false, attention: true, volume: 0 });
+    await soundDialog.getByRole('checkbox', { name: 'Task completion sound' }).check();
+    await soundDialog.getByRole('slider', { name: 'Sound volume' }).press('End');
+    await soundDialog.getByRole('button', { name: 'Save sound settings' }).click();
+    await expect
+      .poll(async () => SnapshotSchema.parse(await (await owner('state')).json()).sound)
+      .toEqual({ completion: true, attention: true, volume: 1 });
+    await soundDialog.getByRole('button', { name: 'Close', exact: true }).click();
     const waiting = SnapshotSchema.parse(await (await owner('state')).json()).waiting_for[0];
     if (!waiting?.task_id) throw Error('The sample waiting item needs linked work');
     await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
@@ -613,6 +836,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
       await heldCompletion;
       await route.continue();
     });
+    const beforeCompletionSound = await soundCount(page);
     await page.getByRole('button', { name: 'Mark Complete', exact: true }).click();
     await expect(page.getByText(title, { exact: true })).not.toBeVisible();
     await expect(page.getByRole('button', { name: /^Mark Complete:/ }).first()).toBeEnabled();
@@ -621,6 +845,7 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
         (task) => task.title === title,
       )?.done,
     ).toBe(false);
+    expect(await soundCount(page)).toBe(beforeCompletionSound);
     releaseCompletion();
     await expect
       .poll(
@@ -630,12 +855,14 @@ test('packaged companion pairs, changes tasks, reviews captures, and loses acces
           )?.done,
       )
       .toBe(true);
+    await expect.poll(() => soundCount(page)).toBe(beforeCompletionSound + 1);
     await page.unroute('**/api/companion/tick');
     await page.getByRole('button', { name: 'More options' }).click();
     await page.getByRole('menuitem', { name: 'Show completed', exact: true }).click();
     await page.getByText(title, { exact: true }).click();
     await expect(page.getByRole('button', { name: 'Mark as to do', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Collapse task' }).click();
+    await owner('sound-preferences', { completion: true, attention: true, volume: 0.3 });
     await page.getByRole('button', { name: 'Conversations', exact: true }).click();
     await page.getByRole('switch', { name: 'Activate Design team' }).click();
     await expect(page.getByRole('switch', { name: 'Activate Design team' })).toHaveAttribute(
@@ -1510,6 +1737,173 @@ test('desktop setup returns to WhatsApp after choosing the lightweight connectio
     await expect(page.getByRole('heading', { name: 'Bring your conversations in.' })).toBeVisible();
     await expect(page.getByRole('radio', { name: /Lightweight/ })).toBeChecked();
     await expect(page.getByRole('button', { name: 'Connect WhatsApp' })).toBeVisible();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('Spotlight finds items and opens matching saved messages without a model', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const task = snapshot.tasks[0];
+  const message = snapshot.messages.find((item) => item.body.length > 25);
+  if (!task || !message) throw Error('The sample needs an item and a saved message');
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(base);
+    await page.getByRole('button', { name: 'Spotlight', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Spotlight', exact: true })).toBeVisible();
+    const input = page.getByRole('textbox', { name: 'Search workspace' });
+    await input.fill(task.reference);
+    const taskResult = page
+      .getByRole('button')
+      .filter({ hasText: task.reference })
+      .filter({ hasText: task.title });
+    await expect(taskResult).toBeVisible();
+    await taskResult.click();
+    await expect(page.getByRole('heading', { name: task.title, exact: true })).toBeVisible();
+
+    await page.keyboard.press('Meta+k');
+    await expect(input).toHaveValue(task.reference);
+    await input.fill(message.body.slice(0, 25));
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
+    const messageResult = page.getByRole('button').filter({ hasText: message.body.slice(0, 25) });
+    await expect(messageResult).toBeVisible();
+    await expect(page.getByText('Exact matches are available.', { exact: false })).toBeVisible();
+    await messageResult.click();
+    await expect(page.locator(`[data-message-id="${message.id}"]`)).toBeVisible();
+
+    await page.keyboard.press('Meta+k');
+    await expect(input).toHaveValue(message.body.slice(0, 25));
+    await page.getByText('Search model and server', { exact: true }).click();
+    await page.getByRole('radio', { name: 'Another Ollama server' }).check();
+    await page.getByLabel('Server address').fill('not a URL');
+    await page.getByRole('button', { name: 'Save search server' }).click();
+    await expect(page.getByRole('alert')).toContainText('Invalid URL');
+    await input.fill('');
+    await page.getByLabel('Server address').fill('http://127.0.0.1:18955');
+    await page.getByRole('button', { name: 'Save search server' }).click();
+    await expect
+      .poll(async () => (await (await owner('search/settings')).json()).kind)
+      .toBe('server');
+    await page.getByRole('radio', { name: 'This workspace machine' }).check();
+    await page.getByRole('button', { name: 'Save search server' }).click();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('Spotlight opens matching audio and video messages with playback controls', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const original = snapshot.messages[0];
+  if (!original) throw Error('The sample needs a saved message');
+  const attachments = ['audio', 'video'].map((type) => ({
+    ...original,
+    id: `spotlight-${type}`,
+    type,
+    body: '',
+    mediaMimetype: type === 'audio' ? 'audio/ogg' : 'video/mp4',
+    image_reading: undefined,
+  }));
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    const searches: { query: string; retry: boolean }[] = [];
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const state = SnapshotSchema.parse(await response.json());
+      await route.fulfill({
+        response,
+        json: { ...state, messages: [...state.messages, ...attachments] },
+      });
+    });
+    await page.route('**/api/search', async (route) => {
+      const { query, retry } = z
+        .object({ query: z.string(), retry: z.boolean() })
+        .parse(route.request().postDataJSON());
+      searches.push({ query, retry });
+      const type = query === 'video' ? 'video' : 'audio';
+      await route.fulfill({
+        json: {
+          moreExact: false,
+          status: { kind: 'ready' },
+          media: {
+            kind: query === 'audio' && !retry ? 'unavailable' : 'ready',
+            indexed: 2,
+            total: 2,
+          },
+          results: [{ kind: 'message', id: `spotlight-${type}`, match: 'related' }],
+        },
+      });
+    });
+    await page.goto(base);
+    await page.getByRole('button', { name: 'Spotlight', exact: true }).click();
+    const input = page.getByRole('textbox', { name: 'Search workspace' });
+    for (const type of ['audio', 'video']) {
+      await input.fill(type);
+      if (type === 'audio') {
+        await page.getByRole('button', { name: 'Retry', exact: true }).click();
+        await expect
+          .poll(() => searches.some((item) => item.query === 'audio' && item.retry))
+          .toBe(true);
+      } else {
+        await expect
+          .poll(() => searches.some((item) => item.query === 'video' && !item.retry))
+          .toBe(true);
+      }
+      await page.getByRole('button', { name: new RegExp(`^${type}`, 'i') }).click();
+      await expect(page.locator(`[data-message-id="spotlight-${type}"] ${type}`)).toHaveAttribute(
+        'controls',
+        '',
+      );
+      await page.keyboard.press('Meta+k');
+    }
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('desktop opens its workspace when the server becomes available after startup', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        value: {
+          invoke: async (command: string) => {
+            if (command !== 'retry_remote_workspace') return;
+            const attempts = Number(sessionStorage.getItem('reconnect-attempts') ?? 0) + 1;
+            sessionStorage.setItem('reconnect-attempts', String(attempts));
+            if (attempts === 2) window.location.assign('/');
+          },
+        },
+      });
+    });
+    await page.clock.install();
+    await page.goto(`${base}/?desktop=connecting`);
+    await expect(page.getByRole('heading', { name: 'Connecting to your server' })).toBeVisible();
+    await page.clock.fastForward(10000);
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem('reconnect-attempts')))
+      .toBe('1');
+    await page.clock.fastForward(10000);
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+    await page.clock.fastForward(30000);
+    expect(await page.evaluate(() => sessionStorage.getItem('reconnect-attempts'))).toBe('2');
   } finally {
     await context.close();
     await browser.close();

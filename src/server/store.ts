@@ -7,6 +7,7 @@ import { matchesTaskIdentifier } from '../shared/tasks.js';
 import {
   MessageSchema,
   AttentionPreferencesSchema,
+  SoundPreferencesSchema,
   ItemKindSchema,
   GtdSchema,
   WaitInputSchema,
@@ -31,6 +32,7 @@ import {
   type Status,
   type Settings,
   type AttentionPreferences,
+  type SoundPreferences,
 } from '../shared/schema.js';
 
 export const now = () => Date.now() / 1000;
@@ -277,6 +279,14 @@ export class Store {
     this.setMeta('attention_preferences', preferences);
     return preferences;
   }
+  soundPreferences(): SoundPreferences {
+    return SoundPreferencesSchema.parse(this.metaValue('sound_preferences') ?? {});
+  }
+  saveSoundPreferences(value: unknown) {
+    const preferences = SoundPreferencesSchema.parse(value);
+    this.setMeta('sound_preferences', preferences);
+    return preferences;
+  }
   relinkConversation(id: string, sessionId: string) {
     const settings = this.settings();
     const chat = settings.chats.find((item) => item.id === id);
@@ -465,6 +475,14 @@ export class Store {
         }),
     );
     return messages.filter((m) => seen.get(m.id) !== fingerprint(m));
+  }
+  pendingMessageCount() {
+    const chats = this.settings().chats.filter((chat) => chat.enabled);
+    const messages = this.messages().filter((message) =>
+      chats.some((chat) => chat.sessionId === message.sessionId && chat.chatId === message.chatId),
+    );
+    return new Set([...this.pending(messages), ...this.pendingReplies(messages)].map((m) => m.id))
+      .size;
   }
   apply(
     changes: TaskChange[],
@@ -1227,6 +1245,7 @@ export class Store {
       );
     return {
       demo: this.metaValue('demo') === true,
+      sound: this.soundPreferences(),
       tasks,
       waiting_for,
       messages,

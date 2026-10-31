@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, now } from '../src/server/store.js';
 import { OpenWA } from '../src/server/openwa.js';
+import { LocalSearch } from '../src/server/search.js';
 import { MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
 import { exportWorkspace, importWorkspace } from '../src/server/workspace-transfer.js';
 
@@ -57,6 +58,15 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
     store.tick(original.id, true);
     store.createWait({ expected: 'A report', person: 'Sam', task_id: original.id, source_ids: [] });
     store.savePreferences({ ...store.preferences(), screenshots: 'review' });
+    const search = new LocalSearch(store.db, () => store.snapshot());
+    search.saveSettings({ kind: 'server', url: 'https://search.example.invalid' });
+    store.db
+      .prepare("INSERT INTO search_embeddings VALUES('message','image',0,'old',?)")
+      .run(Buffer.alloc(1024));
+    store.db.prepare("INSERT INTO search_media_index VALUES('image','old',0)").run();
+    store.db
+      .prepare("INSERT INTO search_media_embeddings VALUES('image',0,'old',?)")
+      .run(Buffer.alloc(1024));
     const file = join(root, 'workspace.c2t');
     await exportWorkspace(store, file, 'example passphrase');
     const bytes = await readFile(file);
@@ -75,6 +85,20 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       assert.equal(restored.settings().chats[0]?.enabled, false);
       assert.equal(restored.settings().openwaUrl, '');
       assert.equal(restored.secret('openwa'), '');
+      const restoredSearch = new LocalSearch(restored.db, () => restored.snapshot());
+      assert.deepEqual(restoredSearch.settings(), { kind: 'workspace' });
+      assert.equal(
+        restored.db.prepare('SELECT count(*) AS count FROM search_embeddings').get()?.count,
+        0,
+      );
+      assert.equal(
+        restored.db.prepare('SELECT count(*) AS count FROM search_media_index').get()?.count,
+        0,
+      );
+      assert.equal(
+        restored.db.prepare('SELECT count(*) AS count FROM search_media_embeddings').get()?.count,
+        0,
+      );
       const image = await new OpenWA(restored).media(result.messages[0]!);
       assert.equal(image?.bytes.toString(), 'fictional image');
       assert.equal(store.settings().chats[0]?.enabled, true);

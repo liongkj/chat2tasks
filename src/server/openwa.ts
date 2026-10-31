@@ -6,6 +6,8 @@ import { MessageSchema, type Chat, type Message } from '../shared/schema.js';
 import { Store, hash } from './store.js';
 import type { Image } from './ai.js';
 
+export type Attachment = { mime: string; bytes: Buffer };
+
 const RawSchema = z.object({
   id: z.string(),
   sessionId: z.string().optional(),
@@ -50,9 +52,9 @@ export class OpenWA {
   mediaPath(id: string) {
     return join(this.store.dir, 'media', hashString(id) + '.bin');
   }
-  async saveMedia(id: string, bytes: Buffer) {
-    if (!bytes.length || bytes.length > 20_000_000)
-      throw new Error('Image is empty or larger than 20 MB');
+  async saveMedia(id: string, bytes: Buffer, maximum = 20_000_000) {
+    if (!bytes.length || bytes.length > maximum)
+      throw new Error('Attachment is empty or too large');
     await mkdir(join(this.store.dir, 'media'), { recursive: true, mode: 0o700 });
     const path = this.mediaPath(id),
       temp = path + '.' + randomUUID();
@@ -61,10 +63,21 @@ export class OpenWA {
   }
   async media(message: Message): Promise<Image | null> {
     if (message.type !== 'image') return null;
+    return this.attachment(message);
+  }
+  async attachment(message: Message): Promise<Attachment | null> {
+    if (!['image', 'audio', 'ptt', 'video'].includes(message.type)) return null;
+    const maximum = message.type === 'image' ? 20_000_000 : 100_000_000;
+    const fallbackMime =
+      message.type === 'image'
+        ? 'image/jpeg'
+        : message.type === 'video'
+          ? 'video/mp4'
+          : 'audio/ogg';
     try {
       const file = this.mediaPath(message.id);
-      if ((await stat(file)).size <= 20_000_000)
-        return { mime: message.mediaMimetype ?? 'image/jpeg', bytes: await readFile(file) };
+      if ((await stat(file)).size <= maximum)
+        return { mime: message.mediaMimetype ?? fallbackMime, bytes: await readFile(file) };
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
@@ -74,9 +87,15 @@ export class OpenWA {
         `/api/sessions/${encodeURIComponent(message.sessionId)}/messages/${encodeURIComponent(message.chatId)}/${encodeURIComponent(message.waMessageId)}/media`,
       );
       const mime = response.headers.get('Content-Type')?.split(';')[0] ?? '';
-      if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)) return null;
-      const bytes = await boundedBytes(response, 20_000_000);
-      await this.saveMedia(message.id, bytes);
+      const valid =
+        message.type === 'image'
+          ? ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mime)
+          : message.type === 'video'
+            ? mime.startsWith('video/')
+            : mime.startsWith('audio/') || mime === 'application/ogg';
+      if (!valid) return null;
+      const bytes = await boundedBytes(response, maximum);
+      await this.saveMedia(message.id, bytes, maximum);
       return { mime, bytes };
     } catch (error) {
       if (error instanceof Error && error.message.includes('HTTP 404')) return null;
@@ -139,6 +158,8 @@ export class OpenWA {
         }
         const image = await this.media(m);
         if (image) m = { ...m, mediaMimetype: image.mime, image_digest: hashBytes(image.bytes) };
+      } else if (['audio', 'ptt', 'video'].includes(m.type) && row.metadata?.media?.data) {
+        await this.saveMedia(m.id, Buffer.from(row.metadata.media.data, 'base64'), 100_000_000);
       }
       normalized.push(m);
     }
@@ -177,7 +198,7 @@ export async function boundedBytes(response: Response, maximum: number) {
       size += value.length;
       if (size > maximum) {
         await reader.cancel();
-        throw new Error('The image is too large');
+        throw new Error('The attachment is too large');
       }
       chunks.push(value);
     }

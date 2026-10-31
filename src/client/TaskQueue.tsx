@@ -32,6 +32,7 @@ export function TaskQueue({
   onImport,
   inspector,
   questions,
+  celebrate,
   navigationTrigger,
 }: {
   tasks: Task[];
@@ -49,6 +50,7 @@ export function TaskQueue({
   onImport: () => void;
   inspector: ReactNode;
   questions: ReactNode;
+  celebrate: boolean;
   navigationTrigger: ReactNode;
 }) {
   const [menu, setMenu] = useState(false);
@@ -140,9 +142,7 @@ export function TaskQueue({
               >
                 <X size={14} />
               </button>
-            ) : (
-              <kbd>⌘ K</kbd>
-            )}
+            ) : null}
           </label>
         </div>
         <div className="queue-context">
@@ -210,7 +210,10 @@ export function TaskQueue({
           )}
           {!loading && !visible.length && (
             <div className="empty-state">
-              <CheckCircle2 size={28} />
+              <CheckCircle2
+                className={celebrate ? 'completion-celebration' : undefined}
+                size={28}
+              />
               <h2>
                 {location.query
                   ? 'No matching items'

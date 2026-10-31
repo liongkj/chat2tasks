@@ -585,6 +585,81 @@ test('the image route uses the WhatsApp ID and caches bytes across restarts', as
   }
 });
 
+test('saved audio and video attachments can be cached for search', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-search-media-')),
+    store = new Store(dir);
+  let calls = 0;
+  const upstream = createServer((request, response) => {
+    calls++;
+    if (request.url?.includes('?')) {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(
+        JSON.stringify({
+          messages: [
+            {
+              id: 'inline-audio',
+              type: 'audio',
+              direction: 'incoming',
+              timestamp: 1,
+              metadata: {
+                media: {
+                  mimetype: 'audio/ogg',
+                  data: Buffer.from('inline sample').toString('base64'),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    const audio = request.url?.endsWith('/audio-id/media');
+    response.setHeader('Content-Type', audio ? 'audio/ogg' : 'video/mp4');
+    response.end(audio ? 'audio sample' : 'video sample');
+  });
+  await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+  store.saveSettings({
+    settings: { ...store.settings(), openwaUrl: `http://127.0.0.1:${address.port}` },
+    secrets: { openwa: 'fixture-key' },
+    removeSecrets: [],
+  });
+  try {
+    for (const [type, id, mime] of [
+      ['ptt', 'audio-id', 'audio/ogg'],
+      ['video', 'video-id', 'video/mp4'],
+    ]) {
+      const message = MessageSchema.parse({
+        id,
+        sessionId: 's',
+        chatId: 'c',
+        waMessageId: id,
+        type,
+        body: '',
+        direction: 'incoming',
+        timestamp: 1,
+        mediaMimetype: mime,
+      });
+      const first = await new OpenWA(store).attachment(message);
+      const second = await new OpenWA(store).attachment(message);
+      assert.equal(first?.mime, mime);
+      assert.deepEqual(first?.bytes, second?.bytes);
+    }
+    assert.equal(calls, 2);
+    const chat = { id: 'chat', name: 'Sample', sessionId: 's', chatId: 'c', enabled: true };
+    const [inline] = await new OpenWA(store).messages(chat);
+    assert.ok(inline);
+    assert.equal((await new OpenWA(store).attachment(inline))?.bytes.toString(), 'inline sample');
+    assert.equal(calls, 3);
+  } finally {
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('pausing during inference discards its result and prevents the next AI call', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-pause-')),
     store = new Store(dir);

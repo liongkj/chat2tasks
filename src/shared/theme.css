@@ -233,3 +233,38 @@ html:not([data-input='pointer']) :is(.sidebar, .toggle > span) {
     border: 1px solid var(--text);
   }
 }
+
+.sound-preferences {
+  display: grid;
+  gap: 12px;
+}
+.sound-preferences > label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sound-preferences input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.sound-preferences .sound-volume {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 4px;
+}
+.sound-volume input {
+  width: 100%;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.sound-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sound-preferences p {
+  margin: 0;
+  font-size: 14px;
+}

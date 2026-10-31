@@ -161,17 +161,7 @@ export class Sync {
           this.store.status({ retry_at: now() + delay });
         }
       }
-      const pendingCount = this.store
-        .settings()
-        .chats.filter((c) => c.enabled)
-        .reduce((count, chat) => {
-          const messages = this.store
-            .messages()
-            .filter((m) => m.sessionId === chat.sessionId && m.chatId === chat.chatId);
-          return (
-            count + this.store.pending(messages).length + this.store.pendingReplies(messages).length
-          );
-        }, 0);
+      const pendingCount = this.store.pendingMessageCount();
       const queued = this.store.jobs().length > 0;
       this.store.status({
         syncing: false,
@@ -244,7 +234,7 @@ export class Sync {
       : [];
     this.store.status({
       last_poll: now(),
-      pending: pending.length + replies.length,
+      pending: this.store.pendingMessageCount(),
     });
     if (
       !pending.length &&
@@ -259,7 +249,7 @@ export class Sync {
       if (trigger.mode === 'manual') {
         this.store.status({
           phase: 'Messages saved · ready when you choose Run now',
-          pending: pending.length + replies.length,
+          pending: this.store.pendingMessageCount(),
         });
         return 'deferred';
       }
@@ -324,11 +314,17 @@ export class Sync {
       phase: `Reading evidence from ${chat.name}`,
       debouncing: false,
     });
-    for (const m of messages.filter((m) => m.type === 'image' && m.image_digest)) {
+    const imagesToRead = messages.filter((m) => {
+      if (m.type !== 'image' || !m.image_digest) return false;
       const reading = this.store.db
         .prepare('SELECT image_digest FROM image_readings WHERE message_id=?')
         .get(m.id);
-      if (reading && reading.image_digest === m.image_digest) continue;
+      return !reading || reading.image_digest !== m.image_digest;
+    });
+    for (const [imageIndex, m] of imagesToRead.entries()) {
+      this.store.status({
+        phase: `Reading image ${imageIndex + 1} of ${imagesToRead.length} from ${chat.name}`,
+      });
       const image = await this.openwa.media(m);
       if (!image) continue;
       const index = messages.findIndex((x) => x.id === m.id);
@@ -560,20 +556,34 @@ export class Sync {
         ),
       );
       if (!this.active(chat)) return 'done';
+      const byReply = new Map<string, typeof result.decisions>();
+      for (const decision of result.decisions)
+        byReply.set(decision.message_id, [...(byReply.get(decision.message_id) ?? []), decision]);
+      const selected = part.flatMap((message) => {
+        const matching = byReply.get(message.id);
+        return matching?.length === 1 && matching[0] ? [{ message, decision: matching[0] }] : [];
+      });
+      if (!selected.length || (recheck && selected.length !== part.length))
+        throw new Error('Decisions must cover every supplied reply exactly once');
       const decisions = await reviewCompletions(
         this.store,
         reviewProfile,
-        result.decisions,
-        part,
+        selected.map(({ decision }) => decision),
+        selected.map(({ message }) => message),
         openTasks,
         context,
       );
       if (!this.active(chat)) return 'done';
-      this.store.decide(decisions, part, started, recheck);
+      this.store.decide(
+        decisions,
+        selected.map(({ message }) => message),
+        started,
+        recheck,
+      );
     }
     this.store.status({
       last_extract: now(),
-      pending: this.store.pending(messages).length + this.store.pendingReplies(messages).length,
+      pending: this.store.pendingMessageCount(),
       phase: 'Everything is up to date',
     });
     return 'done';
