@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { matchesTaskIdentifier } from '../shared/tasks.js';
+import { DesktopSharingSchema, DesktopSharingUpdateSchema } from '../shared/desktop-sharing.js';
 import {
   MessageSchema,
   AttentionPreferencesSchema,
@@ -340,7 +341,7 @@ export class Store {
         .prepare('SELECT id FROM app_secrets')
         .all()
         .map((r) => IdRow.parse(r).id)
-        .filter((id) => id !== 'webhook-signing'),
+        .filter((id) => id !== 'webhook-signing' && id !== 'desktop-sharing-password'),
       desktopGatewayRestartRequired:
         this.settings().desktopGateway.mode !== this.settings().desktopGateway.activeMode ||
         this.metaValue('desktop_gateway_restart_required') === true,
@@ -374,6 +375,26 @@ export class Store {
     this.db
       .prepare('INSERT OR REPLACE INTO app_secrets VALUES(?,?)')
       .run(id, [iv, cipher.getAuthTag(), content].map((b) => b.toString('base64')).join('.'));
+  }
+  desktopSharing() {
+    return DesktopSharingSchema.parse(this.metaValue('desktop_sharing') ?? { kind: 'disabled' });
+  }
+  saveDesktopSharing(value: unknown) {
+    const update = DesktopSharingUpdateSchema.parse(value);
+    this.transaction(() => {
+      if (update.kind === 'enabled') {
+        this.putSecret('desktop-sharing-password', update.password);
+        this.setMeta('desktop_sharing', {
+          kind: 'enabled',
+          origin: update.origin,
+          port: update.port,
+        });
+      } else {
+        this.db.prepare('DELETE FROM app_secrets WHERE id=?').run('desktop-sharing-password');
+        this.setMeta('desktop_sharing', { kind: 'disabled' });
+      }
+    });
+    return this.desktopSharing();
   }
   webhookSecret() {
     const existing = this.secret('webhook-signing');
@@ -425,7 +446,7 @@ export class Store {
         this.db.prepare('DELETE FROM app_secrets WHERE id=?').run(id);
       for (const r of this.db.prepare('SELECT id FROM app_secrets').all()) {
         const { id } = IdRow.parse(r);
-        if (!allowed.has(id) && id !== 'webhook-signing')
+        if (!allowed.has(id) && id !== 'webhook-signing' && id !== 'desktop-sharing-password')
           this.db.prepare('DELETE FROM app_secrets WHERE id=?').run(id);
       }
     });

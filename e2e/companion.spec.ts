@@ -102,6 +102,129 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+test('a new desktop chooses its workspace before starting a local server', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      const calls: { command: string; args: unknown }[] = [];
+      Object.defineProperty(window, '__workspaceCalls', { value: calls });
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        value: {
+          async invoke(command: string, args: unknown) {
+            calls.push({ command, args });
+            if (command === 'get_workspace_target') return { kind: 'unconfigured' };
+            if (command === 'set_workspace_target') return null;
+            throw new Error(`Unexpected desktop command: ${command}`);
+          },
+        },
+      });
+    });
+    await page.goto(base + '/?desktop=workspace');
+    const local = page.getByRole('radio', { name: /This computer/ });
+    const remote = page.getByRole('radio', { name: /Another server/ });
+    await expect(local).not.toBeChecked();
+    await expect(remote).not.toBeChecked();
+    await expect(page.getByRole('button', { name: 'Choose a workspace' })).toBeDisabled();
+    await remote.check();
+    await page.getByLabel('Chat2Tasks server address').fill('https://server.example');
+    await page.getByRole('button', { name: 'Use server workspace' }).click();
+    await expect
+      .poll(() => page.evaluate(() => Reflect.get(window, '__workspaceCalls')))
+      .toContainEqual({
+        command: 'set_workspace_target',
+        args: { target: { kind: 'remote', url: 'https://server.example' } },
+      });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('the desktop owner can configure private sharing and see that a restart is needed', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript((origin) => {
+      Object.defineProperty(window, 'chat2tasksTauri', {
+        value: { origin, token: 'a'.repeat(64), demo: false },
+      });
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        value: { invoke: async () => 1, transformCallback: () => 1 },
+      });
+      Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
+        value: { unregisterListener() {} },
+      });
+    }, base);
+    await page.route('**/api/desktop/status', (route) =>
+      route.fulfill({
+        json: {
+          setupComplete: true,
+          imported: false,
+          codex: { installed: true, signedIn: true, signingIn: false, failed: false },
+        },
+      }),
+    );
+    let submitted: unknown;
+    let portInUse = false;
+    await page.route('**/api/desktop/sharing', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          json: {
+            configured: portInUse
+              ? { kind: 'enabled', origin: 'https://shared.example:8443', port: 2786 }
+              : { kind: 'disabled' },
+            active: { kind: 'disabled' },
+            restartRequired: portInUse,
+            unavailableReason: portInUse ? 'port_in_use' : null,
+          },
+        });
+        return;
+      }
+      submitted = route.request().postDataJSON();
+      await route.fulfill({
+        json: {
+          configured: { kind: 'enabled', origin: 'https://shared.example:8443', port: 2786 },
+          active: { kind: 'disabled' },
+          restartRequired: true,
+          unavailableReason: null,
+        },
+      });
+    });
+    await page.goto(base + '/?view=settings&section=workspace');
+    await expect(page.getByRole('heading', { name: 'Connect other computers' })).toBeVisible();
+    await page.getByLabel('Private HTTPS address').fill('https://shared.example:8443');
+    await page.getByLabel('Workspace password').fill('fictional-sharing-password');
+    await page.getByRole('button', { name: 'Enable sharing' }).click();
+    await expect
+      .poll(() => submitted)
+      .toEqual({
+        kind: 'enabled',
+        origin: 'https://shared.example:8443',
+        port: 2786,
+        password: 'fictional-sharing-password',
+      });
+    await expect(page.getByRole('status').filter({ hasText: 'Quit Chat2Tasks' })).toBeVisible();
+    await expect(
+      page.getByText('tailscale serve --bg --https=8443 http://127.0.0.1:2786'),
+    ).toBeVisible();
+    portInUse = true;
+    await page.reload();
+    await expect(
+      page.getByText('Sharing is off because the local port is in use.', { exact: false }),
+    ).toBeVisible();
+    await page.getByLabel('Local server port').fill('2787');
+    await page.getByLabel('Workspace password').fill('fictional-sharing-password');
+    await page.getByRole('button', { name: 'Update sharing' }).click();
+    await expect.poll(() => submitted).toMatchObject({ kind: 'enabled', port: 2787 });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
 test('readable workspace keeps completion, notes, source context, and mobile navigation working', async () => {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({

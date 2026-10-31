@@ -20,6 +20,8 @@ jobs:
       - run: npm ci
       - run: npm run tauri:stage
       - run: npm run tauri:prepare
+      - name: Check workspace selection
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml workspace_target::tests
       - name: Block external network for the staged runtime
         shell: pwsh
         run: |
@@ -59,6 +61,35 @@ jobs:
           }
       - name: Check sample, unlinked gateway and workspace transfer offline
         run: node scripts/test-tauri-runtime.mjs
+      - name: Check a fresh installation asks where the workspace runs
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName UIAutomationClient
+          $previewDir = Join-Path $env:RUNNER_TEMP 'chat2tasks-preview'
+          $app = Start-Process -FilePath (Join-Path $previewDir 'chat2tasks-tauri.exe') -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(90)
+            $found = $false
+            while ((Get-Date) -lt $deadline -and -not $found) {
+              $app.Refresh()
+              if ($app.HasExited) { throw 'The preview exited before workspace selection appeared.' }
+              $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $app.Id)
+              $window = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $condition)
+              if ($window) {
+                $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                $names = @($elements | ForEach-Object { $_.Current.Name })
+                $found = $names -contains 'Where should work happen?'
+              }
+              if (-not $found) { Start-Sleep -Seconds 1 }
+            }
+            if (-not $found) { throw 'The workspace choice was not visible.' }
+            $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($app.Id)"
+            if (@($children | Where-Object { $_.Name -eq 'bun.exe' }).Count -ne 0) {
+              throw 'The local workspace started before a choice was made.'
+            }
+          } finally {
+            if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+          }
       - name: Check the installed sample window
         shell: pwsh
         run: |

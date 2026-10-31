@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, parse, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -28,6 +30,7 @@ async function reportDiagnostics(data, output) {
   if (key.trim()) output = output.replaceAll(key.trim(), '[redacted]');
   output = output
     .replace(/\b(?:sk-[\w-]+|gh[pousr]_[\w-]+)\b/g, '[redacted]')
+    .replace(/\bowa_k1_[A-Za-z0-9]+(?:…|\.\.\.)?/g, '[redacted]')
     .replace(/\b[\da-f]{32,}\b/gi, '[redacted]');
   if (output) process.stderr.write(`Local test diagnostics:\n${output}\n`);
 }
@@ -102,6 +105,7 @@ async function start(demo) {
 
 let sample;
 let preview;
+let reservation;
 try {
   sample = await start(true);
   let response = await sample.fetch('/api/state');
@@ -127,6 +131,30 @@ try {
   const desktop = await response.json();
   assert.equal(desktop.codex.installed, true);
   assert.equal(desktop.codex.signedIn, false);
+  const duplicate = spawn(bun, [supervisor], {
+    env: {
+      ...process.env,
+      C2T_TAURI_RESOURCES: resources,
+      C2T_TAURI_DATA: preview.data,
+      C2T_TAURI_DEMO: '0',
+    },
+    stdio: ['pipe', 'pipe', 'ignore'],
+  });
+  const duplicateLines = createInterface({ input: duplicate.stdout });
+  try {
+    const [line] = await once(duplicateLines, 'line');
+    const result = JSON.parse(line);
+    assert.equal(result.type, 'error', 'The same local workspace must not start twice.');
+    assert.equal(result.code, 'already_running');
+  } finally {
+    if (duplicate.exitCode === null && duplicate.signalCode === null) {
+      const exited = once(duplicate, 'exit');
+      duplicate.stdin.write('{"action":"shutdown"}\n');
+      await exited;
+    }
+    duplicateLines.close();
+  }
+  assert.equal((await preview.fetch('/api/state')).status, 200);
   response = await preview.fetch('/api/desktop/whatsapp/status');
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, 'not_connected');
@@ -224,11 +252,89 @@ try {
   assert.equal(preview.ready.gatewayMode, 'local');
   assert.equal(preview.ready.resumeSessions, false);
   assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  reservation = createServer((socket) => socket.on('error', () => undefined));
+  await new Promise((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const address = reservation.address();
+  assert.ok(address && typeof address !== 'string');
+  const sharingPort = address.port;
+  const sharingOrigin = 'https://shared.example:8443';
+  response = await preview.fetch('/api/desktop/sharing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind: 'enabled',
+      origin: sharingOrigin,
+      port: sharingPort,
+      password: 'fictional-sharing-password',
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).restartRequired, true);
+  await preview.stop();
+  preview = await start(false);
+  assert.notEqual(preview.ready.origin, `http://127.0.0.1:${sharingPort}`);
+  assert.equal(preview.ready.localGatewayRunning, false);
+  response = await fetch(preview.ready.origin + '/api/desktop/sharing', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: origin,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,x-chat2tasks-session',
+    },
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), origin);
+  response = await preview.fetch('/api/desktop/sharing');
+  const unavailable = await response.json();
+  assert.equal(unavailable.active.kind, 'disabled');
+  assert.equal(unavailable.unavailableReason, 'port_in_use');
+  response = await preview.fetch('/api/tick', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'any-task', done: true }),
+  });
+  assert.equal(response.status, 503);
+  assert.equal((await preview.fetch('/api/companion/captures')).status, 503);
+  assert.equal((await preview.fetch('/api/webhooks/openwa', { method: 'POST' })).status, 503);
+  await preview.stop();
+  await new Promise((resolve) => reservation.close(resolve));
+  reservation = undefined;
+  preview = await start(false);
+  assert.equal(preview.ready.origin, `http://127.0.0.1:${sharingPort}`);
+  response = await preview.fetch('/api/desktop/sharing');
+  assert.equal((await response.json()).restartRequired, false);
+  const remoteHeaders = { Host: 'shared.example:8443', Origin: sharingOrigin };
+  const remoteCall = (path, method, headers, body = '') =>
+    new Promise((resolve, reject) => {
+      const request = httpRequest(preview.ready.origin + path, { method, headers }, (result) => {
+        result.resume();
+        result.once('end', () =>
+          resolve({ status: result.statusCode, cookies: result.headers['set-cookie'] ?? [] }),
+        );
+      });
+      request.once('error', reject);
+      request.end(body);
+    });
+  assert.equal((await remoteCall('/api/state', 'GET', remoteHeaders)).status, 401);
+  const signedIn = await remoteCall(
+    '/desktop-sign-in',
+    'POST',
+    { ...remoteHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+    new URLSearchParams({ password: 'fictional-sharing-password' }).toString(),
+  );
+  assert.equal(signedIn.status, 303);
+  const session = signedIn.cookies[0]?.split(';')[0];
+  assert.ok(session);
+  assert.equal(
+    (await remoteCall('/api/state', 'GET', { ...remoteHeaders, Cookie: session })).status,
+    200,
+  );
   process.stdout.write(
-    'Bun sample, workspace transfer, and local/remote server switching passed.\n',
+    'Bun sample, workspace transfer, local/remote server switching, and desktop sharing passed.\n',
   );
 } finally {
   await sample?.stop();
   await preview?.stop();
+  if (reservation?.listening) await new Promise((resolve) => reservation.close(resolve));
   await rm(root, { recursive: true, force: true });
 }

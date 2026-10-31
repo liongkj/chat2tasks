@@ -23,6 +23,12 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       secrets: { openwa: 'private-gateway-key' },
       removeSecrets: [],
     });
+    store.saveDesktopSharing({
+      kind: 'enabled',
+      origin: 'https://shared.example:8443',
+      port: 2786,
+      password: 'fictional-sharing-password',
+    });
     const request = MessageSchema.parse({
       id: 'image',
       sessionId: 'old-session',
@@ -81,6 +87,8 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       assert.equal(restored.settings().chats[0]?.enabled, false);
       assert.equal(restored.settings().openwaUrl, '');
       assert.equal(restored.secret('openwa'), '');
+      assert.deepEqual(restored.desktopSharing(), { kind: 'disabled' });
+      assert.equal(restored.secret('desktop-sharing-password'), '');
       const restoredSearch = new LocalSearch(restored.db, () => restored.snapshot());
       assert.deepEqual(restoredSearch.settings(), { kind: 'workspace' });
       assert.equal(
@@ -90,6 +98,7 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       const image = await new OpenWA(restored).media(result.messages[0]!);
       assert.equal(image?.bytes.toString(), 'fictional image');
       assert.equal(store.settings().chats[0]?.enabled, true);
+      assert.equal(store.desktopSharing().kind, 'enabled');
     } finally {
       restored.close();
     }

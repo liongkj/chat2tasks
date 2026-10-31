@@ -326,13 +326,15 @@ fn main() {
             if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
             tray.build(app)?;
 
-            match workspace_target::read(&data) {
+            let sample = std::env::args().any(|arg| arg == "--sample");
+            let target = if sample { Ok(WorkspaceTarget::Local) } else { workspace_target::read(&data) };
+            match target {
                 Ok(WorkspaceTarget::Remote { url }) => {
                     app.manage(Host { runtime: None, selected_import: Mutex::new(None) });
                     show_remote_workspace(app.handle(), &url)?;
                     return Ok(());
                 }
-                Err(_) => {
+                Ok(WorkspaceTarget::Unconfigured) | Err(_) => {
                     app.manage(Host { runtime: None, selected_import: Mutex::new(None) });
                     show_workspace_picker(app.handle())?;
                     return Ok(());
@@ -348,7 +350,7 @@ fn main() {
                 .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
             #[cfg(target_os = "windows")]
             command.creation_flags(0x08000000);
-            if std::env::args().any(|arg| arg == "--sample") {
+            if sample {
                 command.env("C2T_TAURI_DEMO", "1");
             }
             let mut child = command.spawn()?;
@@ -363,9 +365,15 @@ fn main() {
             let handle = app.handle().clone();
             thread::spawn(move || {
                 let ready = runtime.lock().map_err(|_| "The local service stopped.".to_string()).and_then(|mut service| service.read());
-                let Some(value) = ready.ok().filter(|value| value["type"] == "ready") else {
+                let result = ready.ok();
+                let Some(value) = result.as_ref().filter(|value| value["type"] == "ready") else {
                     if let Some(window) = handle.get_webview_window("startup") {
-                        let _ = window.eval("document.getElementById('status').textContent = 'The preview could not start.'; document.getElementById('detail').textContent = 'Quit the preview and try again.';");
+                        let message = if result.as_ref().is_some_and(|value| value["code"] == "already_running") {
+                            "document.getElementById('status').textContent = 'Chat2Tasks is already running.'; document.getElementById('detail').textContent = 'Open the existing window or quit the other copy first.';"
+                        } else {
+                            "document.getElementById('status').textContent = 'The preview could not start.'; document.getElementById('detail').textContent = 'Quit the preview and try again.';"
+                        };
+                        let _ = window.eval(message);
                     }
                     return;
                 };

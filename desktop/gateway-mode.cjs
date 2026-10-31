@@ -28,4 +28,28 @@ function workspaceGatewayLaunch(workspace) {
     db.close();
   }
 }
-module.exports = { workspaceGatewayLaunch };
+
+function workspaceSharingPort(workspace) {
+  const path = join(workspace, 'tasks.sqlite');
+  if (!existsSync(path)) return undefined;
+  const db = new DatabaseSync(path);
+  try {
+    if (!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'").get())
+      return undefined;
+    const row = db.prepare("SELECT value FROM meta WHERE key='desktop_sharing'").get();
+    if (!row) return undefined;
+    const sharing = JSON.parse(row.value);
+    if (sharing.kind === 'disabled') return undefined;
+    if (
+      sharing.kind !== 'enabled' ||
+      !Number.isInteger(sharing.port) ||
+      sharing.port < 1024 ||
+      sharing.port > 65535
+    )
+      throw new Error('The desktop sharing configuration is invalid.');
+    return sharing.port;
+  } finally {
+    db.close();
+  }
+}
+module.exports = { workspaceGatewayLaunch, workspaceSharingPort };

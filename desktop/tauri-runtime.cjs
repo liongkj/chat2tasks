@@ -5,7 +5,8 @@ const { createServer } = require('node:net');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { replaceWorkspace } = require('./workspace-replace.cjs');
-const { workspaceGatewayLaunch } = require('./gateway-mode.cjs');
+const { workspaceGatewayLaunch, workspaceSharingPort } = require('./gateway-mode.cjs');
+const { acquireLock } = require('./process-lock.mjs');
 
 const resources = process.env.C2T_TAURI_RESOURCES;
 const data = process.env.C2T_TAURI_DATA;
@@ -44,8 +45,10 @@ let gateway,
   gatewayPort,
   serverPort,
   gatewayMode = 'local',
-  resumeSessions = false;
+  resumeSessions = false,
+  sharingUnavailable = false;
 let stopping = false;
+let desktopLock;
 
 function cleanEnv() {
   const env = { ...process.env };
@@ -72,6 +75,13 @@ function freePort() {
         return reject(new Error('Could not choose a local port.'));
       socket.close(() => resolve(address.port));
     });
+  });
+}
+function portAvailable(port) {
+  return new Promise((resolve) => {
+    const socket = createServer();
+    socket.once('error', () => resolve(false));
+    socket.listen(port, '127.0.0.1', () => socket.close(() => resolve(true)));
   });
 }
 async function ready(port, child, name) {
@@ -108,30 +118,34 @@ async function startGateway() {
     (await readFile(join(gatewayRuntime, 'browser-path.txt'), 'utf8')).trim(),
   );
   await access(browser);
-  gateway = spawn(process.execPath, [join(gatewayRuntime, 'dist', 'main.js')], {
-    cwd: gatewayData,
-    stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
-    windowsHide: true,
-    env: {
-      ...cleanEnv(),
-      NODE_ENV: 'production',
-      PORT: String(gatewayPort),
-      LOG_LEVEL: testDiagnostics ? 'info' : 'error',
-      UPDATE_CHECK_ENABLED: 'false',
-      AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
-      ENGINE_TYPE: 'whatsapp-web.js',
-      SSRF_ALLOWED_HOSTS: '127.0.0.1',
-      PUPPETEER_EXECUTABLE_PATH: browser,
-      PUPPETEER_ARGS: '--disable-gpu',
+  gateway = spawn(
+    process.execPath,
+    [join(__dirname, 'gateway-runner.cjs'), join(gatewayRuntime, 'dist', 'main.js')],
+    {
+      cwd: gatewayData,
+      stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
+      windowsHide: true,
+      env: {
+        ...cleanEnv(),
+        NODE_ENV: 'production',
+        PORT: String(gatewayPort),
+        LOG_LEVEL: testDiagnostics ? 'info' : 'error',
+        UPDATE_CHECK_ENABLED: 'false',
+        AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
+        ENGINE_TYPE: 'whatsapp-web.js',
+        SSRF_ALLOWED_HOSTS: '127.0.0.1',
+        PUPPETEER_EXECUTABLE_PATH: browser,
+        PUPPETEER_ARGS: '--disable-gpu',
+      },
     },
-  });
+  );
   await ready(gatewayPort, gateway, 'The WhatsApp gateway');
   await access(join(gatewayData, 'data', '.api-key'));
 }
 async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
-  if (!demo) {
+  if (!demo && !sharingUnavailable) {
     ({ mode: gatewayMode, resumeSessions } = workspaceGatewayLaunch(workspace));
     if (gatewayMode === 'remote') {
       await stop(gateway);
@@ -174,6 +188,7 @@ async function startServer() {
       DESKTOP_GATEWAY_MODE: gatewayMode,
       CHAT2TASKS_TAURI_ORIGIN: tauriOrigin,
       CHAT2TASKS_TAURI_TOKEN: token,
+      CHAT2TASKS_SHARING_UNAVAILABLE: sharingUnavailable ? 'port_in_use' : '',
     },
   });
   await ready(serverPort, server, 'The app service');
@@ -199,12 +214,19 @@ async function shutdown() {
   if (stopping) return;
   stopping = true;
   await Promise.all([stop(server), stop(gateway)]);
+  desktopLock?.close();
   process.exit(0);
 }
 async function main() {
-  gatewayPort = await freePort();
+  desktopLock = acquireLock(join(data, demo ? 'sample-control' : 'workspace-control'));
+  const sharingPort = demo ? undefined : workspaceSharingPort(workspace);
+  sharingUnavailable = sharingPort !== undefined && !(await portAvailable(sharingPort));
+  const availableSharingPort = sharingUnavailable ? undefined : sharingPort;
   do {
-    serverPort = await freePort();
+    gatewayPort = await freePort();
+  } while (gatewayPort === availableSharingPort);
+  do {
+    serverPort = availableSharingPort ?? (await freePort());
   } while (serverPort === gatewayPort);
   await startServer();
   report({
@@ -251,6 +273,9 @@ process.once('SIGTERM', () => void shutdown());
 process.once('SIGINT', () => void shutdown());
 main().catch((error) => {
   if (testDiagnostics) console.error(error.message);
-  report({ type: 'error' });
+  report({
+    type: 'error',
+    ...(error.code === 'CHAT2TASKS_IN_USE' ? { code: 'already_running' } : {}),
+  });
   void shutdown();
 });

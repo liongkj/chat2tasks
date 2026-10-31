@@ -4,7 +4,15 @@ Choose one Windows, macOS, or Linux computer to run the workspace. The other com
 
 The server computer must remain awake and connected while you want messages processed. This is a single-owner workspace: everyone who can sign in sees the same data. Selecting another server in a desktop app does not copy or synchronize data.
 
-## Start the server
+## Use an installed desktop as the server
+
+Install the desktop preview on the computer that will host the workspace. On first launch choose **This computer** and complete its setup. Open **Settings → Workspaces → Connect other computers**. Enter the computer's private HTTPS address, a free local port, and a strong workspace password. Quit the app from its menu or tray and reopen it to apply the change. The app keeps the password encrypted with the workspace data; it is not shown again.
+
+For Tailscale Serve, use the server computer's full MagicDNS name from Tailscale as the HTTPS address, including the HTTPS port you choose, such as `https://your-server.your-tailnet.ts.net:8443`. Check `tailscale serve status` before using that port. After the app restarts, run the Tailscale command shown in the sharing settings. Install Tailscale on each client and connect the devices to the same tailnet. On each client choose **Another server**, enter that address, and sign in with the workspace password.
+
+The Tauri desktop preview builds for macOS (Apple Silicon and Intel), Windows x64, and Linux x64. The Linux ARM64 WhatsApp browser is not yet available in the pinned gateway release. The server remains available only while its app and private network connection are running and the computer is awake.
+
+## Use Docker as the server
 
 1. Install Docker with Compose on the chosen server: Docker Desktop with Linux containers on Windows or macOS, or Docker Engine with the Compose plugin on Linux. The server uses a Linux container on all three systems.
 2. Clone this repository on the server. Copy `.env.example` to `.env` if you do not already have an `.env` file. Set a strong, unique `APP_PASSWORD` in `.env`; keep the file private. If you set a different `PORT` for a new server, also set `PUBLIC_ORIGIN` to `http://127.0.0.1:YOUR_PORT`. Leave an existing `PUBLIC_ORIGIN` unchanged if you already use this workspace through another address.
@@ -44,4 +52,4 @@ There is no automatic election or failover. To change which computer hosts the w
 
 GitHub Actions checks the application on Linux, macOS, and Windows. Its Linux job also runs the extension browser journey and builds the Docker image. Separate workflows build desktop previews and make their installers available as workflow artifacts. These checks do not publish a release or automatically update a running server. See [the workflows](../.github/workflows).
 
-The Docker-based server is the shared setup described here. A desktop-hosted shared server, automatic server discovery, and automatic failover are not provided by this setup.
+The desktop prevents starting the same local workspace twice on one computer. Automatic server discovery, cross-computer ownership handover, and automatic failover are not provided by this preview. The owner must not run copies of the same workspace on separate computers at once.

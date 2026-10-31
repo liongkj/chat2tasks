@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './workspace-picker.css';
 
-type WorkspaceTarget = { kind: 'local' } | { kind: 'remote'; url: string };
+type WorkspaceTarget =
+  { kind: 'unconfigured' } | { kind: 'local' } | { kind: 'remote'; url: string };
+type WorkspaceChoice = Exclude<WorkspaceTarget['kind'], 'unconfigured'>;
 
 export function WorkspacePicker() {
-  const [kind, setKind] = useState<WorkspaceTarget['kind']>('local');
+  const [kind, setKind] = useState<WorkspaceChoice | null>(null);
   const [address, setAddress] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -14,7 +16,7 @@ export function WorkspacePicker() {
   useEffect(() => {
     void invoke<WorkspaceTarget>('get_workspace_target')
       .then((target) => {
-        setKind(target.kind);
+        setKind(target.kind === 'unconfigured' ? null : target.kind);
         if (target.kind === 'remote') setAddress(target.url);
       })
       .catch(() => setError('Could not read the saved workspace choice. Choose where to work.'))
@@ -22,6 +24,7 @@ export function WorkspacePicker() {
   }, []);
 
   async function connect() {
+    if (!kind) return;
     setSaving(true);
     setError('');
     try {
@@ -37,7 +40,7 @@ export function WorkspacePicker() {
     <main className="workspace-picker">
       <p className="workspace-picker-eyebrow">CHAT2TASKS WORKSPACE</p>
       <h1>Where should work happen?</h1>
-      <p>Choose the workspace you want to use. You can switch again at any time.</p>
+      <p>Choose where your workspace runs. Other computers can connect to the same server.</p>
       <div className="workspace-picker-options" role="radiogroup" aria-label="Workspace location">
         <label className={kind === 'local' ? 'selected' : ''}>
           <input
@@ -48,7 +51,7 @@ export function WorkspacePicker() {
           />
           <span>
             <strong>This computer</strong>
-            <small>Work is processed while this computer is awake.</small>
+            <small>Run a workspace on this computer while it is awake.</small>
           </span>
         </label>
         <label className={kind === 'remote' ? 'selected' : ''}>
@@ -59,8 +62,8 @@ export function WorkspacePicker() {
             onChange={() => setKind('remote')}
           />
           <span>
-            <strong>Always-on server</strong>
-            <small>Work can continue while this computer sleeps or is closed.</small>
+            <strong>Another server</strong>
+            <small>Connect to a workspace that already runs on another computer.</small>
           </span>
         </label>
       </div>
@@ -82,8 +85,7 @@ export function WorkspacePicker() {
         </div>
       )}
       <p className="workspace-picker-note">
-        This computer and the server are separate workspaces. Switching does not move tasks or
-        WhatsApp sessions.
+        Choose one server for each workspace. Switching does not move tasks or WhatsApp sessions.
       </p>
       {error && (
         <p role="alert" className="workspace-picker-error">
@@ -100,14 +102,16 @@ export function WorkspacePicker() {
         </button>
         <button
           className="button primary"
-          disabled={loading || saving || (kind === 'remote' && !address.trim())}
+          disabled={loading || saving || !kind || (kind === 'remote' && !address.trim())}
           onClick={() => void connect()}
         >
           {saving
             ? 'Opening workspace…'
             : kind === 'remote'
               ? 'Use server workspace'
-              : 'Use this computer'}
+              : kind === 'local'
+                ? 'Use this computer'
+                : 'Choose a workspace'}
         </button>
       </div>
     </main>

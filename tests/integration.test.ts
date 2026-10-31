@@ -21,6 +21,12 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
   writeFileSync(keyFile, 'fixture-key');
   const store = new Store(join(dir, 'workspace'));
   store.setMeta('desktop_setup_complete', true);
+  store.saveDesktopSharing({
+    kind: 'enabled',
+    origin: 'https://shared.example:8443',
+    port: 2786,
+    password: 'fictional-sharing-password',
+  });
   store.close();
   let gatewayReady = false;
   const gateway = createServer((_request, response) => {
@@ -106,6 +112,59 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
     });
     assert.equal(authorized.status, 200);
     assert.equal(authorized.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    const remoteHeaders = { Host: 'shared.example:8443', Origin: 'https://shared.example:8443' };
+    const remoteCall = (path: string, method: string, headers: Record<string, string>, body = '') =>
+      new Promise<{ status: number; cookies: string[] }>((resolve, reject) => {
+        const request = httpRequest(base + path, { method, headers }, (response) => {
+          response.resume();
+          response.once('end', () =>
+            resolve({
+              status: response.statusCode ?? 0,
+              cookies: response.headers['set-cookie'] ?? [],
+            }),
+          );
+        });
+        request.once('error', reject);
+        request.end(body);
+      });
+    assert.equal((await remoteCall('/api/state', 'GET', remoteHeaders)).status, 401);
+    const signIn = await remoteCall(
+      '/desktop-sign-in',
+      'POST',
+      { ...remoteHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+      new URLSearchParams({ password: 'fictional-sharing-password' }).toString(),
+    );
+    assert.equal(signIn.status, 303);
+    const cookie = signIn.cookies[0]?.split(';')[0];
+    assert.ok(cookie, 'a remote desktop can sign in');
+    assert.equal(
+      (await remoteCall('/api/state', 'GET', { ...remoteHeaders, Cookie: cookie })).status,
+      200,
+    );
+    assert.equal(
+      (await remoteCall('/api/desktop/sharing', 'GET', { ...remoteHeaders, Cookie: cookie }))
+        .status,
+      403,
+      'a remote client cannot change the host computer sharing configuration',
+    );
+    const localSharing = await fetch(base + '/api/desktop/sharing', {
+      headers: { Origin: 'tauri://localhost', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
+    });
+    const sharingStatus = await localSharing.json();
+    assert.equal(localSharing.status, 200);
+    assert.equal(sharingStatus.restartRequired, false);
+    assert.equal(JSON.stringify(sharingStatus).includes('fictional-sharing-password'), false);
+    const disableSharing = await fetch(base + '/api/desktop/sharing', {
+      method: 'POST',
+      headers: {
+        Origin: 'tauri://localhost',
+        'X-Chat2Tasks-Session': 'a'.repeat(64),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ kind: 'disabled' }),
+    });
+    assert.equal(disableSharing.status, 200);
+    assert.equal((await disableSharing.json()).restartRequired, true);
     const untrusted = await fetch(base + '/api/state', {
       headers: { Origin: 'https://example.invalid', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
     });

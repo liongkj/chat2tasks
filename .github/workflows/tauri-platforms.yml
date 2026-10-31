@@ -39,6 +39,8 @@ jobs:
       - run: npm ci
       - run: npm run tauri:stage
       - run: npm run tauri:prepare
+      - name: Check workspace selection
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml workspace_target::tests
       - name: Check the staged runtime offline on macOS
         if: runner.os == 'macOS'
         run: sandbox-exec -f scripts/baileys-offline.sb node scripts/test-tauri-runtime.mjs

@@ -174,6 +174,7 @@ export async function importWorkspace(source: string, destination: string, passp
         secrets: {},
         removeSecrets: ['openwa', 'remote-openwa'],
       });
+      restored.saveDesktopSharing({ kind: 'disabled' });
       restored.db.exec(
         'DELETE FROM chat_jobs; DROP TABLE IF EXISTS search_settings; DROP TABLE IF EXISTS search_embeddings',
       );
