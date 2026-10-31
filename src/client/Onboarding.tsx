@@ -70,11 +70,9 @@ export function DesktopRoot({ children }: { children: React.ReactNode }) {
 }
 
 function Onboarding({ onDone }: { onDone: () => void }) {
-  const [step, setStep] = useState(() => {
-    const resume = localStorage.getItem('wawa-onboarding-resume');
-    localStorage.removeItem('wawa-onboarding-resume');
-    return resume === 'whatsapp' ? 1 : 0;
-  });
+  const [step, setStep] = useState(() =>
+    localStorage.getItem('wawa-onboarding-resume') === 'whatsapp' ? 1 : 0,
+  );
   const [engine, setEngine] = useState<'whatsapp-web.js' | 'baileys'>('whatsapp-web.js');
   const [activeEngine, setActiveEngine] = useState<'whatsapp-web.js' | 'baileys' | null>(null);
   const [engineError, setEngineError] = useState(false);
@@ -115,6 +113,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
     }
   }
   useEffect(() => {
+    localStorage.removeItem('wawa-onboarding-resume');
     void refreshStatus().catch(() => undefined);
     void loadEngine();
     void api('preferences', AttentionPreferencesSchema)
