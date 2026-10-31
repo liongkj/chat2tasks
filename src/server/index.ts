@@ -45,7 +45,8 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
-const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const managedServer = process.env.WAWA_MANAGED_SERVER === 'true';
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true' || managedServer;
 const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
 if (desktop) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
@@ -206,6 +207,7 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.get('/api/setup-mode', () => ({ managedServer }));
 server.addContentTypeParser(
   'application/x-www-form-urlencoded',
   { parseAs: 'string', bodyLimit: 4096 },
@@ -485,8 +487,7 @@ server.post('/api/handoff', async (request, reply) => {
     handoffRunning = false;
   }
 });
-if (process.env.CHAT2TASKS_DESKTOP === 'true')
-  await registerDesktop(server, store, openwa, sync, webhooks);
+if (desktop) await registerDesktop(server, store, openwa, sync, webhooks, managedServer);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
 const startupAbort = new AbortController();
 if (desktop) {

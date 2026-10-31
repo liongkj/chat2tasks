@@ -1515,3 +1515,71 @@ test('desktop setup returns to WhatsApp after choosing the lightweight connectio
     await browser.close();
   }
 });
+
+test('server setup links WhatsApp without an API key and offers Codex device sign-in', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  let whatsappStatus = 'not_connected';
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      window.open = () => null;
+    });
+    await page.route('**/api/setup-mode', (route) =>
+      route.fulfill({ json: { managedServer: true } }),
+    );
+    await page.route('**/api/desktop/status', (route) =>
+      route.fulfill({
+        json: {
+          setupComplete: false,
+          imported: false,
+          codex: { installed: true, signedIn: false, signingIn: false, failed: false },
+        },
+      }),
+    );
+    await page.route('**/api/desktop/whatsapp/status', (route) =>
+      route.fulfill({
+        json: {
+          status: whatsappStatus,
+          qr: whatsappStatus === 'qr_ready' ? 'data:image/png;base64,aGVsbG8=' : null,
+        },
+      }),
+    );
+    await page.route('**/api/desktop/whatsapp/start', (route) => {
+      whatsappStatus = 'qr_ready';
+      return route.fulfill({ json: { status: whatsappStatus } });
+    });
+    await page.route('**/api/desktop/chats', (route) =>
+      route.fulfill({
+        json:
+          route.request().method() === 'POST'
+            ? { ok: true }
+            : { chats: [{ id: 'one', name: 'Example chat' }] },
+      }),
+    );
+    await page.route('**/api/desktop/codex/login', (route) =>
+      route.fulfill({
+        json: { url: 'https://auth.openai.com/codex/device', userCode: 'TEST-CODE' },
+      }),
+    );
+    await page.goto(base);
+    await expect(
+      page.getByText('Your server can keep working while this computer sleeps.'),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('checkbox', { name: /I understand/ }).check();
+    await page.getByRole('button', { name: 'Connect WhatsApp' }).click();
+    await expect(page.getByAltText('WhatsApp pairing QR code')).toBeVisible();
+    await expect(page.getByLabel(/API key/i)).toHaveCount(0);
+    whatsappStatus = 'ready';
+    await expect(page.getByText('WhatsApp is connected')).toBeVisible();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('checkbox', { name: 'Example chat' }).check();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue with ChatGPT' }).click();
+    await expect(page.getByText('Enter this one-time code: TEST-CODE')).toBeVisible();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});

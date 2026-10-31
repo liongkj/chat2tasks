@@ -1,6 +1,24 @@
 # Wawa server setup
 
-The always-on server holds the active workspace and runs its configured model connection while your computer is asleep. You maintain the server, its access, updates and backups. There is no one-command machine installer yet. The application and downloadable Chrome companion are built together. A Docker Compose stack is sufficient; Docker Swarm is not required. OpenWA remains a separate service: this Compose file does not install or start it. Keep an existing installation’s selected image name, data mounts, Codex session volume, and network when updating it.
+The always-on server holds the active workspace and runs its configured model connection while your computer is asleep. You maintain the server, its access, updates and backups. The application and downloadable Chrome companion are built together. Docker Swarm is not required. Keep an existing installation’s selected image name, data mounts, Codex session volume, and network when updating it.
+
+## Set up a new server
+
+On the Linux server, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/liongkj/chat2tasks/main/scripts/install-server.sh | bash
+```
+
+The installer offers to install Docker and Tailscale if they are missing. It creates a new workspace and OpenWA gateway, sets up their private API connection, and gives you a Tailscale address. Choose a workspace password when prompted. In the Mac app, select **Use another computer**, enter the address and password, and follow the setup screens. You still need to link WhatsApp on your phone, select conversations and sign in to Codex; the WhatsApp API key is handled for you.
+
+Codex on a remote server uses a one-time device code. You may need to enable device-code sign-in in your ChatGPT security settings. The server must stay awake and online. Back up the installer folder and the Wawa Docker volumes, including the workspace, OpenWA data, and Codex session. Rerunning the installer uses its existing workspace. It refuses to take over a different Wawa Docker project or an existing Tailscale route.
+
+This installer creates a new WhatsApp session; it does not move an existing session. To use an existing workspace such as Legion, connect to that workspace instead of installing another one. For a different installation location, set `WAWA_INSTALL_DIR` before running the script.
+
+## Manual setup
+
+The following alternative starts only the Wawa workspace. OpenWA remains a separate service and needs to be installed and configured independently.
 
 ## New stack
 
