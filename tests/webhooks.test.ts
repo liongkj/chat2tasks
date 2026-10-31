@@ -108,6 +108,20 @@ test('a remote server delivers messages and reconnects without enabling automati
     assert.equal(f.store.snapshot().usage.calls, 0);
     for (const socket of events.sockets.values()) socket.conn.close();
     await waitFor(() => subscribed >= 2 && f.store.jobs().length === 1);
+    remote.stop();
+    events.emit('message', {
+      type: 'event',
+      payload: {
+        event: 'message.received',
+        sessionId: 's',
+        data: { id: 'after-stop', chatId: 'chat', body: 'Must not reach the old server' },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(
+      f.store.messages().some((message) => message.body === 'Must not reach the old server'),
+      false,
+    );
   } finally {
     remote.stop();
     await new Promise<void>((resolve) => io.close(() => resolve()));

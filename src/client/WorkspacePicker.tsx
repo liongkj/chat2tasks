@@ -181,6 +181,9 @@ export function WorkspacePicker() {
             The previous workspace on this computer is kept as a backup. Reconnect WhatsApp and
             Codex after the move.
           </small>
+          <small>
+            If this computer is running a local workspace, switch it to the current server first.
+          </small>
         </div>
       )}
       <p className="workspace-picker-note">

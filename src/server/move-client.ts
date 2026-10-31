@@ -4,6 +4,7 @@ import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { z } from 'zod';
+import { acquireLock } from '../../desktop/process-lock.mjs';
 import { DesktopSharingUpdateSchema } from '../shared/desktop-sharing.js';
 import { DestinationMove } from './destination-move.js';
 import { MoveProposalSchema } from './workspace-ownership.js';
@@ -89,6 +90,23 @@ async function run() {
   const data = process.env.C2T_TAURI_DATA;
   if (!data) throw new Error('The desktop workspace is unavailable.');
   await mkdir(data, { recursive: true, mode: 0o700 });
+  const moveLock = acquireLock(join(data, 'move-client-control'));
+  try {
+    return await runWithLock({ input, sharing, data });
+  } finally {
+    moveLock.close();
+  }
+}
+
+async function runWithLock({
+  input,
+  sharing,
+  data,
+}: {
+  input: z.infer<typeof Input>;
+  sharing: Extract<z.infer<typeof DesktopSharingUpdateSchema>, { kind: 'enabled' }>;
+  data: string;
+}) {
   const pendingPath = join(data, 'server-move-pending.json');
   const destination = new DestinationMove(data);
   const authorization = 'Basic ' + Buffer.from('admin:' + input.sourcePassword).toString('base64');
@@ -154,7 +172,11 @@ async function run() {
   if (pending.kind === 'preparing') {
     destination.checkAvailable();
     await checkPort(sharing.port);
-    const proposal = { id: pending.id, target: pending.target, targetOrigin: pending.targetOrigin };
+    const proposal = {
+      id: pending.id,
+      target: pending.target,
+      targetOrigin: pending.targetOrigin,
+    };
     const start = z
       .object({ source: MoveProposalSchema.shape.target })
       .parse(await (await call('/api/workspace/move/start', proposal)).json());
