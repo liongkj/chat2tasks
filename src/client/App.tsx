@@ -1,34 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
-import {
-  Activity,
-  ArrowLeft,
-  CheckCircle2,
-  Info,
-  Link2,
-  ListTree,
-  Menu as MenuIcon,
-  MessageCircle,
-  Search,
-  Settings2,
-  TriangleAlert,
-  X,
-} from 'lucide-react';
-import { RefreshGate } from '../shared/refresh.js';
-import { captureCompletedRow } from '../shared/motion.js';
-import { playSound, useSoundActivation } from '../shared/sound.js';
+import { ArrowLeft, Link2, Menu as MenuIcon, TriangleAlert, X } from 'lucide-react';
+import { useSoundActivation } from '../shared/sound.js';
 import { useNotice, type NoticeVariant } from '../shared/useNotice.js';
 import { useInputModality } from '../shared/useInputModality.js';
-import {
-  PublicSettingsSchema,
-  SoundPreferencesSchema,
-  SnapshotSchema,
-  defaultSoundPreferences,
-  type PublicSettings,
-  type Snapshot,
-  type Task,
-  type TaskEvidence,
-} from '../shared/schema.js';
+import { SoundPreferencesSchema, type Task, type TaskEvidence } from '../shared/schema.js';
 import { matchesTaskIdentifier, matchesTaskQuery } from '../shared/tasks.js';
 import { api, download, OkSchema } from './api.js';
 import { ConversationWorkspace } from './ConversationWorkspace.js';
@@ -39,20 +15,21 @@ import { SettingsPanel } from './Settings.js';
 import { TaskDetail } from './TaskDetail.js';
 import { TaskQueue } from './TaskQueue.js';
 import { SearchView } from './SearchView.js';
-import { TaskFilters } from './TaskFilters.js';
 import { Overview } from './Overview.js';
 import { QuestionCard } from './QuestionCard.js';
 import { ReviewView } from './ReviewView.js';
 import { WaitingView } from './WaitingView.js';
 import { WorkspaceImport } from './WorkspaceImport.js';
-import { deskTitle, matchesTaskFilter, tasksForDesk } from './taskDesk.js';
-import {
-  useWorkspaceLocation,
-  type SettingsSection,
-  type WorkspaceLocation,
-  type WorkspaceView,
-} from './taskLocation.js';
+import { matchesTaskFilter, tasksForDesk } from './taskDesk.js';
+import { useWorkspaceLocation, type SettingsSection, type WorkspaceView } from './taskLocation.js';
 import { errorMessage } from '../shared/errors.js';
+import { useWorkspaceData } from './workspace/useWorkspaceData.js';
+import { useNarrowLayout } from './workspace/useNarrowLayout.js';
+import { useTaskTick, taskScope } from './workspace/useTaskTick.js';
+import { useQuestionArrivals } from './workspace/useQuestionArrivals.js';
+import { Sidebar } from './workspace/Sidebar.js';
+import { Toast, type Notice } from './workspace/Toast.js';
+import { viewTitle } from './workspace/viewTitle.js';
 
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'conversations', label: 'WhatsApp & chats' },
@@ -63,42 +40,28 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'browser', label: 'Browser' },
 ];
 
-const empty: Snapshot = {
-  demo: false,
-  sound: defaultSoundPreferences,
-  tasks: [],
-  waiting_for: [],
-  messages: [],
-  questions: [],
-  status: { syncing: false, phase: 'Connecting', pending: 0, error: null, debouncing: false },
-  usage: { calls: 0, totalTokens: 0, model: '' },
-};
-function useNarrowLayout() {
-  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 900px)').matches);
-  useEffect(() => {
-    const query = window.matchMedia('(max-width: 900px)');
-    const update = () => setNarrow(query.matches);
-    query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
-  }, []);
-  return narrow;
-}
-type Notice =
-  | { kind: 'message'; text: string; variant: NoticeVariant }
-  | { kind: 'completion'; text: string; taskId: Task['id']; previousDone: boolean; done: boolean };
-const taskScope = (location: WorkspaceLocation) =>
-  JSON.stringify([location.view, location.filter, location.kind, location.chat, location.query]);
 export function App() {
   useInputModality();
   useSoundActivation();
   const narrow = useNarrowLayout();
   const { location, updateLocation } = useWorkspaceLocation();
-  const [data, setData] = useState(empty);
-  const [config, setConfig] = useState<PublicSettings | null>(null);
-  const [configError, setConfigError] = useState('');
-  const [loaded, setLoaded] = useState(false);
-  const [online, setOnline] = useState(true);
-  const [requestingSync, setRequestingSync] = useState(false);
+  const workspace = useWorkspaceData();
+  const {
+    data,
+    setData,
+    config,
+    setConfig,
+    configError,
+    loaded,
+    online,
+    requestingSync,
+    setRequestingSync,
+    refresh,
+    refreshConfig,
+    refreshGate,
+    pendingTicks,
+    pendingTickIds,
+  } = workspace;
   const [workspaceImportOpen, setWorkspaceImportOpen] = useState(false);
   const {
     notice,
@@ -121,102 +84,23 @@ export function App() {
   } | null>(null);
   const initialized = useRef<string | null>(null);
   const restoredSelection = useRef<string | null>(null);
-  const refreshGate = useRef(new RefreshGate());
-  const pendingTicks = useRef(new Map<string, boolean>());
-  const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
-  const [completionFlash, setCompletionFlash] = useState<string | null>(null);
-  const [celebrationScope, setCelebrationScope] = useState<string | null>(null);
-  const [newQuestions, setNewQuestions] = useState<Set<string>>(new Set());
-  const seenQuestions = useRef<Set<string> | null>(null);
-  const dataRef = useRef(data);
-  const locationRef = useRef(location);
-  dataRef.current = data;
-  locationRef.current = location;
-  const refresh = useCallback(async () => {
-    const ticket = refreshGate.current.start();
-    try {
-      const next = await api('state', SnapshotSchema);
-      if (!refreshGate.current.accept(ticket)) return;
-      setData({
-        ...next,
-        tasks: next.tasks.map((task) => {
-          const pending = pendingTicks.current.get(task.id);
-          return pending === undefined ? task : { ...task, done: pending };
-        }),
-      });
-      setLoaded(true);
-      setOnline(true);
-    } catch {
-      if (refreshGate.current.accept(ticket)) setOnline(false);
-    }
-  }, []);
-  const refreshConfig = useCallback(async () => {
-    setConfigError('');
-    try {
-      setConfig(await api('settings', PublicSettingsSchema));
-    } catch (error) {
-      setConfigError(errorMessage(error));
-    }
-  }, []);
-  useEffect(() => {
-    void refresh();
-    void refreshConfig();
-  }, [refresh, refreshConfig]);
-  useEffect(() => {
-    // Hidden windows skip background polling and catch up when shown again.
-    const interval = data.status.syncing || data.status.debouncing || requestingSync ? 1000 : 5000;
-    const timer = setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, interval);
-    const onVisible = () => {
-      if (!document.hidden) void refresh();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [refresh, data.status.syncing, data.status.debouncing, requestingSync]);
   useEffect(() => {
     if (!notice) return;
     // Leave time to read and reach Undo when it is offered.
     const timer = setTimeout(dismissNotice, notice.kind === 'completion' ? 10000 : 7000);
     return () => clearTimeout(timer);
   }, [notice, dismissNotice]);
-  useEffect(() => {
-    if (!completionFlash && !celebrationScope) return;
-    const timer = setTimeout(() => {
-      setCompletionFlash(null);
-      setCelebrationScope(null);
-    }, 240);
-    return () => clearTimeout(timer);
-  }, [completionFlash, celebrationScope]);
-  useEffect(() => {
-    if (!newQuestions.size) return;
-    const timer = setTimeout(() => setNewQuestions(new Set()), 200);
-    return () => clearTimeout(timer);
-  }, [newQuestions]);
   const chats = config?.settings.chats ?? [];
   const chat = chats.find((item) => item.id === location.chat);
   const selectedTask = data.tasks.find((task) => matchesTaskIdentifier(task, location.task));
-  useLayoutEffect(() => {
-    if (!loaded) return;
-    if (!seenQuestions.current) {
-      seenQuestions.current = new Set(data.questions.map((question) => question.id));
-      return;
-    }
-    const arrived = data.questions.filter((question) => !seenQuestions.current?.has(question.id));
-    for (const question of arrived) seenQuestions.current.add(question.id);
-    if (!['tasks', 'review', 'conversations'].includes(location.view)) return;
-    const visible = arrived.filter((question) => {
-      if (location.view !== 'conversations') return true;
-      const message = data.messages.find((item) => item.id === question.message_id);
-      return chat && message?.chatId === chat.chatId && message.sessionId === chat.sessionId;
-    });
-    if (!visible.length || document.visibilityState !== 'visible' || !document.hasFocus()) return;
-    setNewQuestions(new Set(visible.map((question) => question.id)));
-    void playSound('attention', data.sound);
-  }, [loaded, data.questions, data.messages, data.sound, location.view, chat]);
+  const newQuestions = useQuestionArrivals(data, loaded, location, chat);
+  const { tick, completionFlash, celebrationScope } = useTaskTick({
+    workspace,
+    location,
+    chats,
+    notify,
+    showCompletion: showNotice,
+  });
   useEffect(() => {
     if (!loaded || !config || narrow) return;
     if (location.task) return;
@@ -361,138 +245,10 @@ export function App() {
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [updateLocation]);
-  const viewTitle =
-    location.view === 'search'
-      ? 'Spotlight'
-      : location.view === 'overview'
-        ? 'Overview'
-        : location.view === 'waiting'
-          ? 'Waiting for'
-          : location.view === 'review'
-            ? 'Review'
-            : location.view === 'connections'
-              ? 'Connections'
-              : location.view === 'conversations'
-                ? 'Conversations'
-                : location.view === 'threads'
-                  ? 'Threads'
-                  : location.view === 'tasks'
-                    ? deskTitle(location)
-                    : location.view === 'settings'
-                      ? 'Settings'
-                      : 'Activity';
+  const title = viewTitle(location);
   useEffect(() => {
-    document.title = `Wawa — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
-  }, [viewTitle, chat, location.view]);
-  async function tick(task: Task, done = !task.done, source: 'direct' | 'undo' = 'direct') {
-    if (pendingTicks.current.has(task.id) || task.done === done) return;
-    if (done && task.gtd.recurrence) {
-      pendingTicks.current.set(task.id, done);
-      setPendingTickIds(new Set(pendingTicks.current.keys()));
-      try {
-        const result = await api('tasks/occurrence', OkSchema, {
-          id: task.id,
-          date: task.gtd.recurrence.next_date,
-        });
-        if (!result.ok)
-          throw new Error('This occurrence has already changed. Refresh and try again.');
-        setCompletionFlash(task.id);
-        void playSound('completion', dataRef.current.sound);
-        pendingTicks.current.delete(task.id);
-        setPendingTickIds(new Set(pendingTicks.current.keys()));
-        await refresh();
-        notify('Occurrence completed');
-      } catch (error) {
-        notify(errorMessage(error), 'error');
-        void refresh();
-      } finally {
-        pendingTicks.current.delete(task.id);
-        setPendingTickIds(new Set(pendingTicks.current.keys()));
-      }
-      return;
-    }
-    const scope = taskScope(location);
-    const visibleTasks = tasksForDesk({
-      tasks: data.tasks,
-      messages: data.messages,
-      chats,
-      location,
-    });
-    const wasLastVisible =
-      done &&
-      source === 'direct' &&
-      location.view === 'tasks' &&
-      location.filter === 'open' &&
-      !location.query &&
-      pendingTicks.current.size === 0 &&
-      visibleTasks.length === 1 &&
-      visibleTasks[0]?.id === task.id;
-    const row = document
-      .querySelector<HTMLElement>(`[data-task-reference="${CSS.escape(task.reference)}"]`)
-      ?.closest<HTMLElement>('.task-row');
-    const finishRow = captureCompletedRow(row ?? null);
-    pendingTicks.current.set(task.id, done);
-    setPendingTickIds(new Set(pendingTicks.current.keys()));
-    refreshGate.current.invalidate();
-    setData((current) => ({
-      ...current,
-      tasks: current.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
-    }));
-    if (done && source === 'direct') finishRow();
-    try {
-      await api('tick', OkSchema, { id: task.id, done });
-      refreshGate.current.invalidate();
-      pendingTicks.current.delete(task.id);
-      setPendingTickIds(new Set(pendingTicks.current.keys()));
-      if (done && source === 'direct') {
-        setCompletionFlash(task.id);
-        void playSound('completion', dataRef.current.sound);
-        const currentLocation = locationRef.current;
-        if (
-          wasLastVisible &&
-          taskScope(currentLocation) === scope &&
-          tasksForDesk({
-            tasks: dataRef.current.tasks.map((item) =>
-              item.id === task.id ? { ...item, done } : item,
-            ),
-            messages: dataRef.current.messages,
-            chats,
-            location: currentLocation,
-          }).length === 0
-        )
-          setCelebrationScope(scope);
-      }
-      showNotice({
-        kind: 'completion',
-        text: done
-          ? task.kind === 'question'
-            ? 'Question answered'
-            : task.kind === 'reminder'
-              ? 'Reminder dismissed'
-              : 'Task completed'
-          : task.kind === 'question'
-            ? 'Question reopened'
-            : task.kind === 'reminder'
-              ? 'Reminder restored'
-              : 'Task reopened',
-        taskId: task.id,
-        previousDone: task.done,
-        done,
-      });
-    } catch (error) {
-      pendingTicks.current.delete(task.id);
-      setPendingTickIds(new Set(pendingTicks.current.keys()));
-      refreshGate.current.invalidate();
-      setData((current) => ({
-        ...current,
-        tasks: current.tasks.map((item) =>
-          item.id === task.id ? { ...item, done: task.done } : item,
-        ),
-      }));
-      void refresh();
-      notify(errorMessage(error), 'error');
-    }
-  }
+    document.title = `Wawa — ${chat && location.view === 'conversations' ? chat.name : title}`;
+  }, [title, chat, location.view]);
   async function sync() {
     if (requestingSync || data.status.syncing) return;
     setRequestingSync(true);
@@ -650,97 +406,18 @@ export function App() {
     </aside>
   ) : null;
   const navigation = (
-    <>
-      <button className="brand" onClick={() => navigate('overview')}>
-        <img src="/wawa-icon.png" width="24" height="24" alt="" /> <span>wawa</span>
-      </button>
-      <TaskFilters
-        tasks={data.tasks}
-        loaded={loaded}
-        messages={data.messages}
-        chats={chats}
-        waits={data.waiting_for}
-        pendingQuestions={data.questions.length}
-        location={location}
-        onLocation={(patch) => {
-          setMobileMenu(false);
-          updateLocation(patch);
-        }}
-      />
-      <div className="sidebar-bottom">
-        <button
-          className={`nav-item ${location.view === 'search' ? 'active' : ''}`}
-          aria-current={location.view === 'search' ? 'page' : undefined}
-          onClick={() => navigate('search')}
-        >
-          <Search size={16} />
-          <span>Spotlight</span>
-        </button>
-        <button
-          className={`nav-item ${location.view === 'threads' ? 'active' : ''}`}
-          aria-current={location.view === 'threads' ? 'page' : undefined}
-          onClick={() => navigate('threads')}
-        >
-          <ListTree size={16} />
-          <span>Threads</span>
-        </button>
-        <button
-          className={`nav-item ${location.view === 'conversations' ? 'active' : ''}`}
-          aria-current={location.view === 'conversations' ? 'page' : undefined}
-          onClick={() => navigate('conversations')}
-        >
-          <MessageCircle size={16} />
-          <span>Conversations</span>
-        </button>
-        <button
-          className={`nav-item ${location.view === 'activity' ? 'active' : ''}`}
-          aria-current={location.view === 'activity' ? 'page' : undefined}
-          onClick={() => navigate('activity')}
-        >
-          <Activity size={16} />
-          <span>Activity</span>
-        </button>
-        <button
-          className={`nav-item ${location.view === 'settings' || location.view === 'connections' ? 'active' : ''}`}
-          aria-current={
-            location.view === 'settings' || location.view === 'connections' ? 'page' : undefined
-          }
-          onClick={() => navigate('settings')}
-        >
-          <Settings2 size={16} />
-          <span>Settings</span>
-        </button>
-        <span
-          className={`workspace-presence ${!online || data.status.error ? 'warning' : ''}`}
-          title={
-            !online
-              ? 'Workspace unavailable'
-              : (data.status.error ??
-                (data.demo
-                  ? 'Sample workspace'
-                  : window.chat2tasksDesktop
-                    ? 'Workspace on this computer'
-                    : 'Workspace server available'))
-          }
-        >
-          <span className="owner-avatar">Y</span>
-          <span className="presence-copy">
-            Your workspace
-            <small>
-              {!online
-                ? 'Reconnecting…'
-                : data.status.error
-                  ? 'Needs attention'
-                  : data.demo
-                    ? 'Sample data'
-                    : window.chat2tasksDesktop
-                      ? 'On this computer'
-                      : 'Server available'}
-            </small>
-          </span>
-        </span>
-      </div>
-    </>
+    <Sidebar
+      data={data}
+      loaded={loaded}
+      online={online}
+      chats={chats}
+      location={location}
+      onNavigate={navigate}
+      onLocation={(patch) => {
+        setMobileMenu(false);
+        updateLocation(patch);
+      }}
+    />
   );
   const navigationTrigger = (
     <Dialog.Trigger className="icon-btn mobile-toggle" aria-label="Open navigation">
@@ -749,46 +426,19 @@ export function App() {
   );
   const taskDialogOpen =
     narrow && !!location.task && (location.view === 'tasks' || location.expanded);
-  const undo = notice?.kind === 'completion' ? notice : null;
-  const undoTask = undo ? data.tasks.find((task) => task.id === undo.taskId) : undefined;
+  const undoTask =
+    notice?.kind === 'completion'
+      ? data.tasks.find((task) => task.id === notice.taskId)
+      : undefined;
   const notification = notice && (
-    <div
-      className={`toast ${notice.kind === 'message' ? notice.variant : 'success'}`}
-      data-exiting={noticeExiting}
-      role={
-        noticeExiting
-          ? undefined
-          : notice.kind === 'message' && notice.variant === 'error'
-            ? 'alert'
-            : 'status'
-      }
-    >
-      {notice.kind === 'message' && notice.variant === 'error' ? (
-        <TriangleAlert size={17} />
-      ) : notice.kind === 'message' && notice.variant === 'info' ? (
-        <Info size={17} />
-      ) : (
-        <CheckCircle2
-          className={notice.kind === 'completion' && notice.done ? 'completion-confirmed' : ''}
-          size={17}
-        />
-      )}
-      <span>{notice.text}</span>
-      {undo && (
-        <button
-          className="toast-undo"
-          disabled={!undoTask || undoTask.done !== undo.done || pendingTickIds.has(undo.taskId)}
-          onClick={() => {
-            if (undoTask) void tick(undoTask, undo.previousDone, 'undo');
-          }}
-        >
-          Undo
-        </button>
-      )}
-      <button className="icon-btn" aria-label="Dismiss notification" onClick={dismissNotice}>
-        <X size={15} />
-      </button>
-    </div>
+    <Toast
+      notice={notice}
+      exiting={noticeExiting}
+      undoTask={undoTask}
+      undoBusy={notice.kind === 'completion' && pendingTickIds.has(notice.taskId)}
+      onUndo={(task, previousDone) => void tick(task, previousDone, 'undo')}
+      onDismiss={dismissNotice}
+    />
   );
   const questions = data.questions
     .filter((question) => {
@@ -821,7 +471,7 @@ export function App() {
               location.view !== 'review' && (
                 <header className="topbar">
                   {navigationTrigger}
-                  <span>{viewTitle}</span>
+                  <span>{title}</span>
                   <span className="topbar-status">
                     {data.demo
                       ? 'Sample workspace'
