@@ -282,6 +282,50 @@ test('media indexing uses its workspace worker and follows a selected server', a
   }
 });
 
+test('stopping a workspace cancels media indexing before it can update the old workspace', async () => {
+  const db = new DatabaseSync(':memory:');
+  const picture = MessageSchema.parse({ ...message, id: 'picture', type: 'image', body: '' });
+  let release: (() => void) | undefined;
+  let signal: AbortSignal | undefined;
+  const engine = new LocalSearch(
+    db,
+    () => ({ tasks: [], messages: [picture] }),
+    undefined,
+    undefined,
+    {
+      load: async () => ({ mime: 'image/png', bytes: Buffer.from('sample') }),
+      prepare: async () => [{ image: 'sample' }],
+      embed: async ({ input, signal: jobSignal }) => {
+        signal = jobSignal;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return input.map(() => vector('sample'));
+      },
+    },
+  );
+  try {
+    assert.equal((await engine.find('sample')).media?.kind, 'indexing');
+    for (let attempt = 0; !signal && attempt < 100; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(signal);
+    const stopped = engine.stopAndWait();
+    assert.equal(signal.aborted, true);
+    let finished = false;
+    void stopped.then(() => {
+      finished = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(finished, false, 'handover waits for the active media operation');
+    release?.();
+    await stopped;
+    assert.equal(db.prepare('SELECT count(*) AS count FROM search_media_index').get()?.count, 0);
+  } finally {
+    release?.();
+    db.close();
+  }
+});
+
 test('already indexed media remains searchable while other attachments are being prepared', async () => {
   const db = new DatabaseSync(':memory:');
   const pictures = ['first', 'second'].map((id) =>

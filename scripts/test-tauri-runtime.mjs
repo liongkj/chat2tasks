@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, parse, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -28,12 +30,13 @@ async function reportDiagnostics(data, output) {
   if (key.trim()) output = output.replaceAll(key.trim(), '[redacted]');
   output = output
     .replace(/\b(?:sk-[\w-]+|gh[pousr]_[\w-]+)\b/g, '[redacted]')
+    .replace(/\bowa_k1_[A-Za-z0-9]+(?:…|\.\.\.)?/g, '[redacted]')
     .replace(/\b[\da-f]{32,}\b/gi, '[redacted]');
   if (output) process.stderr.write(`Local test diagnostics:\n${output}\n`);
 }
 
-async function start(demo) {
-  const data = join(root, demo ? 'sample' : 'preview');
+async function start(demo, expectedType = 'ready', selectedData) {
+  const data = selectedData ?? join(root, demo ? 'sample' : 'preview');
   let diagnostics = '';
   const child = spawn(bun, [supervisor], {
     env: {
@@ -42,6 +45,7 @@ async function start(demo) {
       C2T_TAURI_DATA: data,
       C2T_TAURI_DEMO: demo ? '1' : '0',
       C2T_TAURI_TEST_DIAGNOSTICS: '1',
+      C2T_TAURI_ENABLE_MOVES: '1',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -59,7 +63,7 @@ async function start(demo) {
   }
   try {
     const ready = await next();
-    assert.equal(ready.type, 'ready');
+    assert.equal(ready.type, expectedType);
     assert.equal(ready.demo, demo);
     const headers = { Origin: origin, 'X-Chat2Tasks-Session': ready.token };
     return {
@@ -100,8 +104,27 @@ async function start(demo) {
   }
 }
 
+async function finishRejected(child, unexpectedlyReady) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, 'exit');
+  const timeout = setTimeout(() => child.kill(), 5000);
+  if (unexpectedlyReady) {
+    child.stdin.on('error', () => undefined);
+    child.stdin.end('{"action":"shutdown"}\n');
+  }
+  try {
+    await exited;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 let sample;
 let preview;
+let reservation;
+let proxy;
+let targetPreview;
+let portReservation;
 try {
   sample = await start(true);
   let response = await sample.fetch('/api/state');
@@ -127,6 +150,28 @@ try {
   const desktop = await response.json();
   assert.equal(desktop.codex.installed, true);
   assert.equal(desktop.codex.signedIn, false);
+  const duplicate = spawn(bun, [supervisor], {
+    env: {
+      ...process.env,
+      C2T_TAURI_RESOURCES: resources,
+      C2T_TAURI_DATA: preview.data,
+      C2T_TAURI_DEMO: '0',
+    },
+    stdio: ['pipe', 'pipe', 'ignore'],
+  });
+  const duplicateLines = createInterface({ input: duplicate.stdout });
+  let duplicateReady = false;
+  try {
+    const [line] = await once(duplicateLines, 'line');
+    const result = JSON.parse(line);
+    duplicateReady = result.type === 'ready';
+    assert.equal(result.type, 'error', 'The same local workspace must not start twice.');
+    assert.equal(result.code, 'already_running');
+  } finally {
+    await finishRejected(duplicate, duplicateReady);
+    duplicateLines.close();
+  }
+  assert.equal((await preview.fetch('/api/state')).status, 200);
   response = await preview.fetch('/api/desktop/whatsapp/status');
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, 'not_connected');
@@ -308,11 +353,192 @@ try {
   preview = await start(false);
   assert.equal(preview.ready.gatewayEngine, 'whatsapp-web.js');
   assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  reservation = createServer((socket) => socket.on('error', () => undefined));
+  await new Promise((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const address = reservation.address();
+  assert.ok(address && typeof address !== 'string');
+  const sharingPort = address.port;
+  const sharingOrigin = 'https://shared.example:8443';
+  response = await preview.fetch('/api/desktop/sharing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind: 'enabled',
+      origin: sharingOrigin,
+      port: sharingPort,
+      password: 'fictional-sharing-password',
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).restartRequired, true);
+  await preview.stop();
+  preview = await start(false);
+  assert.notEqual(preview.ready.origin, `http://127.0.0.1:${sharingPort}`);
+  assert.equal(preview.ready.localGatewayRunning, false);
+  response = await fetch(preview.ready.origin + '/api/desktop/sharing', {
+    method: 'OPTIONS',
+    headers: {
+      Origin: origin,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,x-chat2tasks-session',
+    },
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), origin);
+  response = await preview.fetch('/api/desktop/sharing');
+  const unavailable = await response.json();
+  assert.equal(unavailable.active.kind, 'disabled');
+  assert.equal(unavailable.unavailableReason, 'port_in_use');
+  response = await preview.fetch('/api/tick', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'any-task', done: true }),
+  });
+  assert.equal(response.status, 503);
+  assert.equal((await preview.fetch('/api/companion/captures')).status, 503);
+  assert.equal((await preview.fetch('/api/webhooks/openwa', { method: 'POST' })).status, 503);
+  await preview.stop();
+  await new Promise((resolve) => reservation.close(resolve));
+  reservation = undefined;
+  preview = await start(false);
+  assert.equal(preview.ready.origin, `http://127.0.0.1:${sharingPort}`);
+  response = await preview.fetch('/api/desktop/sharing');
+  assert.equal((await response.json()).restartRequired, false);
+  const remoteHeaders = { Host: 'shared.example:8443', Origin: sharingOrigin };
+  const remoteCall = (path, method, headers, body = '') =>
+    new Promise((resolve, reject) => {
+      const request = httpRequest(preview.ready.origin + path, { method, headers }, (result) => {
+        result.resume();
+        result.once('end', () =>
+          resolve({ status: result.statusCode, cookies: result.headers['set-cookie'] ?? [] }),
+        );
+      });
+      request.once('error', reject);
+      request.end(body);
+    });
+  assert.equal((await remoteCall('/api/state', 'GET', remoteHeaders)).status, 401);
+  const signedIn = await remoteCall(
+    '/desktop-sign-in',
+    'POST',
+    { ...remoteHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+    new URLSearchParams({ password: 'fictional-sharing-password' }).toString(),
+  );
+  assert.equal(signedIn.status, 303);
+  const session = signedIn.cookies[0]?.split(';')[0];
+  assert.ok(session);
+  assert.equal(
+    (await remoteCall('/api/state', 'GET', { ...remoteHeaders, Cookie: session })).status,
+    200,
+  );
+  const targetData = join(root, 'other-computer');
+  portReservation = createServer();
+  await new Promise((resolve) => portReservation.listen(0, '127.0.0.1', resolve));
+  const targetAddress = portReservation.address();
+  assert.ok(targetAddress && typeof targetAddress !== 'string');
+  const targetPort = targetAddress.port;
+  let restartedDuringMove = false;
+  let proxyError;
+  proxy = createHttpServer((incoming, outgoing) => {
+    void (async () => {
+      if (incoming.url?.endsWith('/archive') && !restartedDuringMove) {
+        restartedDuringMove = true;
+        assert.equal((await preview.fetch('/api/state')).status, 503);
+        const gatewayStillRunning = await fetch(
+          `http://127.0.0.1:${preview.ready.gatewayPort}/api/health`,
+        ).then(
+          (value) => value.ok,
+          () => false,
+        );
+        assert.equal(gatewayStillRunning, false, 'the old WhatsApp gateway stops before the move');
+        await preview.stop();
+        preview = await start(false, 'move-recovery');
+        assert.equal(preview.ready.localGatewayRunning, false);
+        assert.equal((await preview.fetch('/api/state')).status, 503);
+      }
+      const forwarded = httpRequest(
+        preview.ready.origin + (incoming.url ?? '/'),
+        {
+          method: incoming.method,
+          headers: { ...incoming.headers, host: 'shared.example:8443', origin: sharingOrigin },
+        },
+        (result) => {
+          outgoing.writeHead(result.statusCode ?? 502, result.headers);
+          result.pipe(outgoing);
+        },
+      );
+      forwarded.once('error', (error) => {
+        proxyError = error;
+        outgoing.destroy(error);
+      });
+      incoming.pipe(forwarded);
+    })().catch((error) => {
+      proxyError = error;
+      outgoing.destroy(error);
+    });
+  });
+  await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyAddress = proxy.address();
+  assert.ok(proxyAddress && typeof proxyAddress !== 'string');
+  assert.equal(
+    (await fetch(`http://127.0.0.1:${proxyAddress.port}/api/workspace/move/identity`)).status,
+    401,
+    'moving a shared workspace requires its owner password',
+  );
+  async function runMoveClient() {
+    const client = spawn(bun, [join(resources, 'runtime', 'dist', 'desktop', 'move-client.mjs')], {
+      env: { ...process.env, C2T_TAURI_DATA: targetData },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let clientOutput = '';
+    client.stdout.on('data', (chunk) => {
+      clientOutput += chunk.toString();
+    });
+    client.stderr.resume();
+    client.stdin.end(
+      JSON.stringify({
+        sourceOrigin: `http://127.0.0.1:${proxyAddress.port}`,
+        sourcePassword: 'fictional-sharing-password',
+        targetOrigin: 'https://target.example',
+        localPort: targetPort,
+        targetPassword: 'fictional-target-password',
+      }),
+    );
+    const [clientCode] = await once(client, 'close');
+    assert.equal(clientCode, 0);
+    return JSON.parse(clientOutput);
+  }
+  assert.deepEqual(await runMoveClient(), {
+    ok: false,
+    error: 'Choose a local server port that is not in use.',
+  });
+  const pending = await readFile(join(targetData, 'server-move-pending.json'), 'utf8');
+  assert.equal(pending.includes('fictional-sharing-password'), false);
+  assert.equal(pending.includes('fictional-target-password'), false);
+  assert.equal((await preview.fetch('/api/state')).status, 200);
+  await new Promise((resolve) => portReservation.close(resolve));
+  if (proxyError) throw proxyError;
+  assert.deepEqual(await runMoveClient(), { ok: true, kind: 'complete' });
+  if (proxyError) throw proxyError;
+  assert.equal(restartedDuringMove, true);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(preview.data, 'workspace-target.json'), 'utf8')),
+    { kind: 'remote', url: 'https://target.example' },
+  );
+  assert.deepEqual(JSON.parse(await readFile(join(targetData, 'workspace-target.json'), 'utf8')), {
+    kind: 'local',
+  });
+  targetPreview = await start(false, 'ready', targetData);
+  assert.equal((await (await targetPreview.fetch('/api/state')).json()).tasks.length, 8);
+  assert.equal((await preview.fetch('/api/state')).status, 503);
   process.stdout.write(
-    'Bun sample, workspace transfer, companion restart, and WhatsApp connection switching passed.\n',
+    'Bun sample, workspace transfer, companion restart, WhatsApp connection switching, desktop sharing, and ownership restart checks passed.\n',
   );
 } finally {
   await sample?.stop();
   await preview?.stop();
+  await targetPreview?.stop();
+  if (proxy?.listening) await new Promise((resolve) => proxy.close(resolve));
+  if (portReservation?.listening) await new Promise((resolve) => portReservation.close(resolve));
+  if (reservation?.listening) await new Promise((resolve) => reservation.close(resolve));
   await rm(root, { recursive: true, force: true });
 }

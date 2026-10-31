@@ -21,6 +21,12 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
   writeFileSync(keyFile, 'fixture-key');
   const store = new Store(join(dir, 'workspace'));
   store.setMeta('desktop_setup_complete', true);
+  store.saveDesktopSharing({
+    kind: 'enabled',
+    origin: 'https://shared.example:8443',
+    port: 2786,
+    password: 'fictional-sharing-password',
+  });
   store.close();
   let gatewayReady = false;
   const gateway = createServer((_request, response) => {
@@ -106,6 +112,59 @@ test('a desktop workspace opens while WhatsApp starts and reports when it is rea
     });
     assert.equal(authorized.status, 200);
     assert.equal(authorized.headers.get('access-control-allow-origin'), 'tauri://localhost');
+    const remoteHeaders = { Host: 'shared.example:8443', Origin: 'https://shared.example:8443' };
+    const remoteCall = (path: string, method: string, headers: Record<string, string>, body = '') =>
+      new Promise<{ status: number; cookies: string[] }>((resolve, reject) => {
+        const request = httpRequest(base + path, { method, headers }, (response) => {
+          response.resume();
+          response.once('end', () =>
+            resolve({
+              status: response.statusCode ?? 0,
+              cookies: response.headers['set-cookie'] ?? [],
+            }),
+          );
+        });
+        request.once('error', reject);
+        request.end(body);
+      });
+    assert.equal((await remoteCall('/api/state', 'GET', remoteHeaders)).status, 401);
+    const signIn = await remoteCall(
+      '/desktop-sign-in',
+      'POST',
+      { ...remoteHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+      new URLSearchParams({ password: 'fictional-sharing-password' }).toString(),
+    );
+    assert.equal(signIn.status, 303);
+    const cookie = signIn.cookies[0]?.split(';')[0];
+    assert.ok(cookie, 'a remote desktop can sign in');
+    assert.equal(
+      (await remoteCall('/api/state', 'GET', { ...remoteHeaders, Cookie: cookie })).status,
+      200,
+    );
+    assert.equal(
+      (await remoteCall('/api/desktop/sharing', 'GET', { ...remoteHeaders, Cookie: cookie }))
+        .status,
+      403,
+      'a remote client cannot change the host computer sharing configuration',
+    );
+    const localSharing = await fetch(base + '/api/desktop/sharing', {
+      headers: { Origin: 'tauri://localhost', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
+    });
+    const sharingStatus = await localSharing.json();
+    assert.equal(localSharing.status, 200);
+    assert.equal(sharingStatus.restartRequired, false);
+    assert.equal(JSON.stringify(sharingStatus).includes('fictional-sharing-password'), false);
+    const disableSharing = await fetch(base + '/api/desktop/sharing', {
+      method: 'POST',
+      headers: {
+        Origin: 'tauri://localhost',
+        'X-Chat2Tasks-Session': 'a'.repeat(64),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ kind: 'disabled' }),
+    });
+    assert.equal(disableSharing.status, 200);
+    assert.equal((await disableSharing.json()).restartRequired, true);
     const untrusted = await fetch(base + '/api/state', {
       headers: { Origin: 'https://example.invalid', 'X-Chat2Tasks-Session': 'a'.repeat(64) },
     });
@@ -141,6 +200,72 @@ test('changing the workspace password invalidates a desktop session', () => {
   assert.equal(validDesktopSession(cookie, key, 'original-password'), true);
   assert.equal(validDesktopSession(cookie, key, 'new-password'), false);
   assert.equal(validDesktopSession(cookie, Buffer.alloc(32, 2), 'original-password'), false);
+});
+
+test('a fresh server enables onboarding and connects its gateway without exposing the API key', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wawa-managed-server-'));
+  const keyFile = join(dir, 'gateway-key');
+  writeFileSync(keyFile, 'fixture-gateway-secret');
+  const gateway = createServer((_request, response) => response.end('{}'));
+  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve));
+  const gatewayAddress = gateway.address();
+  assert.ok(gatewayAddress && typeof gatewayAddress !== 'string');
+  const reservation = createServer();
+  await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const address = reservation.address();
+  assert.ok(address && typeof address !== 'string');
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const base = `http://127.0.0.1:${address.port}`;
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+    cwd: process.cwd(),
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      WAWA_MANAGED_SERVER: 'true',
+      CHAT2TASKS_DESKTOP: 'false',
+      SYNC_DISABLED: 'true',
+      PORT: String(address.port),
+      PUBLIC_ORIGIN: base,
+      BIND_HOST: '127.0.0.1',
+      APP_PASSWORD: '',
+      CODEX_BIN: join(dir, 'codex-not-installed'),
+      DATA_DIR: join(dir, 'workspace'),
+      DESKTOP_OPENWA_URL: `http://127.0.0.1:${gatewayAddress.port}`,
+      DESKTOP_OPENWA_KEY_FILE: keyFile,
+      DESKTOP_WEBHOOK_URL: 'http://wawa:2786/api/webhooks/openwa',
+      CHAT2TASKS_TAURI_ORIGIN: '',
+      CHAT2TASKS_TAURI_TOKEN: '',
+    },
+  });
+  try {
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        response = await fetch(base + '/api/setup-mode');
+        break;
+      } catch {
+        if (child.exitCode !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    assert.ok(response, 'the managed server should start');
+    assert.deepEqual(await response.json(), { managedServer: true });
+    const setup = await (await fetch(base + '/api/desktop/status')).json();
+    assert.equal(z.object({ setupComplete: z.boolean() }).parse(setup).setupComplete, false);
+    const settings = await (await fetch(base + '/api/settings')).text();
+    assert.ok(!settings.includes('fixture-gateway-secret'));
+    assert.match(settings, /http:\/\/wawa:2786\/api\/webhooks\/openwa/);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      child.kill('SIGTERM');
+      await exited;
+    }
+    gateway.closeAllConnections();
+    await new Promise<void>((resolve) => gateway.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('an extra remote workspace address requires an app password even behind another proxy', async () => {
