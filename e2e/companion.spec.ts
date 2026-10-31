@@ -1460,7 +1460,7 @@ test('workspace threads open the exact source message and remain navigable on a 
   }
 });
 
-test('workspace search finds items and opens matching saved messages without a model', async () => {
+test('Spotlight finds items and opens matching saved messages without a model', async () => {
   const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
   const task = snapshot.tasks[0];
   const message = snapshot.messages.find((item) => item.body.length > 25);
@@ -1473,7 +1473,8 @@ test('workspace search finds items and opens matching saved messages without a m
   try {
     const page = await context.newPage();
     await page.goto(base);
-    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('button', { name: 'Spotlight', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Spotlight', exact: true })).toBeVisible();
     const input = page.getByRole('textbox', { name: 'Search workspace' });
     await input.fill(task.reference);
     const taskResult = page
