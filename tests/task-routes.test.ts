@@ -50,7 +50,7 @@ async function fixture() {
   });
   // Mounted twice, exactly as the workspace UI and the companion mount it.
   registerTaskRoutes(server, '/api', store);
-  registerTaskRoutes(server, '/api/companion', store);
+  registerTaskRoutes(server, '/api/companion', store, { extensionAliases: true });
   await server.ready();
   return {
     store,
@@ -112,6 +112,33 @@ test('tick and remark reject unknown tasks with 404 and persist for known ones',
     const task = f.store.snapshot().tasks[0];
     assert.equal(task?.done, true);
     assert.equal(task?.own_remark, 'Keep this');
+  } finally {
+    await f.close();
+  }
+});
+
+test('flat extension aliases exist only on the companion mount', async () => {
+  const f = await fixture();
+  try {
+    const alias = await f.server.inject({
+      method: 'POST',
+      url: '/api/companion/kind',
+      payload: { id: f.task.id, kind: 'reminder' },
+    });
+    assert.deepEqual(alias.json(), { ok: true });
+    assert.equal(f.store.snapshot().tasks[0]?.kind, 'reminder');
+    const note = await f.server.inject({
+      method: 'POST',
+      url: '/api/companion/note',
+      payload: { id: f.task.id, remark: 'From the extension' },
+    });
+    assert.deepEqual(note.json(), { ok: true });
+    const workspace = await f.server.inject({
+      method: 'POST',
+      url: '/api/kind',
+      payload: { id: f.task.id, kind: 'task' },
+    });
+    assert.equal(workspace.statusCode, 404);
   } finally {
     await f.close();
   }

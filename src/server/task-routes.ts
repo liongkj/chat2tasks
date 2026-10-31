@@ -10,23 +10,33 @@ const byId = z.object({ id: z.string() });
  * Task and waiting-item routes shared by the workspace UI (`/api`) and the
  * Chrome companion (`/api/companion`), so the two cannot drift apart.
  */
-export function registerTaskRoutes(server: FastifyInstance, prefix: string, store: Store) {
+export function registerTaskRoutes(
+  server: FastifyInstance,
+  prefix: string,
+  store: Store,
+  /** Also serve the flat paths (/kind, /gtd, /occurrence, /note) installed extensions still call. */
+  options: { extensionAliases?: boolean } = {},
+) {
+  const post = (paths: string[], handler: (body: unknown) => unknown) => {
+    for (const path of paths.slice(0, options.extensionAliases ? paths.length : 1))
+      server.post(prefix + path, (request) => handler(request.body));
+  };
   const requireTask = (id: string) => {
     if (!store.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
       throw new UserError('Task not found', 404);
   };
   server.get(prefix + '/tasks/:id', (request) => store.taskEvidence(byId.parse(request.params).id));
-  server.post(prefix + '/tasks/kind', (request) => {
-    const value = byId.extend({ kind: ItemKindSchema }).parse(request.body);
+  post(['/tasks/kind', '/kind'], (body) => {
+    const value = byId.extend({ kind: ItemKindSchema }).parse(body);
     store.setTaskKind(value.id, value.kind);
     return { ok: true };
   });
-  server.post(prefix + '/tasks/gtd', (request) => {
-    const value = byId.extend({ gtd: GtdSchema }).parse(request.body);
+  post(['/tasks/gtd', '/gtd'], (body) => {
+    const value = byId.extend({ gtd: GtdSchema }).parse(body);
     return store.setGtd(value.id, value.gtd);
   });
-  server.post(prefix + '/tasks/occurrence', (request) => {
-    const value = byId.extend({ date: z.iso.date() }).parse(request.body);
+  post(['/tasks/occurrence', '/occurrence'], (body) => {
+    const value = byId.extend({ date: z.iso.date() }).parse(body);
     return { ok: store.completeOccurrence(value.id, value.date) };
   });
   server.post(prefix + '/tick', (request) => {
@@ -35,8 +45,8 @@ export function registerTaskRoutes(server: FastifyInstance, prefix: string, stor
     store.transaction(() => store.tick(value.id, value.done));
     return { ok: true };
   });
-  server.post(prefix + '/remark', (request) => {
-    const value = byId.extend({ remark: z.string().max(4000) }).parse(request.body);
+  post(['/remark', '/note'], (body) => {
+    const value = byId.extend({ remark: z.string().max(4000) }).parse(body);
     requireTask(value.id);
     store.remark(value.id, value.remark);
     return { ok: true };

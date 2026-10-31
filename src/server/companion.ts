@@ -263,13 +263,7 @@ export async function registerCompanion(
     routes.post('/api/companion/sound-preferences', (request) =>
       companion.store.saveSoundPreferences(request.body),
     );
-    registerTaskRoutes(routes, '/api/companion', companion.store);
-    routes.post('/api/companion/note', (request) => {
-      const input = z.object({ id: z.string(), remark: z.string().max(4000) }).parse(request.body);
-      companion.task(input.id);
-      companion.store.remark(input.id, input.remark);
-      return { ok: true };
-    });
+    registerTaskRoutes(routes, '/api/companion', companion.store, { extensionAliases: true });
     routes.post('/api/companion/activation', (request) => {
       const input = z.object({ id: z.string(), enabled: z.boolean() }).parse(request.body),
         settings = companion.store.settings();
