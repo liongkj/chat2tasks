@@ -426,13 +426,13 @@ export function App() {
       ...current,
       tasks: current.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
     }));
+    if (done && source === 'direct') finishRow();
     try {
       await api('tick', OkSchema, { id: task.id, done });
       refreshGate.current.invalidate();
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
       if (done && source === 'direct') {
-        finishRow();
         setCompletionFlash(task.id);
         void playSound('completion', dataRef.current.sound);
         const currentLocation = locationRef.current;

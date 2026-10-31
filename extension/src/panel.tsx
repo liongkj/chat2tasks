@@ -285,8 +285,10 @@ function App() {
       visibleRef.current.taskIds.length === 1 &&
       visibleRef.current.waits === 0 &&
       tasks[0]?.id === task.id;
-    const row = document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(task.id)}"]`);
-    const finishRow = captureCompletedRow(row);
+    const row = document
+      .querySelector<HTMLElement>(`[data-task-id="${CSS.escape(task.id)}"]`)
+      ?.querySelector<HTMLElement>('.task-row');
+    const finishRow = captureCompletedRow(row ?? null);
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
     refreshGate.current.invalidate();
@@ -302,11 +304,11 @@ function App() {
     setDetail((previous) =>
       previous?.task.id === task.id ? { ...previous, task: { ...previous.task, done } } : previous,
     );
+    if (done) finishRow();
     try {
       await request(connection, 'tick', OkSchema, { id: task.id, done });
       refreshGate.current.invalidate();
       if (done) {
-        finishRow();
         void playSound('completion', stateRef.current?.sound ?? defaultSoundPreferences);
         setNotice(
           task.kind === 'question'

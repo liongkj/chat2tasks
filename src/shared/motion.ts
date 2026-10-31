@@ -1,4 +1,4 @@
-/** Capture a visual-only row so an optimistic removal can be acknowledged after saving. */
+/** Keep a visual-only row briefly while an optimistic completion removes it. */
 export function captureCompletedRow(element: HTMLElement | null): () => void {
   if (
     !element ||
