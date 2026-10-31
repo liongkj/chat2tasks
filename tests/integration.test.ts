@@ -591,6 +591,28 @@ test('saved audio and video attachments can be cached for search', async () => {
   let calls = 0;
   const upstream = createServer((request, response) => {
     calls++;
+    if (request.url?.includes('?')) {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(
+        JSON.stringify({
+          messages: [
+            {
+              id: 'inline-audio',
+              type: 'audio',
+              direction: 'incoming',
+              timestamp: 1,
+              metadata: {
+                media: {
+                  mimetype: 'audio/ogg',
+                  data: Buffer.from('inline sample').toString('base64'),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      return;
+    }
     const audio = request.url?.endsWith('/audio-id/media');
     response.setHeader('Content-Type', audio ? 'audio/ogg' : 'video/mp4');
     response.end(audio ? 'audio sample' : 'video sample');
@@ -625,6 +647,11 @@ test('saved audio and video attachments can be cached for search', async () => {
       assert.deepEqual(first?.bytes, second?.bytes);
     }
     assert.equal(calls, 2);
+    const chat = { id: 'chat', name: 'Sample', sessionId: 's', chatId: 'c', enabled: true };
+    const [inline] = await new OpenWA(store).messages(chat);
+    assert.ok(inline);
+    assert.equal((await new OpenWA(store).attachment(inline))?.bytes.toString(), 'inline sample');
+    assert.equal(calls, 3);
   } finally {
     upstream.closeAllConnections();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
