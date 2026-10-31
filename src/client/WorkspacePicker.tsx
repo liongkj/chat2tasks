@@ -59,8 +59,8 @@ export function WorkspacePicker() {
             onChange={() => setKind('remote')}
           />
           <span>
-            <strong>Always-on server</strong>
-            <small>Work can continue while this computer sleeps or is closed.</small>
+            <strong>Another computer</strong>
+            <small>Keep working while this computer sleeps or is closed.</small>
           </span>
         </label>
       </div>
@@ -76,9 +76,22 @@ export function WorkspacePicker() {
             onChange={(event) => setAddress(event.target.value)}
           />
           <small>
-            Use a private Tailscale HTTPS address or another secure address for your running
-            Wawa workspace.
+            Use a private Tailscale HTTPS address or another secure address for your running Wawa
+            workspace.
           </small>
+          <p className="workspace-picker-help">
+            Need to set up another computer? This currently requires technical setup.{' '}
+            <button
+              className="text-button"
+              onClick={() =>
+                void invoke('open_external', {
+                  url: 'https://github.com/liongkj/chat2tasks/blob/main/docs/docker-stack.md',
+                }).catch(() => setError('Could not open the setup guide.'))
+              }
+            >
+              Open the setup guide
+            </button>
+          </p>
         </div>
       )}
       <p className="workspace-picker-note">
@@ -106,7 +119,7 @@ export function WorkspacePicker() {
           {saving
             ? 'Opening workspace…'
             : kind === 'remote'
-              ? 'Use server workspace'
+              ? 'Use another computer'
               : 'Use this computer'}
         </button>
       </div>

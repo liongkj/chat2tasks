@@ -4,6 +4,7 @@ declare global {
     chat2tasksTauri?: { origin: string; token: string; demo: boolean };
     chat2tasksDesktop?: {
       chooseImport(): Promise<boolean>;
+      restart(): Promise<void>;
       importWorkspace(passphrase: string): Promise<{ ok: boolean; error?: string }>;
       openExternal(url: string): Promise<void>;
       onStartupProgress(callback: (message: string) => void): () => void;

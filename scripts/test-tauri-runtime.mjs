@@ -152,6 +152,26 @@ try {
   response = await preview.fetch('/api/desktop/whatsapp/status');
   assert.equal((await response.json()).status, 'not_connected');
   const gatewayKey = await readFile(join(preview.data, 'gateway', 'data', '.api-key'));
+  const pairingCode = await (
+    await preview.fetch('/api/extensions/pairing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+  ).json();
+  const extensionId = 'a'.repeat(32);
+  const companionOrigin = preview.ready.origin;
+  response = await fetch(companionOrigin + '/api/companion/pair', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Chat2Tasks-Extension': extensionId,
+      Origin: 'chrome-extension://' + extensionId,
+    },
+    body: JSON.stringify({ code: pairingCode.code, name: 'Offline test browser' }),
+  });
+  assert.equal(response.status, 200);
+  const companion = await response.json();
   response = await preview.fetch('/api/settings');
   let config = await response.json();
   response = await preview.fetch('/api/settings', {
@@ -174,6 +194,19 @@ try {
   assert.equal((await response.json()).desktopGatewayRestartRequired, true);
   await preview.stop();
   preview = await start(false);
+  assert.equal(
+    preview.ready.origin,
+    companionOrigin,
+    'The companion address must survive an app restart.',
+  );
+  response = await fetch(preview.ready.origin + '/api/companion/state', {
+    headers: {
+      Authorization: 'Bearer ' + companion.token,
+      'X-Chat2Tasks-Extension': extensionId,
+      Origin: 'chrome-extension://' + extensionId,
+    },
+  });
+  assert.equal(response.status, 200, 'A paired browser must stay connected after restart.');
   assert.equal(preview.ready.gatewayMode, 'remote');
   assert.equal(preview.ready.localGatewayRunning, false);
   config = await (await preview.fetch('/api/settings')).json();
@@ -224,8 +257,59 @@ try {
   assert.equal(preview.ready.gatewayMode, 'local');
   assert.equal(preview.ready.resumeSessions, false);
   assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  config = await (await preview.fetch('/api/settings')).json();
+  response = await preview.fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        ...config.settings,
+        desktopGateway: { ...config.settings.desktopGateway, engine: 'baileys' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).desktopGatewayRestartRequired, true);
+  await preview.stop();
+  preview = await start(false);
+  assert.equal(preview.ready.gatewayEngine, 'baileys');
+  const lightKey = await readFile(
+    join(preview.data, 'gateway-baileys', 'data', '.api-key'),
+    'utf8',
+  );
+  response = await fetch(`http://127.0.0.1:${preview.ready.gatewayPort}/api/auth/validate`, {
+    method: 'POST',
+    headers: { 'X-API-Key': lightKey.trim() },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).engineType, 'baileys');
+  assert.equal(
+    (await (await preview.fetch('/api/desktop/whatsapp/status')).json()).status,
+    'not_connected',
+  );
+  assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
+  config = await (await preview.fetch('/api/settings')).json();
+  response = await preview.fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      settings: {
+        ...config.settings,
+        desktopGateway: { ...config.settings.desktopGateway, engine: 'whatsapp-web.js' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    }),
+  });
+  assert.equal(response.status, 200);
+  await preview.stop();
+  preview = await start(false);
+  assert.equal(preview.ready.gatewayEngine, 'whatsapp-web.js');
+  assert.deepEqual(await readFile(join(preview.data, 'gateway', 'data', '.api-key')), gatewayKey);
   process.stdout.write(
-    'Bun sample, workspace transfer, and local/remote server switching passed.\n',
+    'Bun sample, workspace transfer, companion restart, and WhatsApp connection switching passed.\n',
   );
 } finally {
   await sample?.stop();

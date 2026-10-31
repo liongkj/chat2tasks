@@ -165,9 +165,12 @@ export async function importWorkspace(source: string, destination: string, passp
           desktopGateway: {
             mode: 'local',
             activeMode: 'local',
+            engine: 'whatsapp-web.js',
+            activeEngine: 'whatsapp-web.js',
             remoteUrl: '',
             localChats: [],
             remoteChats: [],
+            baileysChats: [],
           },
           chats: settings.chats.map((chat) => ({ ...chat, enabled: false })),
         },

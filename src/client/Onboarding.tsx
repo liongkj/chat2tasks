@@ -70,7 +70,12 @@ export function DesktopRoot({ children }: { children: React.ReactNode }) {
 }
 
 function Onboarding({ onDone }: { onDone: () => void }) {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() =>
+    localStorage.getItem('wawa-onboarding-resume') === 'whatsapp' ? 1 : 0,
+  );
+  const [engine, setEngine] = useState<'whatsapp-web.js' | 'baileys'>('whatsapp-web.js');
+  const [activeEngine, setActiveEngine] = useState<'whatsapp-web.js' | 'baileys' | null>(null);
+  const [engineError, setEngineError] = useState(false);
   const [status, setStatus] = useState<z.infer<typeof DesktopStatus> | null>(null);
   const [whatsapp, setWhatsapp] = useState<z.infer<typeof WhatsappStatus>>({
     status: 'not_connected',
@@ -97,8 +102,20 @@ function Onboarding({ onDone }: { onDone: () => void }) {
   async function refreshStatus() {
     setStatus(await api('desktop/status', DesktopStatus));
   }
+  async function loadEngine() {
+    setEngineError(false);
+    try {
+      const { settings } = await api('settings', PublicSettingsSchema);
+      setEngine(settings.desktopGateway.engine);
+      setActiveEngine(settings.desktopGateway.activeEngine);
+    } catch {
+      setEngineError(true);
+    }
+  }
   useEffect(() => {
+    localStorage.removeItem('wawa-onboarding-resume');
     void refreshStatus().catch(() => undefined);
+    void loadEngine();
     void api('preferences', AttentionPreferencesSchema)
       .then(setPreferences)
       .catch(() => undefined);
@@ -240,7 +257,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                       void openWorkspacePicker().catch((reason) => setError(message(reason)))
                     }
                   >
-                    Connect to a server
+                    Use another computer
                   </button>
                 </div>
               )}
@@ -312,6 +329,52 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   gateway may store chat history separately from your selected chats.
                 </p>
               </div>
+              {whatsapp.status !== 'ready' && (
+                <fieldset className="onboarding-engines">
+                  <legend>Choose a connection</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="whatsapp-engine"
+                      checked={engine === 'whatsapp-web.js'}
+                      onChange={() => setEngine('whatsapp-web.js')}
+                    />
+                    <span>
+                      <strong>Standard</strong>
+                      <small>Uses a browser in the background.</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="whatsapp-engine"
+                      checked={engine === 'baileys'}
+                      onChange={() => setEngine('baileys')}
+                    />
+                    <span>
+                      <strong>Lightweight · experimental</strong>
+                      <small>
+                        Uses no browser. Tested offline only; account restriction risk may be
+                        higher.
+                      </small>
+                    </span>
+                  </label>
+                </fieldset>
+              )}
+              {activeEngine === null && (
+                <p className="onboarding-hint" role="status">
+                  {engineError ? (
+                    <>
+                      Couldn’t load connection choices.{' '}
+                      <button className="text-button" onClick={() => void loadEngine()}>
+                        Try again
+                      </button>
+                    </>
+                  ) : (
+                    'Loading connection choices…'
+                  )}
+                </p>
+              )}
               {whatsapp.status === 'ready' ? (
                 <div className="onboarding-connected">
                   <CheckCircle2 size={20} /> WhatsApp is connected
@@ -328,15 +391,33 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   </label>
                   <button
                     className="button primary"
-                    disabled={!accepted || busy}
+                    disabled={!accepted || busy || activeEngine === null}
                     onClick={() =>
                       void run('whatsapp', async () => {
+                        if (engine !== activeEngine) {
+                          const current = await api('settings', PublicSettingsSchema);
+                          await api('settings', PublicSettingsSchema, {
+                            settings: {
+                              ...current.settings,
+                              desktopGateway: { ...current.settings.desktopGateway, engine },
+                            },
+                            secrets: {},
+                            removeSecrets: [],
+                          });
+                          localStorage.setItem('wawa-onboarding-resume', 'whatsapp');
+                          await window.chat2tasksDesktop?.restart();
+                          return;
+                        }
                         await api('desktop/whatsapp/start', z.object({ status: z.string() }), {});
                         setWhatsapp(await api('desktop/whatsapp/status', WhatsappStatus));
                       })
                     }
                   >
-                    {operation === 'whatsapp' ? 'Starting…' : 'Connect WhatsApp'}
+                    {operation === 'whatsapp'
+                      ? 'Starting…'
+                      : engine !== activeEngine
+                        ? 'Continue with this connection'
+                        : 'Connect WhatsApp'}
                   </button>
                   {whatsapp.qr && (
                     <div className="onboarding-qr">

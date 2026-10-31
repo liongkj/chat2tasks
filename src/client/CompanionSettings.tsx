@@ -82,6 +82,27 @@ export function CompanionSettings({ notify }: { notify: Notify }) {
             pairing code below. Allow access to WhatsApp Web, then refresh that tab to see Chats and
             Threads.
           </p>
+          <label htmlFor="companion-address">Workspace address</label>
+          <div className="secret-input">
+            <input
+              id="companion-address"
+              value={window.chat2tasksTauri?.origin ?? window.location.origin}
+              readOnly
+              spellCheck={false}
+            />
+            <button
+              className="icon-btn"
+              aria-label="Copy workspace address"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(window.chat2tasksTauri?.origin ?? window.location.origin)
+                  .then(() => notify('Workspace address copied'))
+                  .catch(() => notify('Select the address and copy it manually.'));
+              }}
+            >
+              <Copy size={15} />
+            </button>
+          </div>
         </li>
       </ol>
       <p className="muted">

@@ -9,7 +9,11 @@ import { configureDesktopGateway } from '../src/server/desktop.js';
 
 const require = createRequire(import.meta.url);
 const { workspaceGatewayLaunch } = require('../desktop/gateway-mode.cjs') as {
-  workspaceGatewayLaunch(path: string): { mode: 'local' | 'remote'; resumeSessions: boolean };
+  workspaceGatewayLaunch(path: string): {
+    mode: 'local' | 'remote';
+    engine: 'whatsapp-web.js' | 'baileys';
+    resumeSessions: boolean;
+  };
 };
 const { replaceWorkspace } = require('../desktop/workspace-replace.cjs') as {
   replaceWorkspace(options: {
@@ -118,11 +122,13 @@ test('switching WhatsApp servers keeps each server’s chats and credentials sep
     });
     assert.deepEqual(workspaceGatewayLaunch(join(root, 'workspace')), {
       mode: 'remote',
+      engine: 'whatsapp-web.js',
       resumeSessions: false,
     });
     store.setMeta('desktop_setup_complete', true);
     assert.deepEqual(workspaceGatewayLaunch(join(root, 'workspace')), {
       mode: 'remote',
+      engine: 'whatsapp-web.js',
       resumeSessions: true,
     });
     store.setMeta('desktop_setup_complete', false);
@@ -153,6 +159,75 @@ test('switching WhatsApp servers keeps each server’s chats and credentials sep
     });
     await configureDesktopGateway(store, { ...environment, DESKTOP_GATEWAY_MODE: 'remote' });
     assert.deepEqual(store.settings().chats, [remoteChat]);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('switching local WhatsApp connection types keeps their followed chats separate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wawa-engine-choice-'));
+  const store = new Store(join(root, 'workspace'));
+  const key = join(root, 'gateway-key');
+  await writeFile(key, 'fictional-key');
+  const environment = {
+    PUBLIC_ORIGIN: 'http://127.0.0.1:2345',
+    DESKTOP_OPENWA_URL: 'http://127.0.0.1:1234',
+    DESKTOP_OPENWA_KEY_FILE: key,
+    DESKTOP_GATEWAY_MODE: 'local',
+  };
+  const webChat = {
+    id: 'web',
+    name: 'Web chat',
+    sessionId: 'web-session',
+    chatId: 'one',
+    enabled: true,
+  };
+  const lightChat = {
+    id: 'light',
+    name: 'Light chat',
+    sessionId: 'light-session',
+    chatId: 'two',
+    enabled: true,
+  };
+  try {
+    await configureDesktopGateway(store, environment);
+    store.saveSettings({
+      settings: {
+        ...store.settings(),
+        chats: [webChat],
+        desktopGateway: { ...store.settings().desktopGateway, engine: 'baileys' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    });
+    assert.equal(workspaceGatewayLaunch(join(root, 'workspace')).engine, 'baileys');
+    await configureDesktopGateway(store, { ...environment, DESKTOP_GATEWAY_ENGINE: 'baileys' });
+    assert.deepEqual(store.settings().chats, []);
+    store.saveSettings({
+      settings: {
+        ...store.settings(),
+        chats: [lightChat],
+        desktopGateway: { ...store.settings().desktopGateway, engine: 'whatsapp-web.js' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    });
+    await configureDesktopGateway(store, {
+      ...environment,
+      DESKTOP_GATEWAY_ENGINE: 'whatsapp-web.js',
+    });
+    assert.deepEqual(store.settings().chats, [webChat]);
+    store.saveSettings({
+      settings: {
+        ...store.settings(),
+        desktopGateway: { ...store.settings().desktopGateway, engine: 'baileys' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    });
+    await configureDesktopGateway(store, { ...environment, DESKTOP_GATEWAY_ENGINE: 'baileys' });
+    assert.deepEqual(store.settings().chats, [lightChat]);
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });

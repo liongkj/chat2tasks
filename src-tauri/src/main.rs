@@ -128,8 +128,9 @@ async fn import_workspace(
 #[tauri::command]
 fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let parsed = tauri::Url::parse(&url).map_err(|_| "Unexpected sign-in address.")?;
+    let setup_guide = url == "https://github.com/liongkj/chat2tasks/blob/main/docs/docker-stack.md";
     if parsed.scheme() != "https"
-        || !matches!(parsed.host_str(), Some("auth.openai.com" | "chatgpt.com"))
+        || !(matches!(parsed.host_str(), Some("auth.openai.com" | "chatgpt.com")) || setup_guide)
     {
         return Err("Unexpected sign-in address.".into());
     }
@@ -164,6 +165,11 @@ fn show_workspace_picker(app: &tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn open_workspace_picker(app: tauri::AppHandle) -> Result<(), String> {
     show_workspace_picker(&app)
+}
+
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.request_restart();
 }
 
 #[tauri::command]
@@ -290,7 +296,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
+        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, restart_app, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
             "settings" => {

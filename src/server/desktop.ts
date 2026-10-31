@@ -28,20 +28,24 @@ export async function waitForDesktopGateway(url: string, signal: AbortSignal) {
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  if (!signal.aborted) throw new Error('WhatsApp could not start. Quit Chat2Tasks and try again.');
+  if (!signal.aborted) throw new Error('WhatsApp could not start. Quit Wawa and try again.');
 }
 
 export async function configureDesktopGateway(store: Store, env: NodeJS.ProcessEnv = process.env) {
   const mode = env.DESKTOP_GATEWAY_MODE === 'remote' ? 'remote' : 'local';
+  const engine = env.DESKTOP_GATEWAY_ENGINE === 'baileys' ? 'baileys' : 'whatsapp-web.js';
   const origin = env.PUBLIC_ORIGIN;
   if (!origin) return;
   const settings = store.settings();
   const gateway = settings.desktopGateway;
-  const changed = gateway.activeMode !== mode;
+  const changed =
+    gateway.activeMode !== mode || (mode === 'local' && gateway.activeEngine !== engine);
   const chats = changed
-    ? mode === 'local'
-      ? gateway.localChats
-      : gateway.remoteChats
+    ? mode === 'remote'
+      ? gateway.remoteChats
+      : engine === 'baileys'
+        ? gateway.baileysChats
+        : gateway.localChats
     : settings.chats;
   const key =
     mode === 'local'
@@ -64,10 +68,13 @@ export async function configureDesktopGateway(store: Store, env: NodeJS.ProcessE
       desktopGateway: {
         ...gateway,
         activeMode: mode,
+        activeEngine: mode === 'local' ? engine : gateway.activeEngine,
         ...(changed
-          ? gateway.activeMode === 'local'
-            ? { localChats: settings.chats }
-            : { remoteChats: settings.chats }
+          ? gateway.activeMode === 'remote'
+            ? { remoteChats: settings.chats }
+            : gateway.activeEngine === 'baileys'
+              ? { baileysChats: settings.chats }
+              : { localChats: settings.chats }
           : {}),
       },
     },

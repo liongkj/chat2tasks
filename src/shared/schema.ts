@@ -60,16 +60,22 @@ export const SettingsSchema = z
       .object({
         mode: z.enum(['local', 'remote']).default('local'),
         activeMode: z.enum(['local', 'remote']).default('local'),
+        engine: z.enum(['whatsapp-web.js', 'baileys']).default('whatsapp-web.js'),
+        activeEngine: z.enum(['whatsapp-web.js', 'baileys']).default('whatsapp-web.js'),
         remoteUrl: z.union([z.literal(''), endpoint]).default(''),
         localChats: z.array(ChatSchema).max(100).default([]),
         remoteChats: z.array(ChatSchema).max(100).default([]),
+        baileysChats: z.array(ChatSchema).max(100).default([]),
       })
       .default({
         mode: 'local',
         activeMode: 'local',
+        engine: 'whatsapp-web.js',
+        activeEngine: 'whatsapp-web.js',
         remoteUrl: '',
         localChats: [],
         remoteChats: [],
+        baileysChats: [],
       }),
     profiles: z.array(ProfileSchema).min(1).max(30),
     activeProfileId: text,

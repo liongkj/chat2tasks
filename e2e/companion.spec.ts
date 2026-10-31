@@ -11,7 +11,7 @@ import {
   CompanionStateSchema,
   ConnectionSchema,
 } from '../src/shared/companion.js';
-import { SnapshotSchema, PublicSettingsSchema } from '../src/shared/schema.js';
+import { SnapshotSchema, PublicSettingsSchema, SettingsSchema } from '../src/shared/schema.js';
 import { ThreadSnapshotSchema } from '../src/shared/threads.js';
 
 let directory: string, backend: ChildProcess, base: string;
@@ -1681,6 +1681,62 @@ test('workspace threads open the exact source message and remain navigable on a 
     await page.screenshot({ path: test.info().outputPath('workspace-threads-phone.png') });
     await page.getByRole('button', { name: '← Threads', exact: true }).click();
     await expect(page.getByRole('button', { name: label, exact: true })).toBeFocused();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('desktop setup returns to WhatsApp after choosing the lightweight connection', async () => {
+  let config = PublicSettingsSchema.parse(await (await owner('settings')).json());
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'chat2tasksDesktop', {
+        configurable: true,
+        value: { restart: async () => window.location.reload() },
+      });
+    });
+    await page.route('**/api/desktop/status', (route) =>
+      route.fulfill({
+        json: {
+          setupComplete: false,
+          imported: false,
+          codex: { installed: true, signedIn: false, signingIn: false, failed: false },
+        },
+      }),
+    );
+    await page.route('**/api/desktop/whatsapp/status', (route) =>
+      route.fulfill({ json: { status: 'not_connected', qr: null } }),
+    );
+    await page.route('**/api/settings', async (route) => {
+      if (route.request().method() === 'POST') {
+        const update = z.object({ settings: SettingsSchema }).parse(route.request().postDataJSON());
+        expect(update.settings.desktopGateway.engine).toBe('baileys');
+        config = {
+          ...config,
+          settings: {
+            ...update.settings,
+            desktopGateway: {
+              ...update.settings.desktopGateway,
+              activeEngine: update.settings.desktopGateway.engine,
+            },
+          },
+        };
+      }
+      await route.fulfill({ json: config });
+    });
+    await page.goto(base);
+    await expect(page.getByRole('heading', { name: 'Welcome to Wawa.' })).toBeVisible();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await page.getByRole('radio', { name: /Lightweight/ }).check();
+    await page.getByRole('checkbox', { name: /I understand/ }).check();
+    await page.getByRole('button', { name: 'Continue with this connection' }).click();
+    await expect(page.getByRole('heading', { name: 'Bring your conversations in.' })).toBeVisible();
+    await expect(page.getByRole('radio', { name: /Lightweight/ })).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Connect WhatsApp' })).toBeVisible();
   } finally {
     await context.close();
     await browser.close();
