@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Chat2Tasks Companion",
+  "name": "Wawa Companion",
   "version": "0.2.0",
-  "description": "Quiet TODO links in WhatsApp Web and topic threads across your connected chats. Connect to your own Chat2Tasks workspace.",
+  "description": "Quiet TODO links in WhatsApp Web and topic threads across your connected chats. Connect to your own Wawa workspace.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage", "contextMenus"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
@@ -12,7 +12,7 @@
   ],
   "side_panel": { "default_path": "index.html" },
   "action": {
-    "default_title": "Open Chat2Tasks",
+    "default_title": "Open Wawa",
     "default_icon": { "16": "icons/16.png", "32": "icons/32.png" }
   },
   "icons": {

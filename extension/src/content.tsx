@@ -275,7 +275,7 @@ function Modes({ value, onChange }: { value: Mode; onChange: (mode: Mode) => voi
       <button aria-pressed={value === 'threads'} onClick={() => onChange('threads')}>
         Threads
       </button>
-      <span className="c-small">Chat2Tasks</span>
+      <span className="c-small">Wawa</span>
     </nav>
   );
 }

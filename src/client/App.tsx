@@ -9,7 +9,6 @@ import {
   Menu as MenuIcon,
   MessageCircle,
   Search,
-  SquareCheck,
   Settings2,
   TriangleAlert,
   X,
@@ -288,7 +287,7 @@ export function App() {
   }, [updateLocation]);
   const viewTitle =
     location.view === 'search'
-      ? 'Search'
+      ? 'Spotlight'
       : location.view === 'overview'
         ? 'Overview'
         : location.view === 'waiting'
@@ -307,7 +306,7 @@ export function App() {
                       ? 'Settings'
                       : 'Activity';
   useEffect(() => {
-    document.title = `Chat2Tasks — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
+    document.title = `Wawa — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
   }, [viewTitle, chat, location.view]);
   async function tick(task: Task, done = !task.done) {
     if (pendingTicks.current.has(task.id) || task.done === done) return;
@@ -535,7 +534,7 @@ export function App() {
   const navigation = (
     <>
       <button className="brand" onClick={() => navigate('overview')}>
-        <SquareCheck size={20} /> <span>chat2tasks</span>
+        <img src="/wawa-icon.png" width="24" height="24" alt="" /> <span>wawa</span>
       </button>
       <TaskFilters
         tasks={data.tasks}
@@ -557,7 +556,7 @@ export function App() {
           onClick={() => navigate('search')}
         >
           <Search size={16} />
-          <span>Search</span>
+          <span>Spotlight</span>
         </button>
         <button
           className={`nav-item ${location.view === 'threads' ? 'active' : ''}`}

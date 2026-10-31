@@ -45,7 +45,7 @@ export function ActivityView({
                 ? 'The workspace server is unreachable. We’ll keep trying.'
                 : (data.status.error ??
                   (working
-                    ? 'This can take a moment. You can keep using Chat2Tasks.'
+                    ? 'This can take a moment. You can keep using Wawa.'
                     : data.demo
                       ? 'A sample workspace. No live chats or AI calls.'
                       : data.messages.length === 0
