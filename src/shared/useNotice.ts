@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type NoticeVariant = 'info' | 'success' | 'error';
-export type Notify = (text: string, variant?: NoticeVariant) => void;
+/** Show a toast. Pass `undo` when the action can be reversed in one step. */
+export type Notify = (
+  text: string,
+  variant?: NoticeVariant,
+  options?: { undo?: () => void },
+) => void;
 
 export function useNotice<T>() {
   const [notice, setNotice] = useState<T | null>(null);

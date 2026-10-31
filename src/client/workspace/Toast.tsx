@@ -3,7 +3,8 @@ import type { Task } from '../../shared/schema.js';
 import type { NoticeVariant } from '../../shared/useNotice.js';
 import type { CompletionNotice } from './useTaskTick.js';
 
-export type Notice = { kind: 'message'; text: string; variant: NoticeVariant } | CompletionNotice;
+export type Notice =
+  { kind: 'message'; text: string; variant: NoticeVariant; undo?: () => void } | CompletionNotice;
 
 export function Toast({
   notice,
@@ -11,6 +12,7 @@ export function Toast({
   undoTask,
   undoBusy,
   onUndo,
+  onUndoMessage,
   onDismiss,
 }: {
   notice: Notice;
@@ -19,6 +21,8 @@ export function Toast({
   undoTask: Task | undefined;
   undoBusy: boolean;
   onUndo: (task: Task, previousDone: boolean) => void;
+  /** Runs a message notice's own undo, then closes the toast. */
+  onUndoMessage: () => void;
   onDismiss: () => void;
 }) {
   const error = notice.kind === 'message' && notice.variant === 'error';
@@ -40,6 +44,11 @@ export function Toast({
         />
       )}
       <span>{notice.text}</span>
+      {notice.kind === 'message' && notice.undo && (
+        <button className="toast-undo" onClick={onUndoMessage}>
+          Undo
+        </button>
+      )}
       {undo && (
         <button
           className="toast-undo"

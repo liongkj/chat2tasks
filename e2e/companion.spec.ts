@@ -151,7 +151,18 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
         (task) => task.id === beforeWait.task_id,
       )?.done,
     ).toBe(false);
-    await page.getByRole('button', { name: 'Reopen waiting item', exact: true }).click();
+    const receivedToast = page.getByRole('status').filter({ hasText: 'Marked as received' });
+    await expect(receivedToast).toBeVisible();
+    await receivedToast.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).waiting_for.find(
+            (wait) => wait.id === beforeWait.id,
+          )?.state,
+      )
+      .toBe('waiting');
+    await expect(page.getByRole('button', { name: 'Mark received', exact: true })).toBeVisible();
     const linkedTask = SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
       (task) => task.id === beforeWait.task_id,
     );

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import { ArrowLeft, Link2, Menu as MenuIcon, TriangleAlert, X } from 'lucide-react';
 import { useSoundActivation } from '../shared/sound.js';
-import { useNotice, type NoticeVariant } from '../shared/useNotice.js';
+import { useNotice, type Notify } from '../shared/useNotice.js';
 import { useInputModality } from '../shared/useInputModality.js';
 import { SoundPreferencesSchema, type Task, type TaskEvidence } from '../shared/schema.js';
 import { matchesTaskIdentifier, matchesTaskQuery } from '../shared/tasks.js';
@@ -69,9 +69,9 @@ export function App() {
     show: showNotice,
     dismiss: dismissNotice,
   } = useNotice<Notice>();
-  const notify = useCallback(
-    (text: string, variant: NoticeVariant = 'info') =>
-      showNotice({ kind: 'message', text, variant }),
+  const notify = useCallback<Notify>(
+    (text, variant = 'info', options) =>
+      showNotice({ kind: 'message', text, variant, undo: options?.undo }),
     [showNotice],
   );
   const [mobileMenu, setMobileMenu] = useState(false);
@@ -87,7 +87,10 @@ export function App() {
   useEffect(() => {
     if (!notice) return;
     // Leave time to read and reach Undo when it is offered.
-    const timer = setTimeout(dismissNotice, notice.kind === 'completion' ? 10000 : 7000);
+    const timer = setTimeout(
+      dismissNotice,
+      notice.kind === 'completion' || notice.undo ? 10000 : 7000,
+    );
     return () => clearTimeout(timer);
   }, [notice, dismissNotice]);
   const chats = config?.settings.chats ?? [];
@@ -437,6 +440,10 @@ export function App() {
       undoTask={undoTask}
       undoBusy={notice.kind === 'completion' && pendingTickIds.has(notice.taskId)}
       onUndo={(task, previousDone) => void tick(task, previousDone, 'undo')}
+      onUndoMessage={() => {
+        if (notice.kind === 'message') notice.undo?.();
+        dismissNotice();
+      }}
       onDismiss={dismissNotice}
     />
   );
