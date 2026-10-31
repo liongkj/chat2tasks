@@ -44,22 +44,41 @@ export function connectionRequest(
   return { url, headers };
 }
 
-function runCodex(args: string[], input: string, cwd: string) {
+export function runCodex(args: string[], input: string, cwd: string, timeoutMs = 300_000) {
   return new Promise<string>((resolve, reject) => {
     const env = { ...process.env };
     for (const key of ['OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL']) delete env[key];
     const child = spawn(process.env.CODEX_BIN ?? 'codex', args, {
       cwd,
       env,
+      detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let output = '',
       error = '',
       settled = false;
+    function stop() {
+      if (child.pid && process.platform === 'win32') {
+        const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        killer.on('error', () => child.kill('SIGKILL'));
+        killer.on('close', (code) => {
+          if (code !== 0) child.kill('SIGKILL');
+        });
+      } else if (child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          child.kill('SIGKILL');
+        }
+      } else child.kill('SIGKILL');
+    }
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      stop();
       finish(new Error('Model request timed out. Your saved tasks are safe.'));
-    }, 300_000);
+    }, timeoutMs);
     function finish(err?: Error) {
       if (settled) return;
       settled = true;
@@ -70,7 +89,7 @@ function runCodex(args: string[], input: string, cwd: string) {
     child.stdout.on('data', (b: Buffer) => {
       output += b.toString();
       if (output.length > 10_000_000) {
-        child.kill('SIGKILL');
+        stop();
         finish(new Error('Model response is too large'));
       }
     });
