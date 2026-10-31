@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
+  <title>Wawa</title>
+  <rect x="16" y="16" width="224" height="224" rx="54" fill="#17191f"/>
+  <g transform="translate(25 23) scale(.8)">
+    <path d="M36 74 L73 173 Q77 184 83 172 L120 99 Q124 91 128 91 Q132 91 136 99 L173 172 Q179 184 183 173 L201 125" fill="none" stroke="#f7f8f4" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="220" cy="74" r="13" fill="#c8f178"/>
+  </g>
+</svg>
