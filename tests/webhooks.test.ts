@@ -137,6 +137,50 @@ test('only the exact signed body can enqueue work, and webhook retries do not re
     f.close();
   }
 });
+test('new messages preserve active progress and count waiting messages across enabled chats once', () => {
+  const f = fixture();
+  try {
+    f.store.saveSettings({
+      settings: {
+        ...f.store.settings(),
+        chats: [
+          ...f.store.settings().chats,
+          { id: 'second', name: 'Second', sessionId: 's', chatId: 'second', enabled: true },
+        ],
+      },
+      secrets: {},
+      removeSecrets: [],
+    });
+    f.store.cache([
+      MessageSchema.parse({
+        id: 'outgoing',
+        sessionId: 's',
+        chatId: 'second',
+        body: 'An outgoing message',
+        type: 'text',
+        direction: 'outgoing',
+        timestamp: now() + 1,
+      }),
+      MessageSchema.parse({
+        id: 'paused-message',
+        sessionId: 's',
+        chatId: 'paused',
+        body: 'A paused conversation',
+        type: 'text',
+        direction: 'incoming',
+        timestamp: now(),
+      }),
+    ]);
+    f.store.status({ syncing: true, phase: 'Reading evidence from Active', debouncing: false });
+    f.hooks.receive(f.raw, f.sign(f.raw));
+    const status = f.store.status();
+    assert.equal(status.phase, 'Reading evidence from Active');
+    assert.equal(status.debouncing, false);
+    assert.equal(status.pending, 2);
+  } finally {
+    f.close();
+  }
+});
 test('an edited older message keeps its stable source identity and durable work survives a restart', () => {
   const f = fixture();
   try {
@@ -357,6 +401,191 @@ test('processing stays visible while a decision is in progress', async () => {
   } finally {
     release();
     await running;
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('image analysis shows its current image and completes the saved batch', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let running: Promise<void> | undefined;
+  let calls = 0;
+  try {
+    f.store.saveSettings({
+      settings: {
+        ...f.store.settings(),
+        profiles: [
+          {
+            id: 'tasks',
+            name: 'Tasks',
+            kind: 'compatible',
+            model: 'fixture',
+            baseUrl: 'https://example.invalid/v1',
+          },
+        ],
+        activeProfileId: 'tasks',
+        trigger: { mode: 'manual' },
+      },
+      secrets: {},
+      removeSecrets: [],
+    });
+    f.store.cache([
+      MessageSchema.parse({
+        id: 'image-1',
+        sessionId: 's',
+        chatId: 'chat',
+        body: '',
+        type: 'image',
+        direction: 'incoming',
+        timestamp: now(),
+        image_digest: 'fixture-digest',
+        mediaMimetype: 'image/jpeg',
+      }),
+    ]);
+    await new OpenWA(f.store).saveMedia('image-1', Buffer.from('fixture image'));
+    globalThis.fetch = async () => {
+      calls++;
+      if (calls === 1) {
+        entered();
+        await waiting;
+      }
+      const result =
+        calls === 1
+          ? { readings: [{ message_id: 'image-1', observations: [], uncertainties: [] }] }
+          : { changes: [], waits: [] };
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }),
+      );
+    };
+    f.store.queueChat('active', 0, false, true);
+    running = f.sync.run(['active']);
+    await Promise.race([
+      started,
+      running.then(() => {
+        throw new Error('Image analysis ended before the model request: ' + f.store.status().error);
+      }),
+    ]);
+    assert.equal(f.store.status().phase, 'Reading image 1 of 1 from Active');
+    release();
+    await running;
+    assert.equal(f.store.status().error, null);
+    assert.equal(
+      f.store.db.prepare('SELECT count(*) AS count FROM image_readings').get()?.count,
+      1,
+    );
+    assert.equal(f.store.status().pending, 0);
+  } finally {
+    release();
+    await running;
+    globalThis.fetch = original;
+    f.close();
+  }
+});
+
+test('partial reply matching saves only uniquely matched replies and retries the rest', async () => {
+  const f = fixture();
+  const original = globalThis.fetch;
+  try {
+    f.store.saveSettings({
+      settings: {
+        ...f.store.settings(),
+        profiles: [
+          {
+            id: 'tasks',
+            name: 'Tasks',
+            kind: 'compatible',
+            model: 'fixture',
+            baseUrl: 'https://example.invalid/v1',
+          },
+        ],
+        activeProfileId: 'tasks',
+        trigger: { mode: 'automatic', decisionProfileId: null },
+      },
+      secrets: {},
+      removeSecrets: [],
+    });
+    const messages = [
+      { id: 'request', direction: 'incoming' as const, body: 'Fix the export' },
+      { id: 'reply-1', direction: 'outgoing' as const, body: 'Checking it' },
+      { id: 'reply-2', direction: 'outgoing' as const, body: 'Another update' },
+      { id: 'reply-3', direction: 'outgoing' as const, body: 'Still working' },
+    ].map((message) =>
+      MessageSchema.parse({
+        ...message,
+        sessionId: 's',
+        chatId: 'chat',
+        type: 'text',
+        timestamp: now() + 1,
+      }),
+    );
+    f.store.cache(messages);
+    f.store.apply(
+      [
+        {
+          id: null,
+          title: 'Fix the export',
+          scope: 'Exports',
+          note: 'Requested in the conversation',
+          source_ids: ['request'],
+          kind: 'task',
+          action_steps: ['Fix the export'],
+          done_when: ['The export works'],
+          priority: 'normal',
+          triage_state: 'ready',
+          blocking_question: null,
+        },
+      ],
+      messages,
+    );
+    const decision = (messageId: string) => ({
+      message_id: messageId,
+      action: 'none',
+      task_ids: [],
+      evidence_quote: '',
+      reason: 'No completion reported',
+      question: null,
+    });
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  decisions: [
+                    decision('reply-1'),
+                    decision('reply-3'),
+                    decision('reply-3'),
+                    decision('unknown'),
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+      );
+    f.store.queueChat('active', 0, false);
+    await f.sync.run(['active']);
+    assert.equal(f.store.status().error, null);
+    assert.deepEqual(
+      f.store
+        .pendingReplies(f.store.messages())
+        .map((message) => message.id)
+        .sort(),
+      ['reply-2', 'reply-3'],
+    );
+    assert.equal(f.store.snapshot().tasks[0]?.done, false);
+    assert.equal(f.store.jobs().length, 1);
+  } finally {
     globalThis.fetch = original;
     f.close();
   }

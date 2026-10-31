@@ -98,6 +98,8 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: npm ci
+      - name: Check timed-out Codex process cleanup
+        run: npx tsx --test tests/codex-timeout.test.ts
       - name: Check workspace transfer offline
         shell: pwsh
         run: |

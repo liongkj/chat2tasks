@@ -461,6 +461,14 @@ export class Store {
     );
     return messages.filter((m) => seen.get(m.id) !== fingerprint(m));
   }
+  pendingMessageCount() {
+    const chats = this.settings().chats.filter((chat) => chat.enabled);
+    const messages = this.messages().filter((message) =>
+      chats.some((chat) => chat.sessionId === message.sessionId && chat.chatId === message.chatId),
+    );
+    return new Set([...this.pending(messages), ...this.pendingReplies(messages)].map((m) => m.id))
+      .size;
+  }
   apply(
     changes: TaskChange[],
     batch: Message[],
