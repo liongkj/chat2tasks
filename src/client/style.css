@@ -6,7 +6,8 @@
   --surface: #fff;
   --sidebar: #f7f7f7;
   --line: #e5e5e5;
-  --line-strong: #c8c8c8;
+  --line-strong: #8f8f8f;
+  --selection: #c8c8c8;
   --accent: #242424;
   --accent-hover: #111;
   --accent-wash: #eaeaea;
@@ -26,7 +27,7 @@
   font-size: 14px;
 }
 ::selection {
-  background: var(--line-strong);
+  background: var(--selection);
   color: var(--text);
 }
 .spin {
