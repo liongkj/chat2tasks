@@ -325,3 +325,35 @@ test('already indexed media remains searchable while other attachments are being
     db.close();
   }
 });
+
+test('media search can return a relevant image whose similarity is below the text cutoff', async () => {
+  const db = new DatabaseSync(':memory:');
+  const picture = MessageSchema.parse({ ...message, id: 'picture', type: 'image', body: '' });
+  const engine = new LocalSearch(
+    db,
+    () => ({ tasks: [], messages: [picture] }),
+    async ({ input }) => input.map(() => vector('export')),
+    undefined,
+    {
+      load: async () => ({ mime: 'image/png', bytes: Buffer.from('sample') }),
+      prepare: async () => [{ image: 'sample' }],
+      embed: async ({ input }) =>
+        input.map(() => {
+          const values = Array(256).fill(0);
+          values[0] = 0.68;
+          values[1] = Math.sqrt(1 - 0.68 ** 2);
+          return values;
+        }),
+    },
+  );
+  try {
+    let result = await engine.find('sample');
+    for (let attempt = 0; result.media?.kind === 'indexing' && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      result = await engine.find('sample');
+    }
+    assert.ok(result.results.some((item) => item.id === picture.id && item.match === 'related'));
+  } finally {
+    db.close();
+  }
+});

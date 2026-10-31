@@ -15,6 +15,7 @@ const model = 'embeddinggemma-2:270m-q8_0-text';
 const mediaModel = 'embeddinggemma-2:740m-q8_0';
 const dimensions = 256;
 const minSimilarity = 0.7;
+const minMediaSimilarity = 0.65;
 const chunkLength = 1000;
 type Document = { kind: 'task' | 'message'; id: string; title: string; text: string };
 type Part = Document & { index: number; digest: string; prompt: string };
@@ -447,7 +448,7 @@ export class LocalSearch {
         const id = JSON.stringify(['message', row.id]);
         if (exactKeys.has(id)) continue;
         const score = similarity(row.vector, queryVector);
-        if (score >= minSimilarity && score > (matches.get(id)?.score ?? -1))
+        if (score >= minMediaSimilarity && score > (matches.get(id)?.score ?? -1))
           matches.set(id, { kind: 'message', id: row.id, score });
       }
       for (const row of rows) {
