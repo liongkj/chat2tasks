@@ -1162,7 +1162,7 @@ export class Store {
       });
     const tasks = this.db
       .prepare(
-        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark,coalesce(k.kind,'task') kind,k.suggestion kind_suggestion FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id LEFT JOIN item_kinds k ON k.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,t.id",
+        "SELECT t.*,'TODO-' || printf('%03d',ref.number) reference,coalesce(c.done,0) done,coalesce(r.remark,'') own_remark,coalesce(k.kind,'task') kind,k.suggestion kind_suggestion FROM tasks t JOIN task_references ref ON ref.task_id=t.id LEFT JOIN task_merges merged ON merged.source_id=t.id LEFT JOIN completion c ON c.task_id=t.id LEFT JOIN task_remarks r ON r.task_id=t.id LEFT JOIN item_kinds k ON k.task_id=t.id WHERE merged.source_id IS NULL ORDER BY t.created,ref.number",
       )
       .all()
       .map((row) => {
