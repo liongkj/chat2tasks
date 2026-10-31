@@ -1459,3 +1459,58 @@ test('workspace threads open the exact source message and remain navigable on a 
     await browser.close();
   }
 });
+
+test('workspace search finds items and opens matching saved messages without a model', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const task = snapshot.tasks[0];
+  const message = snapshot.messages.find((item) => item.body.length > 25);
+  if (!task || !message) throw Error('The sample needs an item and a saved message');
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(base);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    const input = page.getByRole('textbox', { name: 'Search workspace' });
+    await input.fill(task.reference);
+    const taskResult = page
+      .getByRole('button')
+      .filter({ hasText: task.reference })
+      .filter({ hasText: task.title });
+    await expect(taskResult).toBeVisible();
+    await taskResult.click();
+    await expect(page.getByRole('heading', { name: task.title, exact: true })).toBeVisible();
+
+    await page.keyboard.press('Meta+k');
+    await expect(input).toHaveValue(task.reference);
+    await input.fill(message.body.slice(0, 25));
+    expect(new URL(page.url()).searchParams.has('q')).toBe(false);
+    const messageResult = page.getByRole('button').filter({ hasText: message.body.slice(0, 25) });
+    await expect(messageResult).toBeVisible();
+    await expect(page.getByText('Exact matches are available.', { exact: false })).toBeVisible();
+    await messageResult.click();
+    await expect(page.locator(`[data-message-id="${message.id}"]`)).toBeVisible();
+
+    await page.keyboard.press('Meta+k');
+    await expect(input).toHaveValue(message.body.slice(0, 25));
+    await page.getByText('Search model and server', { exact: true }).click();
+    await page.getByRole('radio', { name: 'Another Ollama server' }).check();
+    await page.getByLabel('Server address').fill('not a URL');
+    await page.getByRole('button', { name: 'Save search server' }).click();
+    await expect(page.getByRole('alert')).toContainText('Invalid URL');
+    await input.fill('');
+    await page.getByLabel('Server address').fill('http://127.0.0.1:18955');
+    await page.getByRole('button', { name: 'Save search server' }).click();
+    await expect
+      .poll(async () => (await (await owner('search/settings')).json()).kind)
+      .toBe('server');
+    await page.getByRole('radio', { name: 'This workspace machine' }).check();
+    await page.getByRole('button', { name: 'Save search server' }).click();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});

@@ -60,6 +60,27 @@ Choose **Conversations** to read a followed chat's cached messages and linked ta
 
 **Activity** separates the most recent signed message event from the last completed task analysis. These are different from the browser’s connection to the workspace server.
 
+## Search across your workspace
+
+Choose **Search** in the sidebar or press **⌘/Ctrl K** to search all saved items and conversation messages. Exact matches work without a model. Related results use the text-only **EmbeddingGemma 2** model, run with Ollama on the workspace host. The first search builds a local index; later searches reuse it. The search includes saved image readings when available, but does not inspect image or audio files itself. Results are suggestions and may miss a match or include unrelated material.
+
+On a Mac or a directly hosted workspace, [install and start Ollama](https://ollama.com/download), then download the model once:
+
+```sh
+ollama pull embeddinggemma-2:270m-q8_0-text
+```
+
+For Docker, an optional local CPU service is included in `compose.search.yml`. It publishes no host port and does not replace the existing Chat2Tasks image. Apply it alongside your existing Compose files, then download the model into its persistent volume:
+
+```sh
+docker compose -f compose.yml -f compose.search.yml up -d --build
+docker compose -f compose.yml -f compose.search.yml exec search-model ollama pull embeddinggemma-2:270m-q8_0-text
+```
+
+The Ollama image is several gigabytes; the text model is about 304 MB. The service works on CPU, though initial indexing may take longer than with a GPU. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in the search screen and enter its address. Search queries and indexed text are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
+
+Search does not use your configured task-generation or decision models. Your separate task-generation and decision-provider settings still determine where task-processing evidence is sent. Search currently covers the full workspace, independent of the item filters and the Chrome companion's task filter.
+
 ## Task references and links
 
 Each task has a permanent reference such as **TODO-001**, shown as a tag in the task list and details. References remain the same when tasks are edited, completed, or reordered. Existing workspaces receive references automatically without changing their tasks or completion records. Search by reference in the workspace, Chrome companion, or MCP tools.

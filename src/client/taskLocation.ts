@@ -8,6 +8,7 @@ export type SettingsSection =
   'conversations' | 'models' | 'automation' | 'attention' | 'workspace' | 'browser';
 export type WorkspaceView =
   | 'overview'
+  | 'search'
   | 'waiting'
   | 'review'
   | 'conversations'
@@ -39,6 +40,7 @@ function readLocation(): WorkspaceLocation {
   const kind = ItemKindSchema.safeParse(params.get('kind'));
   return {
     view:
+      view === 'search' ||
       view === 'conversations' ||
       view === 'overview' ||
       view === 'waiting' ||

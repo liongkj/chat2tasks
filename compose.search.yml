@@ -1,0 +1,14 @@
+services:
+  chat2tasks:
+    environment:
+      LOCAL_SEARCH_OLLAMA_URL: http://search-model:11434
+  search-model:
+    image: ollama/ollama:0.40.13
+    environment:
+      OLLAMA_NO_CLOUD: '1'
+    volumes:
+      - search-model-data:/root/.ollama
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  search-model-data:
