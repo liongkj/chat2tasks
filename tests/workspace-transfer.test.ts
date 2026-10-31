@@ -1,13 +1,133 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, now } from '../src/server/store.js';
 import { OpenWA } from '../src/server/openwa.js';
 import { LocalSearch } from '../src/server/search.js';
+import { Sync } from '../src/server/sync.js';
+import Fastify from 'fastify';
+import { DestinationMove } from '../src/server/destination-move.js';
+import { MoveGate } from '../src/server/move-gate.js';
+import { ServerMove } from '../src/server/server-move.js';
+import { WorkspaceOwnership } from '../src/server/workspace-ownership.js';
 import { MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
-import { exportWorkspace, importWorkspace } from '../src/server/workspace-transfer.js';
+import {
+  exportWorkspace,
+  importMovedWorkspace,
+  importWorkspace,
+} from '../src/server/workspace-transfer.js';
+
+test('a move snapshot includes updates that were already in progress', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'chat2tasks-move-'));
+  const store = new Store(join(root, 'source'));
+  const source = WorkspaceOwnership.open(join(root, 'source', '.ownership'), 'server');
+  const targetData = join(root, 'target');
+  const existing = new Store(join(targetData, 'workspace'));
+  existing.setMeta('previous_local_workspace', 'kept as a backup');
+  existing.close();
+  await mkdir(join(targetData, 'gateway'), { recursive: true });
+  await mkdir(join(targetData, 'codex'), { recursive: true });
+  await writeFile(join(targetData, 'gateway', 'marker'), 'old gateway');
+  await writeFile(join(targetData, 'codex', 'marker'), 'old sign-in');
+  const target = new DestinationMove(targetData);
+  const moveId = randomUUID();
+  const app = Fastify();
+  const gate = new MoveGate(app);
+  let entered!: () => void;
+  let finish!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const release = new Promise<void>((resolve) => (finish = resolve));
+  app.post('/api/edit', async () => {
+    entered();
+    await release;
+    store.setMeta('last_user_update', 'completed before the move');
+    return { ok: true };
+  });
+  try {
+    const request = app.inject({ method: 'POST', url: '/api/edit' }).then((response) => response);
+    await started;
+    const path = join(root, 'move.c2t');
+    const moving = new ServerMove({
+      gate,
+      ownership: source,
+      store,
+      stopBackground: async () => {},
+    }).begin({
+      move: {
+        id: moveId,
+        target: await target.prepare(moveId),
+        targetOrigin: 'https://target.example',
+      },
+      archivePath: path,
+    });
+    assert.equal((await app.inject({ method: 'POST', url: '/api/edit' })).statusCode, 503);
+    finish();
+    assert.equal((await request).statusCode, 200);
+    const grant = await moving;
+    assert.throws(() => source.assertCanRun(), /move/i);
+    const receive = {
+      grant,
+      trustedSourceKey: source.identity().signingPublicKey,
+      archivePath: path,
+      localPort: 2786,
+      password: 'fictional-target-password',
+    };
+    const conflictingBackup = join(targetData, `workspace.before-move-${moveId}`);
+    await mkdir(conflictingBackup);
+    await assert.rejects(target.receive(receive), /backup already exists/i);
+    assert.throws(() => source.assertCanRun(), /move/i);
+    assert.throws(
+      () =>
+        WorkspaceOwnership.open(
+          join(targetData, 'server-moves', moveId, 'workspace', '.ownership'),
+          'client',
+        ).assertCanRun(),
+      /move/i,
+    );
+    await rm(conflictingBackup, { recursive: true });
+    await target.receive(receive);
+    await target.receive(receive);
+    const unrelated = WorkspaceOwnership.open(join(root, 'unrelated-owner'), 'client');
+    await assert.rejects(
+      target.receive({ ...receive, trustedSourceKey: unrelated.identity().signingPublicKey }),
+      /authorization/i,
+    );
+    WorkspaceOwnership.open(join(targetData, 'workspace', '.ownership'), 'client').assertCanRun();
+    const restored = new Store(join(targetData, 'workspace'));
+    try {
+      assert.equal(restored.metaValue('last_user_update'), 'completed before the move');
+      assert.deepEqual(restored.desktopSharing(), {
+        kind: 'enabled',
+        origin: 'https://target.example',
+        port: 2786,
+      });
+    } finally {
+      restored.close();
+    }
+    const backup = new Store(join(targetData, `workspace.before-move-${moveId}`));
+    try {
+      assert.equal(backup.metaValue('previous_local_workspace'), 'kept as a backup');
+    } finally {
+      backup.close();
+    }
+    assert.equal(
+      await readFile(join(targetData, `gateway.before-move-${moveId}`, 'marker'), 'utf8'),
+      'old gateway',
+    );
+    assert.equal(
+      await readFile(join(targetData, `codex.before-move-${moveId}`, 'marker'), 'utf8'),
+      'old sign-in',
+    );
+  } finally {
+    finish();
+    await app.close();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('an encrypted transfer preserves workspace evidence and pauses the old connection', async () => {
   const root = await mkdtemp(join(tmpdir(), 'chat2tasks-transfer-'));
@@ -69,6 +189,7 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
     store.db
       .prepare("INSERT INTO search_embeddings VALUES('message','image',0,'old',?)")
       .run(Buffer.alloc(1024));
+    store.queueChat('c', 60, true, true);
     const file = join(root, 'workspace.c2t');
     await exportWorkspace(store, file, 'example passphrase');
     const bytes = await readFile(file);
@@ -89,6 +210,7 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       assert.equal(restored.secret('openwa'), '');
       assert.deepEqual(restored.desktopSharing(), { kind: 'disabled' });
       assert.equal(restored.secret('desktop-sharing-password'), '');
+      assert.equal(restored.jobs().length, 0);
       const restoredSearch = new LocalSearch(restored.db, () => restored.snapshot());
       assert.deepEqual(restoredSearch.settings(), { kind: 'workspace' });
       assert.equal(
@@ -101,6 +223,26 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       assert.equal(store.desktopSharing().kind, 'enabled');
     } finally {
       restored.close();
+    }
+    await importMovedWorkspace(file, join(root, 'moved'), 'example passphrase');
+    const moved = new Store(join(root, 'moved'));
+    try {
+      assert.equal(moved.settings().chats[0]?.enabled, false);
+      assert.equal(moved.jobs().length, 0, 'pending work waits while the conversation is paused');
+      moved.saveSettings({
+        settings: {
+          ...moved.settings(),
+          chats: moved.settings().chats.map((chat) => ({ ...chat, enabled: true })),
+        },
+        secrets: {},
+        removeSecrets: [],
+      });
+      const sync = new Sync(moved, new OpenWA(moved));
+      sync.stop();
+      sync.reconfigure();
+      assert.equal(moved.jobs()[0]?.manual, 1, 'pending manual analysis survives the move');
+    } finally {
+      moved.close();
     }
   } finally {
     store.close();

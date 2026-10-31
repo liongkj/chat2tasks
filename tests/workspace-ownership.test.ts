@@ -59,22 +59,41 @@ test('a move fences the old server and only the intended computer can stage the 
       targetOrigin: 'https://target.example:8443',
     };
     const trustedSource = source.identity().signingPublicKey;
+    const passphrase = 'fictional-secret-for-destination';
     source.prepare(move);
     assert.throws(() => WorkspaceOwnership.open(sourceDir, 'server').assertCanRun(), /move/i);
 
-    const grant = source.fence(move.id, digest);
-    assert.deepEqual(source.fence(move.id, digest), grant, 'a lost response can be retried');
-    assert.throws(() => source.fence(move.id, '0'.repeat(64)), /snapshot/i);
+    const grant = source.fence(move.id, digest, passphrase);
+    assert.equal(JSON.stringify(grant).includes(passphrase), false);
+    assert.deepEqual(
+      source.fence(move.id, digest, passphrase),
+      grant,
+      'a lost response can be retried',
+    );
+    assert.deepEqual(
+      WorkspaceOwnership.open(sourceDir, 'server').grant(move.id),
+      grant,
+      'the source can recover the same authorization after restart',
+    );
+    assert.throws(() => source.fence(move.id, '0'.repeat(64), passphrase), /snapshot/i);
     assert.throws(() => WorkspaceOwnership.open(sourceDir, 'server').assertCanRun(), /move/i);
     await assert.rejects(
       target.stage(grant, other.identity().signingPublicKey, archive),
+      /authorization/i,
+    );
+    await assert.rejects(
+      target.stage(
+        { ...grant, payload: { ...grant.payload, digest: '0'.repeat(64) } },
+        trustedSource,
+        archive,
+      ),
       /authorization/i,
     );
     await assert.rejects(other.stage(grant, trustedSource, archive), /target/i);
     await writeFile(archive, 'a different snapshot');
     await assert.rejects(target.stage(grant, trustedSource, archive), /snapshot/i);
     await writeFile(archive, 'fictional workspace snapshot');
-    await target.stage(grant, trustedSource, archive);
+    assert.equal(await target.stage(grant, trustedSource, archive), passphrase);
     assert.throws(() => WorkspaceOwnership.open(targetDir, 'client').assertCanRun(), /move/i);
     assert.throws(() => WorkspaceOwnership.open(sourceDir, 'server').assertCanRun(), /move/i);
     await target.stage(grant, trustedSource, archive);
@@ -97,7 +116,7 @@ test('a destination cannot replace a different active workspace', async () => {
       targetOrigin: 'https://target.example',
     };
     source.prepare(move);
-    const grant = source.fence(move.id, digest);
+    const grant = source.fence(move.id, digest, 'fictional-secret-for-destination');
     await assert.rejects(
       target.stage(grant, source.identity().signingPublicKey, archive),
       /already/i,

@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { acquireLock } from '../../desktop/process-lock.mjs';
 import type { DesktopSharing } from '../shared/desktop-sharing.js';
@@ -51,7 +51,9 @@ const port = z.coerce
   .parse(process.env.PORT ?? 2786);
 const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
 const dataDirectory = resolve(process.env.DATA_DIR ?? 'data');
-const workspaceLock = desktop ? acquireLock(dataDirectory) : undefined;
+const workspaceLock = desktop
+  ? acquireLock(join(dirname(dataDirectory), 'workspace-server-control'))
+  : undefined;
 if (desktop) WorkspaceOwnership.open(join(dataDirectory, '.ownership'), 'server').assertCanRun();
 const store = new Store(dataDirectory);
 const localSearch = new LocalSearch(store.db, () => store.snapshot());

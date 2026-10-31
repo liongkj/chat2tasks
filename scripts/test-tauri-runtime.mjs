@@ -357,7 +357,7 @@ try {
     targetOrigin: 'https://target.example',
   };
   owner.prepare(move);
-  owner.fence(move.id, 'a'.repeat(64));
+  owner.fence(move.id, 'a'.repeat(64), 'fictional-secret-for-destination');
   const retired = spawn(bun, [supervisor], {
     env: {
       ...process.env,

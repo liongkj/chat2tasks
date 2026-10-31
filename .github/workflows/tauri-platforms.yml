@@ -37,6 +37,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb xdotool
       - run: npm ci
+      - name: Check ownership rules with the desktop runtime
+        run: bun test tests/workspace-ownership.test.ts
       - run: npm run tauri:stage
       - run: npm run tauri:prepare
       - name: Check workspace selection

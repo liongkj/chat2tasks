@@ -1,14 +1,20 @@
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
+  createPrivateKey,
   createPublicKey,
+  diffieHellman,
   generateKeyPairSync,
+  hkdfSync,
+  randomBytes,
   randomUUID,
   sign,
   verify,
 } from 'node:crypto';
-import { chmodSync, closeSync, mkdirSync, openSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { createReadStream } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 
@@ -37,6 +43,12 @@ const Origin = z
   .transform((value) => new URL(value).origin);
 const Proposal = z.strictObject({ id: z.uuid(), target: Identity, targetOrigin: Origin });
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
+const SealedPassphrase = z.strictObject({
+  ephemeralPublicKey: z.string().min(1).max(1024),
+  nonce: z.string().min(1).max(64),
+  ciphertext: z.string().min(1).max(2048),
+  tag: z.string().min(1).max(64),
+});
 const Payload = z.strictObject({
   version: z.literal(1),
   move: Proposal,
@@ -44,14 +56,29 @@ const Payload = z.strictObject({
   generation: z.number().int().positive(),
   source: Identity,
   digest: Digest,
+  sealedPassphrase: SealedPassphrase,
 });
 const Grant = z.strictObject({ payload: Payload, signature: z.string().min(1).max(1024) });
+export type MoveGrant = z.infer<typeof Grant>;
+const MoveMarker = z.strictObject({
+  moveId: z.uuid(),
+  workspaceId: z.uuid(),
+  generation: z.number().int().positive(),
+  digest: Digest,
+  targetMachineId: z.uuid(),
+});
 const State = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('client') }),
   z.strictObject({
     kind: z.literal('active'),
     workspaceId: z.uuid(),
     generation: z.number().int().positive(),
+  }),
+  z.strictObject({
+    kind: z.literal('active_moved'),
+    workspaceId: z.uuid(),
+    generation: z.number().int().positive(),
+    grant: Grant,
   }),
   z.strictObject({
     kind: z.literal('preparing'),
@@ -65,6 +92,7 @@ const State = z.discriminatedUnion('kind', [
     generation: z.number().int().positive(),
     move: Proposal,
     digest: Digest,
+    sealedPassphrase: SealedPassphrase,
   }),
   z.strictObject({ kind: z.literal('staged'), grant: Grant }),
 ]);
@@ -78,6 +106,16 @@ const Journal = z.strictObject({
 type Journal = z.infer<typeof Journal>;
 type Proposal = z.input<typeof Proposal>;
 type Grant = z.infer<typeof Grant>;
+
+export function moveMarker(grant: MoveGrant) {
+  return MoveMarker.parse({
+    moveId: grant.payload.move.id,
+    workspaceId: grant.payload.workspaceId,
+    generation: grant.payload.generation,
+    digest: grant.payload.digest,
+    targetMachineId: grant.payload.move.target.machineId,
+  });
+}
 
 function keyPair(type: 'ed25519' | 'x25519') {
   const pair = type === 'ed25519' ? generateKeyPairSync('ed25519') : generateKeyPairSync('x25519');
@@ -94,7 +132,7 @@ function verifyIdentity(identity: z.infer<typeof Identity>) {
     throw new Error('Invalid computer identity.');
 }
 function signedBytes(payload: z.infer<typeof Payload>) {
-  const { move, source } = payload;
+  const { move, source, sealedPassphrase } = payload;
   return Buffer.from(
     JSON.stringify([
       payload.version,
@@ -109,8 +147,87 @@ function signedBytes(payload: z.infer<typeof Payload>) {
       move.target.agreementPublicKey,
       move.targetOrigin,
       payload.digest,
+      sealedPassphrase.ephemeralPublicKey,
+      sealedPassphrase.nonce,
+      sealedPassphrase.ciphertext,
+      sealedPassphrase.tag,
     ]),
   );
+}
+function wrappingKey(privateKey: string, publicKey: string, moveId: string) {
+  const secret = diffieHellman({
+    privateKey: createPrivateKey(privateKey),
+    publicKey: createPublicKey(publicKey),
+  });
+  return Buffer.from(
+    hkdfSync('sha256', secret, Buffer.from(moveId), Buffer.from('chat2tasks-move-key-v1'), 32),
+  );
+}
+function sealPassphrase(target: z.infer<typeof Identity>, moveId: string, passphrase: string) {
+  const ephemeral = keyPair('x25519');
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv(
+    'aes-256-gcm',
+    wrappingKey(ephemeral.privateKey, target.agreementPublicKey, moveId),
+    nonce,
+  );
+  cipher.setAAD(Buffer.from(moveId));
+  const ciphertext = Buffer.concat([cipher.update(passphrase, 'utf8'), cipher.final()]);
+  return {
+    ephemeralPublicKey: ephemeral.publicKey,
+    nonce: nonce.toString('base64url'),
+    ciphertext: ciphertext.toString('base64url'),
+    tag: cipher.getAuthTag().toString('base64url'),
+  };
+}
+function openPassphrase(
+  privateKey: string,
+  moveId: string,
+  sealed: z.infer<typeof SealedPassphrase>,
+) {
+  try {
+    const nonce = Buffer.from(sealed.nonce, 'base64url');
+    const tag = Buffer.from(sealed.tag, 'base64url');
+    if (nonce.length !== 12 || tag.length !== 16) throw new Error('Invalid move envelope.');
+    const cipher = createDecipheriv(
+      'aes-256-gcm',
+      wrappingKey(privateKey, sealed.ephemeralPublicKey, moveId),
+      nonce,
+    );
+    cipher.setAAD(Buffer.from(moveId));
+    cipher.setAuthTag(tag);
+    return Buffer.concat([
+      cipher.update(Buffer.from(sealed.ciphertext, 'base64url')),
+      cipher.final(),
+    ]).toString('utf8');
+  } catch {
+    throw new Error('The snapshot cannot be unlocked on this target computer.');
+  }
+}
+
+export async function snapshotDigest(path: string) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) {
+    if (!(chunk instanceof Uint8Array)) throw new Error('The snapshot could not be read.');
+    hash.update(chunk);
+  }
+  return hash.digest('hex');
+}
+
+export function verifyMoveGrant(input: unknown, trustedSourceKey: string) {
+  const grant = Grant.parse(input);
+  verifyIdentity(grant.payload.source);
+  if (
+    grant.payload.source.signingPublicKey !== trustedSourceKey ||
+    !verify(
+      null,
+      signedBytes(grant.payload),
+      trustedSourceKey,
+      Buffer.from(grant.signature, 'base64url'),
+    )
+  )
+    throw new Error('The server move authorization is invalid.');
+  return grant;
 }
 
 export class WorkspaceOwnership {
@@ -169,6 +286,19 @@ export class WorkspaceOwnership {
       .parse(db.prepare('SELECT value FROM journal WHERE id=1').get());
     const journal = Journal.parse(JSON.parse(row.value));
     verifyIdentity(journal.identity);
+    if (journal.state.kind === 'staged' || journal.state.kind === 'active_moved') {
+      const grant = verifyMoveGrant(
+        journal.state.grant,
+        journal.state.grant.payload.source.signingPublicKey,
+      );
+      if (
+        JSON.stringify(journal.identity) !== JSON.stringify(grant.payload.move.target) ||
+        (journal.state.kind === 'active_moved' &&
+          (journal.state.workspaceId !== grant.payload.workspaceId ||
+            journal.state.generation !== grant.payload.generation))
+      )
+        throw new Error('The workspace ownership record is invalid.');
+    }
     return journal;
   }
 
@@ -207,11 +337,25 @@ export class WorkspaceOwnership {
   assertCanRun() {
     const db = this.database();
     try {
-      if (this.read(db).state.kind !== 'active') {
+      const state = this.read(db).state;
+      if (state.kind !== 'active' && state.kind !== 'active_moved') {
         const error = new Error('This workspace cannot start while a server move needs recovery.');
         Object.assign(error, { code: 'CHAT2TASKS_MOVE_RECOVERY' });
         throw error;
       }
+    } finally {
+      db.close();
+    }
+  }
+
+  matchesMove(moveId: string) {
+    const db = this.database();
+    try {
+      const state = this.read(db).state;
+      return (
+        (state.kind === 'staged' && state.grant.payload.move.id === moveId) ||
+        (state.kind === 'active_moved' && state.grant.payload.move.id === moveId)
+      );
     } finally {
       db.close();
     }
@@ -223,7 +367,8 @@ export class WorkspaceOwnership {
     return this.change((journal) => {
       const state = journal.state;
       if (state.kind === 'preparing' && JSON.stringify(state.move) === JSON.stringify(move)) return;
-      if (state.kind !== 'active') throw new Error('A server move is already in progress.');
+      if (state.kind !== 'active' && state.kind !== 'active_moved')
+        throw new Error('A server move is already in progress.');
       if (move.target.machineId === journal.identity.machineId)
         throw new Error('Choose another target computer.');
       journal.state = {
@@ -235,8 +380,37 @@ export class WorkspaceOwnership {
     });
   }
 
-  fence(moveId: string, input: string): Grant {
+  private signedGrant(journal: Journal, moveId: string): Grant {
+    const state = journal.state;
+    if (state.kind !== 'fenced' || state.move.id !== moveId)
+      throw new Error('No completed authorization exists for this move.');
+    const payload: z.infer<typeof Payload> = {
+      version: 1,
+      move: state.move,
+      workspaceId: state.workspaceId,
+      generation: state.generation + 1,
+      source: journal.identity,
+      digest: state.digest,
+      sealedPassphrase: state.sealedPassphrase,
+    };
+    return {
+      payload,
+      signature: sign(null, signedBytes(payload), journal.signingPrivateKey).toString('base64url'),
+    };
+  }
+
+  grant(moveId: string) {
+    const db = this.database();
+    try {
+      return this.signedGrant(this.read(db), moveId);
+    } finally {
+      db.close();
+    }
+  }
+
+  fence(moveId: string, input: string, rawPassphrase: string): Grant {
     const digest = Digest.parse(input);
+    const passphrase = z.string().min(8).max(1024).parse(rawPassphrase);
     return this.change((journal) => {
       const state = journal.state;
       if (state.kind !== 'preparing' && state.kind !== 'fenced')
@@ -244,61 +418,75 @@ export class WorkspaceOwnership {
       if (state.move.id !== moveId) throw new Error('This server move does not match.');
       if (state.kind === 'fenced' && state.digest !== digest)
         throw new Error('The snapshot does not match this move.');
+      const sealedPassphrase =
+        state.kind === 'fenced'
+          ? state.sealedPassphrase
+          : sealPassphrase(state.move.target, state.move.id, passphrase);
       journal.state = {
         kind: 'fenced',
         workspaceId: state.workspaceId,
         generation: state.generation,
         move: state.move,
         digest,
+        sealedPassphrase,
       };
-      const payload: z.infer<typeof Payload> = {
-        version: 1,
-        move: state.move,
-        workspaceId: state.workspaceId,
-        generation: state.generation + 1,
-        source: journal.identity,
-        digest,
-      };
-      return {
-        payload,
-        signature: sign(null, signedBytes(payload), journal.signingPrivateKey).toString(
-          'base64url',
-        ),
-      };
+      return this.signedGrant(journal, moveId);
     });
   }
 
   async stage(input: unknown, trustedSourceKey: string, snapshotPath: string) {
-    const grant = Grant.parse(input);
-    verifyIdentity(grant.payload.source);
-    if (
-      grant.payload.source.signingPublicKey !== trustedSourceKey ||
-      !verify(
-        null,
-        signedBytes(grant.payload),
-        trustedSourceKey,
-        Buffer.from(grant.signature, 'base64url'),
-      )
-    )
-      throw new Error('The server move authorization is invalid.');
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(snapshotPath)) {
-      if (!(chunk instanceof Uint8Array)) throw new Error('The snapshot could not be read.');
-      hash.update(chunk);
-    }
-    if (hash.digest('hex') !== grant.payload.digest)
+    const grant = verifyMoveGrant(input, trustedSourceKey);
+    if ((await snapshotDigest(snapshotPath)) !== grant.payload.digest)
       throw new Error('The snapshot does not match this move.');
-    this.change((journal) => {
+    return this.change((journal) => {
       if (JSON.stringify(journal.identity) !== JSON.stringify(grant.payload.move.target))
         throw new Error('This move is for a different target computer.');
+      const passphrase = openPassphrase(
+        journal.agreementPrivateKey,
+        grant.payload.move.id,
+        grant.payload.sealedPassphrase,
+      );
       if (
         journal.state.kind === 'staged' &&
         JSON.stringify(journal.state.grant) === JSON.stringify(grant)
       )
-        return;
+        return passphrase;
       if (journal.state.kind !== 'client')
         throw new Error('This computer already has a workspace.');
       journal.state = { kind: 'staged', grant };
+      return passphrase;
+    });
+  }
+
+  activate({ workspace, grant }: { workspace: string; grant: MoveGrant }) {
+    if (resolve(this.path) !== resolve(join(workspace, '.ownership', 'ownership.sqlite')))
+      throw new Error('The moved workspace has not been promoted.');
+    const database = join(workspace, 'tasks.sqlite');
+    if (!existsSync(database)) throw new Error('The moved workspace database is missing.');
+    // Bun needs a writable handle to open a WAL database when its shared memory files are absent.
+    const db = new DatabaseSync(database);
+    try {
+      const row = z
+        .object({ value: z.string() })
+        .parse(db.prepare("SELECT value FROM meta WHERE key='move_activation'").get());
+      const marker = MoveMarker.parse(JSON.parse(row.value));
+      if (JSON.stringify(marker) !== JSON.stringify(moveMarker(grant)))
+        throw new Error('The promoted workspace does not match the server move.');
+    } finally {
+      db.close();
+    }
+    this.change((journal) => {
+      const state = journal.state;
+      if (state.kind === 'active_moved' && JSON.stringify(state.grant) === JSON.stringify(grant))
+        return;
+      if (state.kind !== 'staged' || JSON.stringify(state.grant) !== JSON.stringify(grant))
+        throw new Error('This workspace is not staged for that move.');
+      journal.state = {
+        kind: 'active_moved',
+        workspaceId: grant.payload.workspaceId,
+        generation: grant.payload.generation,
+        grant,
+      };
     });
   }
 }

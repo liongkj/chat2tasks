@@ -32,6 +32,10 @@ export class MoveGate {
     return new Promise<void>((resolve) => this.waiters.push(resolve));
   }
 
+  isPaused() {
+    return this.paused;
+  }
+
   resume() {
     this.paused = false;
   }

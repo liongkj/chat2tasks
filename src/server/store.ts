@@ -61,6 +61,14 @@ const ValueRow = z.object({ value: z.string() });
 const IdRow = z.object({ id: z.string() });
 const RefRow = z.object({ message_id: z.string() });
 const SeenRow = z.object({ id: z.string(), digest: z.string() });
+const ChatJobRow = z.object({
+  chat_id: z.string(),
+  due: z.number(),
+  first: z.number(),
+  generation: z.number(),
+  reconcile: z.number(),
+  manual: z.number(),
+});
 const legacySchema = z.object({
   session_id: z.string().optional(),
   chat_id: z.string().optional(),
@@ -415,18 +423,53 @@ export class Store {
     return this.db
       .prepare('SELECT * FROM chat_jobs ORDER BY due')
       .all()
-      .map((row) =>
-        z
-          .object({
-            chat_id: z.string(),
-            due: z.number(),
-            first: z.number(),
-            generation: z.number(),
-            reconcile: z.number(),
-            manual: z.number(),
-          })
-          .parse(row),
+      .map((row) => ChatJobRow.parse(row));
+  }
+  suspendMoveJobs() {
+    const saved = z.array(ChatJobRow).parse(this.metaValue('move_pending_jobs') ?? []);
+    const pending = new Map(saved.map((job) => [job.chat_id, job]));
+    for (const job of this.jobs()) {
+      const previous = pending.get(job.chat_id);
+      pending.set(
+        job.chat_id,
+        previous
+          ? {
+              chat_id: job.chat_id,
+              due: Math.min(previous.due, job.due),
+              first: Math.min(previous.first, job.first),
+              generation: Math.max(previous.generation, job.generation),
+              reconcile: Math.max(previous.reconcile, job.reconcile),
+              manual: Math.max(previous.manual, job.manual),
+            }
+          : job,
       );
+    }
+    this.transaction(() => {
+      this.setMeta('move_pending_jobs', [...pending.values()]);
+      this.db.exec('DELETE FROM chat_jobs');
+    });
+  }
+  resumeMoveJobs() {
+    const saved = z.array(ChatJobRow).parse(this.metaValue('move_pending_jobs') ?? []);
+    if (!saved.length) return;
+    const active = new Set(
+      this.settings()
+        .chats.filter((chat) => chat.enabled)
+        .map((chat) => chat.id),
+    );
+    const restore = this.db.prepare(`INSERT INTO chat_jobs VALUES(?,?,?,?,?,?)
+      ON CONFLICT(chat_id) DO UPDATE SET due=min(chat_jobs.due,excluded.due),
+      first=min(chat_jobs.first,excluded.first), generation=max(chat_jobs.generation,excluded.generation)+1,
+      reconcile=max(chat_jobs.reconcile,excluded.reconcile), manual=max(chat_jobs.manual,excluded.manual)`);
+    this.transaction(() => {
+      for (const job of saved)
+        if (active.has(job.chat_id))
+          restore.run(job.chat_id, job.due, job.first, job.generation, job.reconcile, job.manual);
+      this.setMeta(
+        'move_pending_jobs',
+        saved.filter((job) => !active.has(job.chat_id)),
+      );
+    });
   }
   saveSettings(update: SettingsUpdate) {
     const allowed = new Set([

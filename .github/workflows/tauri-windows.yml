@@ -143,5 +143,5 @@ jobs:
         run: |
           $bun = (Get-Command bun).Source
           New-NetFirewallRule -DisplayName "Chat2Tasks transfer offline test $([guid]::NewGuid())" -Direction Outbound -Action Block -Program $bun | Out-Null
-          bun test tests/workspace-transfer.test.ts tests/desktop-workspace.test.ts --timeout 30000
+          bun test tests/workspace-transfer.test.ts tests/desktop-workspace.test.ts tests/workspace-ownership.test.ts --timeout 30000
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

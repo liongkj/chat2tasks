@@ -91,6 +91,7 @@ export class Sync {
   reconfigure() {
     for (const chat of this.store.settings().chats.filter((c) => c.enabled))
       this.store.queueChat(chat.id, 0, true, false);
+    this.store.resumeMoveJobs();
     this.notify();
   }
   notify() {
