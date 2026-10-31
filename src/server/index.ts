@@ -48,13 +48,14 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
+const managedServer = process.env.WAWA_MANAGED_SERVER === 'true';
 const openwa = new OpenWA(store);
 const localSearch = new LocalSearch(store.db, () => store.snapshot(), undefined, undefined, {
   workspaceUrl: process.env.LOCAL_SEARCH_MEDIA_OLLAMA_URL,
   load: (message) => openwa.attachment(message),
   prepare: prepareSearchMedia,
 });
-const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true' || managedServer;
 const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
 if (desktop) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
@@ -214,6 +215,7 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.get('/api/setup-mode', () => ({ managedServer }));
 server.get('/api/search/settings', () => localSearch.settings());
 server.post('/api/search/settings', (request) =>
   localSearch.saveSettings(SearchSettingsSchema.parse(request.body)),
@@ -502,8 +504,7 @@ server.post('/api/handoff', async (request, reply) => {
     handoffRunning = false;
   }
 });
-if (process.env.CHAT2TASKS_DESKTOP === 'true')
-  await registerDesktop(server, store, openwa, sync, webhooks);
+if (desktop) await registerDesktop(server, store, openwa, sync, webhooks, managedServer);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
 const startupAbort = new AbortController();
 if (desktop) {

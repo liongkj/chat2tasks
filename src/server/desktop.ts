@@ -63,10 +63,12 @@ export async function configureDesktopGateway(store: Store, env: NodeJS.ProcessE
       ...settings,
       profiles,
       openwaUrl: url,
-      webhookUrl: mode === 'local' ? origin + '/api/webhooks/openwa' : '',
+      webhookUrl:
+        mode === 'local' ? (env.DESKTOP_WEBHOOK_URL ?? origin + '/api/webhooks/openwa') : '',
       chats,
       desktopGateway: {
         ...gateway,
+        ...(env.WAWA_MANAGED_SERVER === 'true' ? { engine } : {}),
         activeMode: mode,
         activeEngine: mode === 'local' ? engine : gateway.activeEngine,
         ...(changed
@@ -90,6 +92,7 @@ export async function registerDesktop(
   openwa: OpenWA,
   sync: Sync,
   webhooks: Webhooks,
+  managedServer = false,
 ) {
   const codex = new CodexLogin();
   server.addHook('onClose', async () => codex.stop());
@@ -110,7 +113,9 @@ export async function registerDesktop(
     imported: store.metaValue('workspace_imported') === true,
     codex: await codex.status(),
   }));
-  server.post('/api/desktop/codex/login', async () => ({ url: await codex.start() }));
+  server.post('/api/desktop/codex/login', async () =>
+    codex.start(managedServer ? 'device' : 'browser'),
+  );
   server.post('/api/desktop/whatsapp/start', async () => {
     let session = await currentSession();
     if (!session)

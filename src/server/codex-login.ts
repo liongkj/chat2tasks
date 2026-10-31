@@ -21,7 +21,7 @@ export class CodexLogin {
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >();
   private nextId = 1;
-  private authUrl: string | null = null;
+  private authInfo: { url: string; userCode?: string } | null = null;
   private failure = false;
 
   async status() {
@@ -65,8 +65,8 @@ export class CodexLogin {
     });
   }
 
-  async start() {
-    if (this.child && this.authUrl) return this.authUrl;
+  async start(mode: 'browser' | 'device' = 'browser') {
+    if (this.child && this.authInfo) return this.authInfo;
     if (this.child) throw new Error('Sign-in is already starting.');
     this.failure = false;
     const child = spawn(process.env.CODEX_BIN ?? 'codex', ['app-server'], {
@@ -108,7 +108,7 @@ export class CodexLogin {
     const ended = () => {
       if (this.child !== child) return;
       this.child = null;
-      this.authUrl = null;
+      this.authInfo = null;
       for (const waiting of this.pending.values())
         waiting.reject(new Error('Codex stopped before sign-in finished.'));
       this.pending.clear();
@@ -120,14 +120,28 @@ export class CodexLogin {
         clientInfo: { name: 'chat2tasks', title: 'Wawa', version: '0.1.0' },
       });
       child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
-      const result = z
-        .object({ type: z.literal('chatgpt'), authUrl: z.url() })
-        .parse(await this.request('account/login/start', { type: 'chatgpt' }));
-      const url = new URL(result.authUrl);
+      const response = await this.request('account/login/start', {
+        type: mode === 'device' ? 'chatgptDeviceCode' : 'chatgpt',
+      });
+      let result: { url: string; userCode?: string };
+      if (mode === 'device') {
+        const value = z
+          .object({
+            type: z.literal('chatgptDeviceCode'),
+            verificationUrl: z.url(),
+            userCode: z.string().min(1).max(128),
+          })
+          .parse(response);
+        result = { url: value.verificationUrl, userCode: value.userCode };
+      } else {
+        const value = z.object({ type: z.literal('chatgpt'), authUrl: z.url() }).parse(response);
+        result = { url: value.authUrl };
+      }
+      const url = new URL(result.url);
       if (url.protocol !== 'https:' || !['auth.openai.com', 'chatgpt.com'].includes(url.hostname))
         throw new Error('Codex returned an unexpected sign-in address.');
-      this.authUrl = result.authUrl;
-      return result.authUrl;
+      this.authInfo = result;
+      return result;
     } catch (error) {
       this.failure = true;
       this.stop();
