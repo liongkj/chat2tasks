@@ -57,7 +57,8 @@ const port = z.coerce
   .min(1)
   .max(65535)
   .parse(process.env.PORT ?? 2786);
-const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const managedServer = process.env.WAWA_MANAGED_SERVER === 'true';
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true' || managedServer;
 const dataDirectory = resolve(process.env.DATA_DIR ?? 'data');
 const workspaceLock = desktop
   ? acquireLock(join(dirname(dataDirectory), 'workspace-server-control'))
@@ -287,6 +288,7 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.get('/api/setup-mode', () => ({ managedServer }));
 server.get('/api/search/settings', () => localSearch.settings());
 server.post('/api/search/settings', (request) =>
   localSearch.saveSettings(SearchSettingsSchema.parse(request.body)),
@@ -599,7 +601,7 @@ if (desktop) {
     store.saveDesktopSharing(request.body);
     return sharingStatus();
   });
-  await registerDesktop(server, store, openwa, sync, webhooks);
+  await registerDesktop(server, store, openwa, sync, webhooks, managedServer);
 }
 if (moveGate && ownership) {
   registerServerMoveRoutes(server, {

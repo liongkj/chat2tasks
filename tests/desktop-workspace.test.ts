@@ -257,3 +257,28 @@ test('switching local WhatsApp connection types keeps their followed chats separ
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a managed server connects its WhatsApp gateway using its private callback and key', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wawa-server-gateway-'));
+  const store = new Store(join(root, 'workspace'));
+  const key = join(root, 'gateway-key');
+  await writeFile(key, 'fictional-server-key');
+  try {
+    await configureDesktopGateway(store, {
+      PUBLIC_ORIGIN: 'https://workspace.example.test:8443',
+      DESKTOP_OPENWA_URL: 'http://openwa:2785',
+      DESKTOP_OPENWA_KEY_FILE: key,
+      DESKTOP_WEBHOOK_URL: 'http://wawa:2786/api/webhooks/openwa',
+      DESKTOP_GATEWAY_ENGINE: 'baileys',
+      WAWA_MANAGED_SERVER: 'true',
+    });
+    assert.equal(store.settings().openwaUrl, 'http://openwa:2785');
+    assert.equal(store.settings().webhookUrl, 'http://wawa:2786/api/webhooks/openwa');
+    assert.equal(store.secret('openwa'), 'fictional-server-key');
+    assert.equal(store.settings().desktopGateway.engine, 'baileys');
+    assert.equal(store.settings().desktopGateway.activeEngine, 'baileys');
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

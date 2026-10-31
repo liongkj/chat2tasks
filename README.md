@@ -18,7 +18,15 @@ To bring an existing workspace, export an encrypted transfer from **Settings →
 
 ## Keep Wawa working while your computer sleeps
 
-Connect the desktop app to an always-on server that runs the Wawa workspace, its model connection, and an OpenWA gateway. This requires a server you manage; it is not a hosted service. Docker Compose is one way to run the workspace, but the gateway is a separate service. You also need to configure secure access, updates, and backups. See the [server setup guide](docs/docker-stack.md). Adding a server with a one-command installer is not available yet.
+Run this on a Linux server you manage:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/liongkj/chat2tasks/main/scripts/install-server.sh | bash
+```
+
+The installer offers to set up Docker and Tailscale if needed, starts a new Wawa workspace and WhatsApp gateway, and connects them privately. It asks you to choose a workspace password and gives you an address to enter in the Mac app. Then link WhatsApp, choose your conversations, and sign in to Codex. The server must stay awake and connected to the internet. You remain responsible for updates and backups; this is not a hosted service. See the [server setup guide](docs/docker-stack.md).
+
+The installer creates a new workspace. To use an existing server workspace, connect the desktop app to that server instead; the installer does not move or replace an existing WhatsApp session.
 
 ## WhatsApp and privacy
 

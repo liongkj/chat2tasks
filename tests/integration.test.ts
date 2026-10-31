@@ -202,6 +202,72 @@ test('changing the workspace password invalidates a desktop session', () => {
   assert.equal(validDesktopSession(cookie, Buffer.alloc(32, 2), 'original-password'), false);
 });
 
+test('a fresh server enables onboarding and connects its gateway without exposing the API key', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'wawa-managed-server-'));
+  const keyFile = join(dir, 'gateway-key');
+  writeFileSync(keyFile, 'fixture-gateway-secret');
+  const gateway = createServer((_request, response) => response.end('{}'));
+  await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve));
+  const gatewayAddress = gateway.address();
+  assert.ok(gatewayAddress && typeof gatewayAddress !== 'string');
+  const reservation = createServer();
+  await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const address = reservation.address();
+  assert.ok(address && typeof address !== 'string');
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const base = `http://127.0.0.1:${address.port}`;
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+    cwd: process.cwd(),
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      WAWA_MANAGED_SERVER: 'true',
+      CHAT2TASKS_DESKTOP: 'false',
+      SYNC_DISABLED: 'true',
+      PORT: String(address.port),
+      PUBLIC_ORIGIN: base,
+      BIND_HOST: '127.0.0.1',
+      APP_PASSWORD: '',
+      CODEX_BIN: join(dir, 'codex-not-installed'),
+      DATA_DIR: join(dir, 'workspace'),
+      DESKTOP_OPENWA_URL: `http://127.0.0.1:${gatewayAddress.port}`,
+      DESKTOP_OPENWA_KEY_FILE: keyFile,
+      DESKTOP_WEBHOOK_URL: 'http://wawa:2786/api/webhooks/openwa',
+      CHAT2TASKS_TAURI_ORIGIN: '',
+      CHAT2TASKS_TAURI_TOKEN: '',
+    },
+  });
+  try {
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      try {
+        response = await fetch(base + '/api/setup-mode');
+        break;
+      } catch {
+        if (child.exitCode !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    assert.ok(response, 'the managed server should start');
+    assert.deepEqual(await response.json(), { managedServer: true });
+    const setup = await (await fetch(base + '/api/desktop/status')).json();
+    assert.equal(z.object({ setupComplete: z.boolean() }).parse(setup).setupComplete, false);
+    const settings = await (await fetch(base + '/api/settings')).text();
+    assert.ok(!settings.includes('fixture-gateway-secret'));
+    assert.match(settings, /http:\/\/wawa:2786\/api\/webhooks\/openwa/);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      child.kill('SIGTERM');
+      await exited;
+    }
+    gateway.closeAllConnections();
+    await new Promise<void>((resolve) => gateway.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('an extra remote workspace address requires an app password even behind another proxy', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'chat2tasks-remote-auth-'));
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
