@@ -39,6 +39,7 @@ Install Tailscale on the server and each client, sign the devices in to the same
    ```
 
    Use the local Compose port if it is not 2786. If Tailscale asks to enable HTTPS, follow its prompt and run the command again. Copy the exact HTTPS origin shown by Tailscale, including the port.
+
 3. Add that origin to `ADDITIONAL_ORIGINS` in the server's private `.env`, keeping any existing comma-separated origins. For example, `ADDITIONAL_ORIGINS=https://your-server.your-tailnet.ts.net:8443`. Keep your existing `PUBLIC_ORIGIN` and recreate the service with `docker compose up -d`. An additional remote origin requires `APP_PASSWORD`, including when another proxy provides authentication.
 4. On each client, open that HTTPS address in a browser. Sign in as `admin` with the server's password. In the Tauri desktop preview, choose **Connect to a server** or **Switch Workspace**, enter the same HTTPS address, and sign in.
 
@@ -46,10 +47,14 @@ The server's Chrome companion can be downloaded and paired separately on each cl
 
 ## Move the server
 
-There is no automatic election or failover. To change which computer hosts the workspace, first stop or pause processing on the old server, take a consistent backup, and transfer the workspace and credentials to the new host. Include the SQLite data, `vault.key`, Codex session, and any separately hosted OpenWA session you need. Start processing only on the new host, then point each client to its new HTTPS address. Do not run two processors against one live SQLite database or leave two copies processing the same conversations. See [workspace transfer](../README.md#macos-app) and [updating an existing stack](docker-stack.md#update-an-existing-stack).
+For a workspace hosted by the desktop preview, keep the old server running and reachable. On the destination computer, open **Switch Workspace → Move an existing workspace here**. Enter the old server's private address and password, then the destination's private HTTPS address, a free local port, and a new workspace password. Configure the private HTTPS route shown in the app before starting the move.
+
+The old server stops accepting work, finishes work already underway, and is fenced before the destination can activate. The destination retains any previous local workspace and connection data as backups. Reconnect WhatsApp and Codex on the destination. Once the move completes, restart Chat2Tasks on the old computer and update the address on the other clients. If interrupted, reopen the old server's app and retry from the destination with the same addresses and port. See [the move design](single-server-design.md) for recovery limits.
+
+This move is for desktop-hosted workspaces. A Docker-hosted workspace still requires the manual backup and restore procedure in [updating an existing stack](docker-stack.md#update-an-existing-stack).
 
 ## Checks and platform limits
 
 GitHub Actions checks the application on Linux, macOS, and Windows. Its Linux job also runs the extension browser journey and builds the Docker image. Separate workflows build desktop previews and make their installers available as workflow artifacts. These checks do not publish a release or automatically update a running server. See [the workflows](../.github/workflows).
 
-The desktop prevents starting the same local workspace twice on one computer. Automatic server discovery, cross-computer ownership handover, and automatic failover are not provided by this preview. The owner must not run copies of the same workspace on separate computers at once.
+The desktop prevents starting the same local workspace twice on one computer, and the planned move fences the old owner before activating the new one. There is no automatic discovery or failover. An ordinary exported copy is a separate workspace and does not fence its source; independently restored or forced copies must not process the same conversations simultaneously.

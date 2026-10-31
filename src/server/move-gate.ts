@@ -7,7 +7,11 @@ export class MoveGate {
 
   constructor(server: FastifyInstance) {
     server.addHook('onRoute', (options) => {
-      if (!options.url.startsWith('/api/') && options.url !== '/mcp') return;
+      if (
+        (!options.url.startsWith('/api/') && options.url !== '/mcp') ||
+        options.url.startsWith('/api/workspace/move/')
+      )
+        return;
       const handler = options.handler;
       const gate = this;
       options.handler = async function (request, reply) {

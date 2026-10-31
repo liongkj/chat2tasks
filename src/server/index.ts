@@ -2,7 +2,7 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import staticFiles from '@fastify/static';
 import { timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -33,9 +33,16 @@ import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
-import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
+import {
+  configureDesktopGateway,
+  registerDesktop,
+  stopManagedGateway,
+  waitForDesktopGateway,
+} from './desktop.js';
 import { RemoteEvents } from './remote-events.js';
 import { WorkspaceOwnership } from './workspace-ownership.js';
+import { MoveGate } from './move-gate.js';
+import { registerServerMoveRoutes } from './server-move-routes.js';
 import {
   desktopSessionCookie,
   desktopSignInCsp,
@@ -54,7 +61,17 @@ const dataDirectory = resolve(process.env.DATA_DIR ?? 'data');
 const workspaceLock = desktop
   ? acquireLock(join(dirname(dataDirectory), 'workspace-server-control'))
   : undefined;
-if (desktop) WorkspaceOwnership.open(join(dataDirectory, '.ownership'), 'server').assertCanRun();
+const moveEnabled = desktop && process.env.CHAT2TASKS_SERVER_MOVE === 'true';
+const moveRecovery = moveEnabled && process.env.CHAT2TASKS_MOVE_RECOVERY === 'true';
+const ownership = desktop
+  ? WorkspaceOwnership.open(join(dataDirectory, '.ownership'), 'server')
+  : undefined;
+if (ownership) {
+  if (moveRecovery) {
+    if (!['preparing', 'fenced'].includes(ownership.role()))
+      throw new Error('This workspace does not need move recovery.');
+  } else ownership.assertCanRun();
+}
 const store = new Store(dataDirectory);
 const localSearch = new LocalSearch(store.db, () => store.snapshot());
 const configuredDesktopSharing: DesktopSharing = desktop
@@ -63,6 +80,7 @@ const configuredDesktopSharing: DesktopSharing = desktop
 const sharingUnavailable =
   configuredDesktopSharing.kind === 'enabled' &&
   process.env.CHAT2TASKS_SHARING_UNAVAILABLE === 'port_in_use';
+const recoveryOnly = sharingUnavailable || moveRecovery;
 const desktopSharing: DesktopSharing = sharingUnavailable
   ? { kind: 'disabled' }
   : configuredDesktopSharing;
@@ -72,9 +90,9 @@ const workspacePassword = sharingPassword || process.env.APP_PASSWORD || '';
 if (desktopSharing.kind === 'enabled' && !workspacePassword)
   throw new Error('The desktop sharing password is missing. Configure sharing again.');
 const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
-if (desktop && !sharingUnavailable) await configureDesktopGateway(store);
+if (desktop && !recoveryOnly) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
-const syncEnabled = !demo && !sharingUnavailable && process.env.SYNC_DISABLED !== 'true';
+const syncEnabled = !demo && !recoveryOnly && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
 const openwa = new OpenWA(store),
   sync = new Sync(store, openwa);
@@ -93,6 +111,9 @@ const server = Fastify({
   bodyLimit: 2_000_000,
   disableRequestLogging: true,
 });
+const moveGate = moveEnabled ? new MoveGate(server) : undefined;
+const startupAbort = new AbortController();
+let starting: Promise<void> = Promise.resolve();
 const additionalOrigins = (process.env.ADDITIONAL_ORIGINS ?? '')
   .split(',')
   .map((value) => value.trim())
@@ -165,10 +186,10 @@ server.addHook('onRequest', async (request, reply) => {
     'Content-Security-Policy':
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   });
-  if (sharingUnavailable && request.routeOptions.url === '/mcp')
-    return reply.code(503).send({ error: 'Sharing needs a different local port.' });
+  if (recoveryOnly && request.routeOptions.url === '/mcp')
+    return reply.code(503).send({ error: 'The workspace is in recovery.' });
   if (
-    sharingUnavailable &&
+    recoveryOnly &&
     request.url.startsWith('/api/') &&
     !(request.method === 'OPTIONS' && request.headers.origin === tauriOrigin)
   ) {
@@ -180,10 +201,12 @@ server.addHook('onRequest', async (request, reply) => {
       '/api/desktop/status',
       '/api/desktop/sharing',
     ].includes(request.url);
-    const permitted =
-      (request.method === 'GET' && readable) ||
-      (request.method === 'POST' && request.url === '/api/desktop/sharing');
-    if (!permitted) return reply.code(503).send({ error: 'Sharing needs a different local port.' });
+    const permitted = moveRecovery
+      ? (request.method === 'GET' && request.url === '/api/health') ||
+        request.url.startsWith('/api/workspace/move/')
+      : (request.method === 'GET' && readable) ||
+        (request.method === 'POST' && request.url === '/api/desktop/sharing');
+    if (!permitted) return reply.code(503).send({ error: 'The workspace is in recovery.' });
   }
   if (request.url === '/api/webhooks/openwa') return;
   if (!allowedHosts.has(request.headers.host ?? ''))
@@ -572,15 +595,39 @@ if (desktop) {
   });
   await registerDesktop(server, store, openwa, sync, webhooks);
 }
+if (moveGate && ownership) {
+  registerServerMoveRoutes(server, {
+    gate: moveGate,
+    ownership,
+    store,
+    stopBackground: async () => {
+      startupAbort.abort();
+      remoteEvents?.stop();
+      sync.stop();
+      const threadJob = organiser.stop();
+      await Promise.all([moveGate.pause(), starting, threadJob]);
+      localSearch.stop();
+      await sync.stopAndWait();
+      if (!remoteGateway && !moveRecovery) await stopManagedGateway();
+    },
+    completed: async (id, targetOrigin) => {
+      const directory = dirname(dataDirectory);
+      const temporary = join(directory, `workspace-target.${id}.tmp`);
+      await writeFile(temporary, JSON.stringify({ kind: 'remote', url: targetOrigin }), {
+        mode: 0o600,
+      });
+      await rename(temporary, join(directory, 'workspace-target.json'));
+    },
+  });
+}
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
-const startupAbort = new AbortController();
-if (desktop && !sharingUnavailable) {
+if (desktop && !recoveryOnly) {
   sync.stop();
   store.status({ syncing: true, phase: 'Starting WhatsApp connection…', error: null });
 }
 await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
 async function startBackground() {
-  if (sharingUnavailable) return;
+  if (recoveryOnly) return;
   if (desktop) {
     try {
       if (!remoteGateway)
@@ -619,7 +666,7 @@ async function startBackground() {
   remoteEvents?.start();
   organiser.start();
 }
-const starting = startBackground();
+starting = startBackground();
 async function shutdown() {
   startupAbort.abort();
   const threadJob = organiser.stop();

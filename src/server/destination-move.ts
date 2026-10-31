@@ -57,6 +57,42 @@ export class DestinationMove {
     return WorkspaceOwnership.open(directory, 'client').identity();
   }
 
+  private async selectLocal(moveId: string) {
+    const paths = this.paths(moveId);
+    await mkdir(paths.operation, { recursive: true, mode: 0o700 });
+    const targetFile = join(paths.operation, 'workspace-target.tmp');
+    await writeFile(targetFile, JSON.stringify({ kind: 'local' }), { mode: 0o600 });
+    await rename(targetFile, join(this.data, 'workspace-target.json'));
+  }
+
+  async recoverCompleted(moveId: string) {
+    const paths = this.paths(moveId);
+    const directory = join(paths.live, '.ownership');
+    if (!existsSync(join(directory, 'ownership.sqlite'))) return null;
+    const owner = WorkspaceOwnership.open(directory, 'client');
+    const completion = owner.completedMove(moveId);
+    if (!completion) return null;
+    owner.activate({ workspace: paths.live, grant: completion.grant });
+    await this.selectLocal(moveId);
+    return completion.acknowledgement;
+  }
+
+  checkAvailable() {
+    const desktopLock = acquireLock(join(this.data, 'workspace-control'));
+    let serverLock: { close(): void } | undefined;
+    try {
+      serverLock = acquireLock(join(this.data, 'workspace-server-control'));
+      const gateway = join(this.data, 'gateway');
+      if (existsSync(gateway)) {
+        const gatewayLock = acquireLock(gateway);
+        gatewayLock.close();
+      }
+    } finally {
+      serverLock?.close();
+      desktopLock.close();
+    }
+  }
+
   async receive(input: {
     grant: unknown;
     trustedSourceKey: string;
@@ -101,10 +137,10 @@ export class DestinationMove {
         }
         await rename(paths.staged, paths.live);
       }
-      WorkspaceOwnership.open(promoted, 'client').activate({ workspace: paths.live, grant });
-      const targetFile = join(paths.operation, 'workspace-target.tmp');
-      await writeFile(targetFile, JSON.stringify({ kind: 'local' }), { mode: 0o600 });
-      await rename(targetFile, join(this.data, 'workspace-target.json'));
+      const promotedOwner = WorkspaceOwnership.open(promoted, 'client');
+      promotedOwner.activate({ workspace: paths.live, grant });
+      await this.selectLocal(grant.payload.move.id);
+      return promotedOwner.activationAck(grant);
     } finally {
       serverLock?.close();
       desktopLock.close();

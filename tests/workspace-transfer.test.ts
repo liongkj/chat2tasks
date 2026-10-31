@@ -11,7 +11,7 @@ import { Sync } from '../src/server/sync.js';
 import Fastify from 'fastify';
 import { DestinationMove } from '../src/server/destination-move.js';
 import { MoveGate } from '../src/server/move-gate.js';
-import { ServerMove } from '../src/server/server-move.js';
+import { registerServerMoveRoutes } from '../src/server/server-move-routes.js';
 import { WorkspaceOwnership } from '../src/server/workspace-ownership.js';
 import { MessageSchema, TaskChangeSchema } from '../src/shared/schema.js';
 import {
@@ -36,6 +36,16 @@ test('a move snapshot includes updates that were already in progress', async () 
   const moveId = randomUUID();
   const app = Fastify();
   const gate = new MoveGate(app);
+  let redirectedTo = '';
+  registerServerMoveRoutes(app, {
+    gate,
+    ownership: source,
+    store,
+    stopBackground: async () => {},
+    completed: async (_id, origin) => {
+      redirectedTo = origin;
+    },
+  });
   let entered!: () => void;
   let finish!: () => void;
   const started = new Promise<void>((resolve) => (entered = resolve));
@@ -49,25 +59,38 @@ test('a move snapshot includes updates that were already in progress', async () 
   try {
     const request = app.inject({ method: 'POST', url: '/api/edit' }).then((response) => response);
     await started;
-    const path = join(root, 'move.c2t');
-    const moving = new ServerMove({
-      gate,
-      ownership: source,
-      store,
-      stopBackground: async () => {},
-    }).begin({
-      move: {
+    const startedMove = await app.inject({
+      method: 'POST',
+      url: '/api/workspace/move/start',
+      payload: {
         id: moveId,
         target: await target.prepare(moveId),
         targetOrigin: 'https://target.example',
       },
-      archivePath: path,
     });
+    assert.equal(startedMove.statusCode, 202);
     assert.equal((await app.inject({ method: 'POST', url: '/api/edit' })).statusCode, 503);
+    assert.equal(
+      (await app.inject({ method: 'GET', url: `/api/workspace/move/${moveId}` })).json().kind,
+      'preparing',
+    );
     finish();
     assert.equal((await request).statusCode, 200);
-    const grant = await moving;
+    let status = (await app.inject({ method: 'GET', url: `/api/workspace/move/${moveId}` })).json();
+    for (let attempt = 0; status.kind === 'preparing' && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      status = (await app.inject({ method: 'GET', url: `/api/workspace/move/${moveId}` })).json();
+    }
+    assert.equal(status.kind, 'ready');
+    const grant = status.grant;
     assert.throws(() => source.assertCanRun(), /move/i);
+    const path = join(root, 'move.c2t');
+    const download = await app.inject({
+      method: 'GET',
+      url: `/api/workspace/move/${moveId}/archive`,
+    });
+    assert.equal(download.statusCode, 200);
+    await writeFile(path, download.rawPayload);
     const receive = {
       grant,
       trustedSourceKey: source.identity().signingPublicKey,
@@ -88,8 +111,22 @@ test('a move snapshot includes updates that were already in progress', async () 
       /move/i,
     );
     await rm(conflictingBackup, { recursive: true });
-    await target.receive(receive);
-    await target.receive(receive);
+    const acknowledgement = await target.receive(receive);
+    assert.equal(await target.receive(receive), acknowledgement);
+    assert.equal(await target.recoverCompleted(moveId), acknowledgement);
+    assert.equal(source.verifyActivation(moveId, acknowledgement), 'https://target.example');
+    assert.throws(() => source.verifyActivation(moveId, 'invalid'), /authorization/i);
+    assert.equal(
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/workspace/move/${moveId}/complete`,
+          payload: { acknowledgement },
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(redirectedTo, 'https://target.example');
     const unrelated = WorkspaceOwnership.open(join(root, 'unrelated-owner'), 'client');
     await assert.rejects(
       target.receive({ ...receive, trustedSourceKey: unrelated.identity().signingPublicKey }),
@@ -123,6 +160,59 @@ test('a move snapshot includes updates that were already in progress', async () 
     );
   } finally {
     finish();
+    await app.close();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an interrupted preparation can retry without restarting the old processor', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'chat2tasks-move-retry-'));
+  const store = new Store(join(root, 'source'));
+  const source = WorkspaceOwnership.open(join(store.dir, '.ownership'), 'server');
+  const target = WorkspaceOwnership.open(join(root, 'target'), 'client');
+  const proposal = {
+    id: randomUUID(),
+    target: target.identity(),
+    targetOrigin: 'https://target.example',
+  };
+  source.prepare(proposal);
+  const directory = join(store.dir, '.server-moves');
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, proposal.id + '.c2t'), 'interrupted snapshot');
+  const app = Fastify();
+  const gate = new MoveGate(app);
+  registerServerMoveRoutes(app, {
+    gate,
+    ownership: source,
+    store,
+    stopBackground: async () => {},
+    completed: async () => {},
+  });
+  try {
+    assert.throws(() => source.assertCanRun(), /move/i);
+    assert.equal(
+      (await app.inject({ method: 'POST', url: '/api/workspace/move/start', payload: proposal }))
+        .statusCode,
+      202,
+    );
+    let status = (
+      await app.inject({ method: 'GET', url: `/api/workspace/move/${proposal.id}` })
+    ).json();
+    for (let attempt = 0; status.kind === 'preparing' && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      status = (
+        await app.inject({ method: 'GET', url: `/api/workspace/move/${proposal.id}` })
+      ).json();
+    }
+    assert.equal(status.kind, 'ready');
+    await target.stage(
+      status.grant,
+      source.identity().signingPublicKey,
+      join(directory, proposal.id + '.c2t'),
+    );
+    assert.throws(() => source.assertCanRun(), /move/i);
+  } finally {
     await app.close();
     store.close();
     await rm(root, { recursive: true, force: true });

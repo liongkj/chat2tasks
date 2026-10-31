@@ -4,11 +4,17 @@ import './workspace-picker.css';
 
 type WorkspaceTarget =
   { kind: 'unconfigured' } | { kind: 'local' } | { kind: 'remote'; url: string };
-type WorkspaceChoice = Exclude<WorkspaceTarget['kind'], 'unconfigured'>;
+type WorkspaceChoice = 'local' | 'remote' | 'move';
+type MoveResult = { ok: true; kind: 'complete' | 'ack_pending' } | { ok: false; error: string };
 
 export function WorkspacePicker() {
   const [kind, setKind] = useState<WorkspaceChoice | null>(null);
   const [address, setAddress] = useState('');
+  const [sourcePassword, setSourcePassword] = useState('');
+  const [targetOrigin, setTargetOrigin] = useState('');
+  const [targetPassword, setTargetPassword] = useState('');
+  const [localPort, setLocalPort] = useState(2786);
+  const [moveResult, setMoveResult] = useState<'complete' | 'ack_pending' | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -28,12 +34,43 @@ export function WorkspacePicker() {
     setSaving(true);
     setError('');
     try {
+      if (kind === 'move') {
+        if (moveResult === 'complete') {
+          await invoke('set_workspace_target', { target: { kind: 'local' } });
+          return;
+        }
+        const result = await invoke<MoveResult>('move_workspace', {
+          sourceOrigin: address.trim(),
+          sourcePassword,
+          targetOrigin: targetOrigin.trim(),
+          localPort,
+          targetPassword,
+        });
+        if (!result.ok) throw new Error(result.error);
+        setMoveResult(result.kind);
+        setSaving(false);
+        return;
+      }
       const target: WorkspaceTarget = kind === 'local' ? { kind } : { kind, url: address };
       await invoke('set_workspace_target', { target });
     } catch (reason) {
-      setError(typeof reason === 'string' ? reason : 'Could not switch workspaces. Try again.');
+      setError(
+        typeof reason === 'string'
+          ? reason
+          : reason instanceof Error
+            ? reason.message
+            : 'Could not switch workspaces. Try again.',
+      );
       setSaving(false);
     }
+  }
+
+  let targetHttpsPort = '';
+  try {
+    const parsed = new URL(targetOrigin);
+    if (parsed.protocol === 'https:') targetHttpsPort = parsed.port || '443';
+  } catch {
+    /* The address is still being entered. */
   }
 
   return (
@@ -66,8 +103,20 @@ export function WorkspacePicker() {
             <small>Connect to a workspace that already runs on another computer.</small>
           </span>
         </label>
+        <label className={kind === 'move' ? 'selected' : ''}>
+          <input
+            type="radio"
+            name="workspace"
+            checked={kind === 'move'}
+            onChange={() => setKind('move')}
+          />
+          <span>
+            <strong>Move an existing workspace here</strong>
+            <small>Make this computer the server and stop the previous server.</small>
+          </span>
+        </label>
       </div>
-      {kind === 'remote' && (
+      {(kind === 'remote' || kind === 'move') && (
         <div className="workspace-picker-address">
           <label htmlFor="workspace-server">Chat2Tasks server address</label>
           <input
@@ -84,12 +133,76 @@ export function WorkspacePicker() {
           </small>
         </div>
       )}
+      {kind === 'move' && (
+        <div className="workspace-picker-address">
+          <label htmlFor="move-source-password">Current workspace password</label>
+          <input
+            id="move-source-password"
+            type="password"
+            autoComplete="current-password"
+            value={sourcePassword}
+            onChange={(event) => setSourcePassword(event.target.value)}
+          />
+          <label htmlFor="move-target-origin">This computer’s private HTTPS address</label>
+          <input
+            id="move-target-origin"
+            type="url"
+            placeholder="https://this-computer.tailnet.ts.net:8443"
+            value={targetOrigin}
+            onChange={(event) => setTargetOrigin(event.target.value)}
+          />
+          <label htmlFor="move-target-port">Local server port</label>
+          <input
+            id="move-target-port"
+            type="number"
+            min={1024}
+            max={65535}
+            value={localPort}
+            onChange={(event) => setLocalPort(Number(event.target.value))}
+          />
+          <label htmlFor="move-target-password">New workspace password</label>
+          <input
+            id="move-target-password"
+            type="password"
+            autoComplete="new-password"
+            value={targetPassword}
+            onChange={(event) => setTargetPassword(event.target.value)}
+          />
+          <small>
+            Use at least 12 characters. Keep both computers on and connected during the move.
+          </small>
+          {targetHttpsPort && (
+            <small>
+              For Tailscale Serve, check that the HTTPS port is free, then run on this computer:{' '}
+              <code>{`tailscale serve --bg --https=${targetHttpsPort} http://127.0.0.1:${localPort}`}</code>
+            </small>
+          )}
+          <small>
+            The previous workspace on this computer is kept as a backup. Reconnect WhatsApp and
+            Codex after the move.
+          </small>
+        </div>
+      )}
       <p className="workspace-picker-note">
-        Choose one server for each workspace. Switching does not move tasks or WhatsApp sessions.
+        {kind === 'move'
+          ? 'The old server stops accepting work before this computer takes over. This is a planned move, not automatic failover.'
+          : 'Choose one server for each workspace. Switching does not move tasks or WhatsApp sessions.'}
       </p>
       {error && (
         <p role="alert" className="workspace-picker-error">
           {error}
+        </p>
+      )}
+      {moveResult === 'ack_pending' && kind === 'move' && (
+        <p role="status">
+          The workspace moved here. The old server is safely stopped but has not confirmed the move.
+          Retry confirmation, or open the workspace here.
+        </p>
+      )}
+      {moveResult === 'complete' && kind === 'move' && (
+        <p role="status">
+          The move is complete. Restart Chat2Tasks on the old computer and point other computers to
+          this computer’s new address. Reconnect WhatsApp and Codex here.
         </p>
       )}
       <div className="workspace-picker-actions">
@@ -100,18 +213,46 @@ export function WorkspacePicker() {
         >
           Cancel
         </button>
+        {moveResult === 'ack_pending' && kind === 'move' && (
+          <button
+            className="button secondary"
+            disabled={saving}
+            onClick={() => void invoke('set_workspace_target', { target: { kind: 'local' } })}
+          >
+            Open workspace here
+          </button>
+        )}
         <button
           className="button primary"
-          disabled={loading || saving || !kind || (kind === 'remote' && !address.trim())}
+          disabled={
+            loading ||
+            saving ||
+            !kind ||
+            ((kind === 'remote' || kind === 'move') && !address.trim()) ||
+            (kind === 'move' &&
+              (!sourcePassword ||
+                !targetOrigin.trim() ||
+                targetPassword.length < 12 ||
+                localPort < 1024 ||
+                localPort > 65535))
+          }
           onClick={() => void connect()}
         >
           {saving
-            ? 'Opening workspace…'
-            : kind === 'remote'
-              ? 'Use server workspace'
-              : kind === 'local'
-                ? 'Use this computer'
-                : 'Choose a workspace'}
+            ? kind === 'move'
+              ? 'Moving workspace…'
+              : 'Opening workspace…'
+            : moveResult === 'complete' && kind === 'move'
+              ? 'Open workspace here'
+              : moveResult === 'ack_pending' && kind === 'move'
+                ? 'Retry confirmation'
+                : kind === 'move'
+                  ? 'Move workspace here'
+                  : kind === 'remote'
+                    ? 'Use server workspace'
+                    : kind === 'local'
+                      ? 'Use this computer'
+                      : 'Choose a workspace'}
         </button>
       </div>
     </main>

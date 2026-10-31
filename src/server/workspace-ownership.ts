@@ -42,6 +42,7 @@ const Origin = z
   }, 'Use an HTTPS target address.')
   .transform((value) => new URL(value).origin);
 const Proposal = z.strictObject({ id: z.uuid(), target: Identity, targetOrigin: Origin });
+export const MoveProposalSchema = Proposal;
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
 const SealedPassphrase = z.strictObject({
   ephemeralPublicKey: z.string().min(1).max(1024),
@@ -151,6 +152,18 @@ function signedBytes(payload: z.infer<typeof Payload>) {
       sealedPassphrase.nonce,
       sealedPassphrase.ciphertext,
       sealedPassphrase.tag,
+    ]),
+  );
+}
+function activationBytes(grant: MoveGrant) {
+  return Buffer.from(
+    JSON.stringify([
+      'chat2tasks-move-activation-v1',
+      grant.payload.move.id,
+      grant.payload.workspaceId,
+      grant.payload.generation,
+      grant.payload.digest,
+      grant.payload.move.targetOrigin,
     ]),
   );
 }
@@ -334,6 +347,34 @@ export class WorkspaceOwnership {
     }
   }
 
+  role() {
+    const db = this.database();
+    try {
+      return this.read(db).state.kind;
+    } finally {
+      db.close();
+    }
+  }
+
+  move(
+    moveId: string,
+  ):
+    | { kind: 'preparing'; proposal: z.infer<typeof Proposal> }
+    | { kind: 'fenced'; proposal: z.infer<typeof Proposal>; grant: MoveGrant } {
+    const db = this.database();
+    try {
+      const journal = this.read(db);
+      const state = journal.state;
+      if ((state.kind !== 'preparing' && state.kind !== 'fenced') || state.move.id !== moveId)
+        throw new Error('No matching server move was found.');
+      return state.kind === 'preparing'
+        ? { kind: 'preparing', proposal: state.move }
+        : { kind: 'fenced', proposal: state.move, grant: this.signedGrant(journal, moveId) };
+    } finally {
+      db.close();
+    }
+  }
+
   assertCanRun() {
     const db = this.database();
     try {
@@ -488,5 +529,56 @@ export class WorkspaceOwnership {
         grant,
       };
     });
+  }
+
+  activationAck(grant: MoveGrant) {
+    const db = this.database();
+    try {
+      const journal = this.read(db);
+      if (
+        journal.state.kind !== 'active_moved' ||
+        JSON.stringify(journal.state.grant) !== JSON.stringify(grant)
+      )
+        throw new Error('The target workspace is not active for this move.');
+      return sign(null, activationBytes(grant), journal.signingPrivateKey).toString('base64url');
+    } finally {
+      db.close();
+    }
+  }
+
+  completedMove(moveId: string) {
+    const db = this.database();
+    try {
+      const journal = this.read(db);
+      if (journal.state.kind !== 'active_moved' || journal.state.grant.payload.move.id !== moveId)
+        return null;
+      return {
+        grant: journal.state.grant,
+        acknowledgement: sign(
+          null,
+          activationBytes(journal.state.grant),
+          journal.signingPrivateKey,
+        ).toString('base64url'),
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  verifyActivation(moveId: string, signature: string) {
+    const grant = this.grant(moveId);
+    let valid = false;
+    try {
+      valid = verify(
+        null,
+        activationBytes(grant),
+        grant.payload.move.target.signingPublicKey,
+        Buffer.from(signature, 'base64url'),
+      );
+    } catch {
+      /* Invalid signatures do not authorize a move. */
+    }
+    if (!valid) throw new Error('The target activation authorization is invalid.');
+    return grant.payload.move.targetOrigin;
   }
 }

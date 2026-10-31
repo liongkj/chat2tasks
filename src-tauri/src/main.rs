@@ -126,6 +126,43 @@ async fn import_workspace(
 }
 
 #[tauri::command]
+async fn move_workspace(
+    app: tauri::AppHandle,
+    source_origin: String,
+    source_password: String,
+    target_origin: String,
+    local_port: u16,
+    target_password: String,
+) -> Result<Value, String> {
+    let resources = app.path().resource_dir().map_err(|_| "Could not find app resources.")?;
+    let data = app.path().app_data_dir().map_err(|_| "Could not find app data.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let bun = resources.join("bun").join(if cfg!(windows) { "bun.exe" } else { "bun" });
+        let mut command = Command::new(bun);
+        command.arg(resources.join("runtime").join("dist").join("desktop").join("move-client.mjs"))
+            .env("C2T_TAURI_DATA", data)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        let mut child = command.spawn().map_err(|_| "Could not start the move.")?;
+        let mut input = child.stdin.take().ok_or("Could not start the move.")?;
+        serde_json::to_writer(&mut input, &json!({
+            "sourceOrigin": source_origin,
+            "sourcePassword": source_password,
+            "targetOrigin": target_origin,
+            "localPort": local_port,
+            "targetPassword": target_password
+        })).map_err(|_| "Could not start the move.")?;
+        drop(input);
+        let result = child.wait_with_output().map_err(|_| "The move stopped unexpectedly.")?;
+        if !result.status.success() || result.stdout.len() > 8192 {
+            return Err("The move stopped unexpectedly. Retry to recover it.".to_string());
+        }
+        serde_json::from_slice(&result.stdout).map_err(|_| "The move returned an invalid response.".to_string())
+    }).await.map_err(|_| "The move stopped unexpectedly.".to_string())?
+}
+
+#[tauri::command]
 fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let parsed = tauri::Url::parse(&url).map_err(|_| "Unexpected sign-in address.")?;
     if parsed.scheme() != "https"
@@ -290,7 +327,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
+        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, move_workspace, open_external, open_workspace_picker, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
             "settings" => {
@@ -366,6 +403,12 @@ fn main() {
             thread::spawn(move || {
                 let ready = runtime.lock().map_err(|_| "The local service stopped.".to_string()).and_then(|mut service| service.read());
                 let result = ready.ok();
+                if result.as_ref().is_some_and(|value| value["type"] == "move-recovery") {
+                    if let Some(window) = handle.get_webview_window("startup") {
+                        let _ = window.eval("document.getElementById('status').textContent = 'This workspace is being moved.'; document.getElementById('detail').textContent = 'Keep this app open while the other computer completes the move. This computer will not process work.';");
+                    }
+                    return;
+                }
                 let Some(value) = result.as_ref().filter(|value| value["type"] == "ready") else {
                     if let Some(window) = handle.get_webview_window("startup") {
                         let message = if result.as_ref().is_some_and(|value| value["code"] == "already_running") {

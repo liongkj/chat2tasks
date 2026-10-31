@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { request as httpRequest } from 'node:http';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, parse, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { createRequire } from 'node:module';
 
 const resources = resolve(process.env.CHAT2TASKS_TAURI_TEST_RESOURCES ?? 'work/tauri');
 const supervisor = resolve(
@@ -36,8 +35,8 @@ async function reportDiagnostics(data, output) {
   if (output) process.stderr.write(`Local test diagnostics:\n${output}\n`);
 }
 
-async function start(demo) {
-  const data = join(root, demo ? 'sample' : 'preview');
+async function start(demo, expectedType = 'ready', selectedData) {
+  const data = selectedData ?? join(root, demo ? 'sample' : 'preview');
   let diagnostics = '';
   const child = spawn(bun, [supervisor], {
     env: {
@@ -46,6 +45,7 @@ async function start(demo) {
       C2T_TAURI_DATA: data,
       C2T_TAURI_DEMO: demo ? '1' : '0',
       C2T_TAURI_TEST_DIAGNOSTICS: '1',
+      C2T_TAURI_ENABLE_MOVES: '1',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -63,7 +63,7 @@ async function start(demo) {
   }
   try {
     const ready = await next();
-    assert.equal(ready.type, 'ready');
+    assert.equal(ready.type, expectedType);
     assert.equal(ready.demo, demo);
     const headers = { Origin: origin, 'X-Chat2Tasks-Session': ready.token };
     return {
@@ -122,6 +122,9 @@ async function finishRejected(child, unexpectedlyReady) {
 let sample;
 let preview;
 let reservation;
+let proxy;
+let targetPreview;
+let portReservation;
 try {
   sample = await start(true);
   let response = await sample.fetch('/api/state');
@@ -343,48 +346,115 @@ try {
     (await remoteCall('/api/state', 'GET', { ...remoteHeaders, Cookie: session })).status,
     200,
   );
-  const data = preview.data;
-  await preview.stop();
-  preview = undefined;
-  const { WorkspaceOwnership } = createRequire(import.meta.url)(
-    join(resources, 'runtime', 'dist', 'desktop', 'ownership.cjs'),
-  );
-  const owner = WorkspaceOwnership.open(join(data, 'workspace', '.ownership'), 'server');
-  const target = WorkspaceOwnership.open(join(root, 'other-computer'), 'client');
-  const move = {
-    id: '3a1dfe2b-e1fc-4f4c-84f1-4b30c01a5a08',
-    target: target.identity(),
-    targetOrigin: 'https://target.example',
-  };
-  owner.prepare(move);
-  owner.fence(move.id, 'a'.repeat(64), 'fictional-secret-for-destination');
-  const retired = spawn(bun, [supervisor], {
-    env: {
-      ...process.env,
-      C2T_TAURI_RESOURCES: resources,
-      C2T_TAURI_DATA: data,
-      C2T_TAURI_DEMO: '0',
-    },
-    stdio: ['pipe', 'pipe', 'ignore'],
+  const targetData = join(root, 'other-computer');
+  portReservation = createServer();
+  await new Promise((resolve) => portReservation.listen(0, '127.0.0.1', resolve));
+  const targetAddress = portReservation.address();
+  assert.ok(targetAddress && typeof targetAddress !== 'string');
+  const targetPort = targetAddress.port;
+  let restartedDuringMove = false;
+  let proxyError;
+  proxy = createHttpServer((incoming, outgoing) => {
+    void (async () => {
+      if (incoming.url?.endsWith('/archive') && !restartedDuringMove) {
+        restartedDuringMove = true;
+        assert.equal((await preview.fetch('/api/state')).status, 503);
+        const gatewayStillRunning = await fetch(
+          `http://127.0.0.1:${preview.ready.gatewayPort}/api/health`,
+        ).then(
+          (value) => value.ok,
+          () => false,
+        );
+        assert.equal(gatewayStillRunning, false, 'the old WhatsApp gateway stops before the move');
+        await preview.stop();
+        preview = await start(false, 'move-recovery');
+        assert.equal(preview.ready.localGatewayRunning, false);
+        assert.equal((await preview.fetch('/api/state')).status, 503);
+      }
+      const forwarded = httpRequest(
+        preview.ready.origin + (incoming.url ?? '/'),
+        {
+          method: incoming.method,
+          headers: { ...incoming.headers, host: 'shared.example:8443', origin: sharingOrigin },
+        },
+        (result) => {
+          outgoing.writeHead(result.statusCode ?? 502, result.headers);
+          result.pipe(outgoing);
+        },
+      );
+      forwarded.once('error', (error) => {
+        proxyError = error;
+        outgoing.destroy(error);
+      });
+      incoming.pipe(forwarded);
+    })().catch((error) => {
+      proxyError = error;
+      outgoing.destroy(error);
+    });
   });
-  const retiredLines = createInterface({ input: retired.stdout });
-  let retiredReady = false;
-  try {
-    const [line] = await once(retiredLines, 'line');
-    const result = JSON.parse(line);
-    retiredReady = result.type === 'ready';
-    assert.equal(result.type, 'error', 'The old server must remain stopped after a move.');
-    assert.equal(result.code, 'move_recovery');
-  } finally {
-    await finishRejected(retired, retiredReady);
-    retiredLines.close();
+  await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  const proxyAddress = proxy.address();
+  assert.ok(proxyAddress && typeof proxyAddress !== 'string');
+  assert.equal(
+    (await fetch(`http://127.0.0.1:${proxyAddress.port}/api/workspace/move/identity`)).status,
+    401,
+    'moving a shared workspace requires its owner password',
+  );
+  async function runMoveClient() {
+    const client = spawn(bun, [join(resources, 'runtime', 'dist', 'desktop', 'move-client.mjs')], {
+      env: { ...process.env, C2T_TAURI_DATA: targetData },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let clientOutput = '';
+    client.stdout.on('data', (chunk) => {
+      clientOutput += chunk.toString();
+    });
+    client.stderr.resume();
+    client.stdin.end(
+      JSON.stringify({
+        sourceOrigin: `http://127.0.0.1:${proxyAddress.port}`,
+        sourcePassword: 'fictional-sharing-password',
+        targetOrigin: 'https://target.example',
+        localPort: targetPort,
+        targetPassword: 'fictional-target-password',
+      }),
+    );
+    const [clientCode] = await once(client, 'close');
+    assert.equal(clientCode, 0);
+    return JSON.parse(clientOutput);
   }
+  assert.deepEqual(await runMoveClient(), {
+    ok: false,
+    error: 'Choose a local server port that is not in use.',
+  });
+  const pending = await readFile(join(targetData, 'server-move-pending.json'), 'utf8');
+  assert.equal(pending.includes('fictional-sharing-password'), false);
+  assert.equal(pending.includes('fictional-target-password'), false);
+  assert.equal((await preview.fetch('/api/state')).status, 200);
+  await new Promise((resolve) => portReservation.close(resolve));
+  if (proxyError) throw proxyError;
+  assert.deepEqual(await runMoveClient(), { ok: true, kind: 'complete' });
+  if (proxyError) throw proxyError;
+  assert.equal(restartedDuringMove, true);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(preview.data, 'workspace-target.json'), 'utf8')),
+    { kind: 'remote', url: 'https://target.example' },
+  );
+  assert.deepEqual(JSON.parse(await readFile(join(targetData, 'workspace-target.json'), 'utf8')), {
+    kind: 'local',
+  });
+  targetPreview = await start(false, 'ready', targetData);
+  assert.equal((await (await targetPreview.fetch('/api/state')).json()).tasks.length, 8);
+  assert.equal((await preview.fetch('/api/state')).status, 503);
   process.stdout.write(
     'Bun sample, workspace transfer, desktop sharing, and ownership restart checks passed.\n',
   );
 } finally {
   await sample?.stop();
   await preview?.stop();
+  await targetPreview?.stop();
+  if (proxy?.listening) await new Promise((resolve) => proxy.close(resolve));
+  if (portReservation?.listening) await new Promise((resolve) => portReservation.close(resolve));
   if (reservation?.listening) await new Promise((resolve) => reservation.close(resolve));
   await rm(root, { recursive: true, force: true });
 }

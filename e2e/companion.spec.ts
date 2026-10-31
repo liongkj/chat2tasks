@@ -142,6 +142,59 @@ test('a new desktop chooses its workspace before starting a local server', async
   }
 });
 
+test('a desktop can move a workspace here and retry confirmation', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 590, height: 730 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      const calls: { command: string; args: unknown }[] = [];
+      let attempts = 0;
+      Object.defineProperty(window, '__workspaceCalls', { value: calls });
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        value: {
+          async invoke(command: string, args: unknown) {
+            calls.push({ command, args });
+            if (command === 'get_workspace_target')
+              return { kind: 'remote', url: 'https://old.example' };
+            if (command === 'move_workspace')
+              return { ok: true, kind: ++attempts === 1 ? 'ack_pending' : 'complete' };
+            if (command === 'set_workspace_target') return null;
+            throw new Error(`Unexpected desktop command: ${command}`);
+          },
+        },
+      });
+    });
+    await page.goto(base + '/?desktop=workspace');
+    await page.getByRole('radio', { name: /Move an existing workspace here/ }).check();
+    await page.getByLabel('Current workspace password').fill('fictional-source-password');
+    await page.getByLabel('This computer’s private HTTPS address').fill('https://new.example:8443');
+    await page.getByLabel('New workspace password').fill('fictional-target-password');
+    await expect(
+      page.getByText('tailscale serve --bg --https=8443 http://127.0.0.1:2786'),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Move workspace here' }).click();
+    await expect(
+      page.getByRole('status').filter({ hasText: 'old server is safely stopped' }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Retry confirmation' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'move is complete' })).toBeVisible();
+    await page.getByRole('button', { name: 'Open workspace here' }).click();
+    await expect
+      .poll(() => page.evaluate(() => Reflect.get(window, '__workspaceCalls')))
+      .toContainEqual({
+        command: 'set_workspace_target',
+        args: { target: { kind: 'local' } },
+      });
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
 test('the desktop owner can configure private sharing and see that a restart is needed', async () => {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
@@ -158,17 +211,17 @@ test('the desktop owner can configure private sharing and see that a restart is 
         value: { unregisterListener() {} },
       });
     }, base);
+    let portInUse = false;
     await page.route('**/api/desktop/status', (route) =>
       route.fulfill({
         json: {
-          setupComplete: true,
+          setupComplete: !portInUse,
           imported: false,
           codex: { installed: true, signedIn: true, signingIn: false, failed: false },
         },
       }),
     );
     let submitted: unknown;
-    let portInUse = false;
     await page.route('**/api/desktop/sharing', async (route) => {
       if (route.request().method() === 'GET') {
         await route.fulfill({
@@ -211,7 +264,7 @@ test('the desktop owner can configure private sharing and see that a restart is 
       page.getByText('tailscale serve --bg --https=8443 http://127.0.0.1:2786'),
     ).toBeVisible();
     portInUse = true;
-    await page.reload();
+    await page.goto(base + '/');
     await expect(
       page.getByText('Sharing is off because the local port is in use.', { exact: false }),
     ).toBeVisible();
