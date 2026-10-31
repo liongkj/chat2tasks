@@ -44,6 +44,8 @@ OpenWA is a separate prerequisite. Point Chat2Tasks at an existing compatible Op
 
 The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGIN=http://127.0.0.1:YOUR_PORT`.
 
+To use one workspace from Windows, macOS, and Linux computers, choose one machine to host it and connect the others as clients. See [one server, multiple computers](docs/cross-platform.md).
+
 ## Tasks and conversations
 
 The sidebar separates **Tasks**, **Actions**, **Questions**, **Reminders**, and **Waiting for**, with an **All items** view. Tasks are substantial work or actionable issues; actions are concrete one-step work; questions are for the workspace owner to answer; reminders are lightweight updates or follow-ups. Waiting for tracks an expected result from someone else, either on its own or linked to work. Marking a wait received does not complete its linked task. Automatically matching a reply requires an outgoing source message; a wait added manually without one can be marked received or reopened by the owner. **Review** holds uncertain categories and possible replies. Choosing **Still waiting** dismisses that particular suggested reply while allowing later or edited replies to be considered. Status and conversation filters narrow item views. Search by title, text or TODO reference; **⌘/Ctrl K** moves to workspace search. **More task actions → Show all items** includes open and completed items together.
