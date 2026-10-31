@@ -1,3 +1,4 @@
+import type { Notify } from '../shared/useNotice.js';
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, Check, Clock3, Plus } from 'lucide-react';
 import {
@@ -31,7 +32,7 @@ export function WaitingView({
   onSelect: (id: string | null) => void;
   onOpenTask: (task: Task) => void;
   onRefresh: () => Promise<void>;
-  notify: (text: string) => void;
+  notify: Notify;
   navigationTrigger: ReactNode;
 }) {
   const [history, setHistory] = useState(false);
@@ -70,7 +71,7 @@ export function WaitingView({
       onSelect(wait.id);
       notify('Added to Waiting for');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save this waiting item.');
+      notify(error instanceof Error ? error.message : 'Could not save this waiting item.', 'error');
     } finally {
       setBusy(false);
     }
@@ -90,7 +91,10 @@ export function WaitingView({
             : 'Waiting item reopened',
       );
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not update this waiting item.');
+      notify(
+        error instanceof Error ? error.message : 'Could not update this waiting item.',
+        'error',
+      );
     } finally {
       setBusy(false);
     }
@@ -103,7 +107,10 @@ export function WaitingView({
       await onRefresh();
       notify(response ? 'Still waiting' : 'Added to Waiting for');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not confirm this waiting item.');
+      notify(
+        error instanceof Error ? error.message : 'Could not confirm this waiting item.',
+        'error',
+      );
     } finally {
       setBusy(false);
     }

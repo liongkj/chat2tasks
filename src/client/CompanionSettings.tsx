@@ -1,3 +1,4 @@
+import type { Notify } from '../shared/useNotice.js';
 import { useEffect, useState } from 'react';
 import { Copy, Download, Link2, LoaderCircle, ShieldCheck, Trash2 } from 'lucide-react';
 import { z } from 'zod';
@@ -5,21 +6,21 @@ import { DevicesSchema, PairCodeSchema } from '../shared/companion.js';
 import { api, appFetch, OkSchema, time } from './api.js';
 import { errorMessage } from './App.js';
 
-export function CompanionSettings({ notify }: { notify: (message: string) => void }) {
+export function CompanionSettings({ notify }: { notify: Notify }) {
   const [devices, setDevices] = useState<z.infer<typeof DevicesSchema>['devices']>([]);
   const [pairing, setPairing] = useState<z.infer<typeof PairCodeSchema> | null>(null),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     void api('extensions', DevicesSchema)
       .then((result) => setDevices(result.devices))
-      .catch((error) => notify(errorMessage(error)));
+      .catch((error) => notify(errorMessage(error), 'error'));
   }, [notify]);
   async function createCode() {
     setBusy(true);
     try {
       setPairing(await api('extensions/pairing', PairCodeSchema, {}));
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setBusy(false);
     }
@@ -28,7 +29,7 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
     try {
       setDevices((await api('extensions', DevicesSchema)).devices);
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     }
   }
   async function downloadExtension() {
@@ -42,7 +43,7 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     }
   }
   return (
@@ -108,7 +109,7 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
                 void navigator.clipboard
                   .writeText(pairing.code)
                   .then(() => notify('Pairing code copied'))
-                  .catch(() => notify('Select the pairing code and copy it manually.'));
+                  .catch(() => notify('Select the pairing code and copy it manually.', 'error'));
               }}
             >
               <Copy size={15} />
@@ -138,7 +139,7 @@ export function CompanionSettings({ notify }: { notify: (message: string) => voi
                     await refresh();
                     notify('Browser access revoked');
                   })
-                  .catch((error) => notify(errorMessage(error)))
+                  .catch((error) => notify(errorMessage(error), 'error'))
                   .finally(() => setBusy(false));
               }}
             >

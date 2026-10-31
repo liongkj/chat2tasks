@@ -1,3 +1,4 @@
+import type { Notify } from '../shared/useNotice.js';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
@@ -62,6 +63,7 @@ export function TaskDetail({
   tab,
   onTabChange,
   onTick,
+  completionConfirmed,
   ticking,
   onSaved,
   onKindChanged,
@@ -76,11 +78,12 @@ export function TaskDetail({
   tab: TaskTab;
   onTabChange: (tab: TaskTab) => void;
   onTick: () => void;
+  completionConfirmed: boolean;
   ticking: boolean;
   onSaved: () => void;
   onKindChanged: (kind: ItemKind) => void;
   onMerged: (evidence: TaskEvidence) => void;
-  notify: (text: string) => void;
+  notify: Notify;
 }) {
   const [remark, setRemark] = useState(task.own_remark);
   const [saving, setSaving] = useState(false);
@@ -110,7 +113,7 @@ export function TaskDetail({
       onSaved();
       notify('Your note is saved');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save your note.');
+      notify(error instanceof Error ? error.message : 'Could not save your note.', 'error');
     } finally {
       setSaving(false);
     }
@@ -123,7 +126,7 @@ export function TaskDetail({
       onKindChanged(kind);
       notify(`Moved to ${itemKindPlural[kind].toLowerCase()}`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not change the category.');
+      notify(error instanceof Error ? error.message : 'Could not change the category.', 'error');
     } finally {
       setKindSaving(false);
     }
@@ -141,7 +144,7 @@ export function TaskDetail({
       download(file.filename, file.content, 'text/markdown');
       notify('Handoff prepared and downloaded');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not prepare the handoff.');
+      notify(error instanceof Error ? error.message : 'Could not prepare the handoff.', 'error');
     } finally {
       setHandoff(false);
     }
@@ -223,7 +226,7 @@ export function TaskDetail({
           await navigator.clipboard.writeText(taskUrl(task.reference, tab));
           notify('Task link copied');
         } catch {
-          notify('Could not copy the task link. Copy the address from your browser.');
+          notify('Could not copy the task link. Copy the address from your browser.', 'error');
         }
       }}
     >
@@ -421,7 +424,10 @@ export function TaskDetail({
                       );
                       notify('Task context copied');
                     } catch {
-                      notify('Clipboard unavailable. Export the workspace from the task menu.');
+                      notify(
+                        'Clipboard unavailable. Export the workspace from the task menu.',
+                        'error',
+                      );
                     }
                   }}
                 >
@@ -492,7 +498,9 @@ export function TaskDetail({
           onClick={onTick}
         >
           {ticking && <LoaderCircle size={15} className="spin" />}
-          {layout === 'desk' && !ticking && <Check size={16} />}
+          {layout === 'desk' && !ticking && (
+            <Check className={completionConfirmed ? 'completion-confirmed' : undefined} size={16} />
+          )}
           {ticking
             ? 'Saving…'
             : task.done

@@ -60,6 +60,8 @@ Choose **Conversations** to read a followed chat's cached messages and linked ta
 
 **Activity** separates the most recent signed message event from the last completed task analysis. These are different from the browser’s connection to the workspace server.
 
+Task completion and new clarification sounds are on by default at 30% volume. Choose **Settings → Attention → Sounds** to change the volume, preview either sound, or turn each one off. The companion has the same controls under **More options → Sound settings**; paired surfaces share the saved preferences and pick up changes on refresh. Sounds play only in the active, visible surface after a successful completion or when a new clarification appears. Browsers may require an interaction with the page before they allow audio.
+
 ## Search across your workspace
 
 Choose **Search** in the sidebar or press **⌘/Ctrl K** to search all saved items and conversation messages. Exact matches work without a model. Related results use the text-only **EmbeddingGemma 2** model, run with Ollama on the workspace host. The first search builds a local index; later searches reuse it. The search includes saved image readings when available, but does not inspect image or audio files itself. Results are suggestions and may miss a match or include unrelated material.

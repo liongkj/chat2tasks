@@ -1,6 +1,7 @@
 import { useInputModality } from '../../src/shared/useInputModality.js';
 import { isUpcoming, itemKindLabel, matchesTaskQuery } from '../../src/shared/tasks.js';
 import { Menu } from '@base-ui/react/menu';
+import { Dialog } from '@base-ui/react/dialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -18,7 +19,9 @@ import {
   Unplug,
   Circle,
   CircleCheck,
-  ChevronUp,
+  Info,
+  TriangleAlert,
+  Volume2,
   MoreHorizontal,
   SlidersHorizontal,
   X,
@@ -39,17 +42,24 @@ import {
 } from '../../src/shared/companion.js';
 import {
   ItemKindSchema,
+  SoundPreferencesSchema,
   WaitEvidenceSchema,
+  defaultSoundPreferences,
   type ItemKind,
   type Task,
   type Wait,
 } from '../../src/shared/schema.js';
 import { RefreshGate } from '../../src/shared/refresh.js';
+import { captureCompletedRow } from '../../src/shared/motion.js';
+import { playSound, useSoundActivation } from '../../src/shared/sound.js';
+import { SoundPreferencesEditor } from '../../src/shared/SoundPreferences.js';
+import { useNotice } from '../../src/shared/useNotice.js';
 import { ApiError, OkSchema, pair, request } from './api.js';
 import './style.css';
 
 type Session =
   { kind: 'loading' } | { kind: 'unpaired' } | { kind: 'paired'; connection: Connection };
+type PanelNotice = { text: string; kind: 'info' | 'error' | 'paired' | 'completion' };
 const message = (error: unknown) =>
   error instanceof TypeError
     ? 'Cannot reach your server. Check its address and your network connection.'
@@ -76,6 +86,7 @@ const completionAction = (task: Task) =>
             : 'Mark Complete';
 function App() {
   useInputModality();
+  useSoundActivation();
   const [session, setSession] = useState<Session>({ kind: 'loading' });
   const [serverUrl, setServerUrl] = useState('http://127.0.0.1:2786'),
     [code, setCode] = useState(''),
@@ -83,11 +94,24 @@ function App() {
   const [state, setState] = useState<CompanionState | null>(null),
     [detail, setDetail] = useState<z.infer<typeof CompanionTaskSchema> | null>(null),
     [waitDetail, setWaitDetail] = useState<z.infer<typeof WaitEvidenceSchema> | null>(null);
-  const [notice, setNotice] = useState(''),
-    [busy, setBusy] = useState(false),
+  const {
+    notice,
+    exiting: noticeExiting,
+    show: showNotice,
+    dismiss: dismissNotice,
+  } = useNotice<PanelNotice>();
+  const setNotice = useCallback(
+    (text: string, kind: PanelNotice['kind'] = 'info') => {
+      if (text) showNotice({ text, kind });
+      else dismissNotice();
+    },
+    [showNotice, dismissNotice],
+  );
+  const [busy, setBusy] = useState(false),
     [tab, setTab] = useState<'tasks' | 'chats' | 'capture'>('tasks');
   const [draft, setDraft] = useState<CaptureDraft | null>(null),
-    [captureChat, setCaptureChat] = useState('');
+    [captureChat, setCaptureChat] = useState(''),
+    [captureSaved, setCaptureSaved] = useState('');
   const [chatFilter, setChatFilter] = useState(''),
     [showDone, setShowDone] = useState(false),
     [kindFilter, setKindFilter] = useState<
@@ -95,10 +119,25 @@ function App() {
     >('all'),
     [search, setSearch] = useState('');
   const [showOptions, setShowOptions] = useState(false),
-    [showFilters, setShowFilters] = useState(false);
+    [showFilters, setShowFilters] = useState(false),
+    [showSoundSettings, setShowSoundSettings] = useState(false);
+  const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null);
+  const [celebrationScope, setCelebrationScope] = useState<string | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const visibleRef = useRef<{ scope: string; taskIds: string[]; waits: number }>({
+    scope: '',
+    taskIds: [],
+    waits: 0,
+  });
   const refreshGate = useRef(new RefreshGate());
   const pendingTicks = useRef(new Map<string, boolean>());
   const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!celebrationScope) return;
+    const timer = setTimeout(() => setCelebrationScope(null), 240);
+    return () => clearTimeout(timer);
+  }, [celebrationScope]);
   const connection = session.kind === 'paired' ? session.connection : null;
   const unpair = useCallback(async () => {
     refreshGate.current.invalidate();
@@ -109,6 +148,7 @@ function App() {
     setState(null);
     setDetail(null);
     setWaitDetail(null);
+    setCaptureSaved('');
   }, []);
   useEffect(() => {
     void chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
@@ -126,23 +166,24 @@ function App() {
       const parsed = CaptureDraftSchema.safeParse(value);
       if (parsed.success) {
         setDraft(parsed.data);
+        setCaptureSaved('');
         setDetail(null);
         setTab('capture');
       }
     }
     void chrome.storage.session.get(['captureDraft', 'captureError']).then((values) => {
       loadDraft(values.captureDraft);
-      if (typeof values.captureError === 'string') setNotice(values.captureError);
+      if (typeof values.captureError === 'string') setNotice(values.captureError, 'error');
     });
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area !== 'session') return;
       if (changes.captureDraft?.newValue) loadDraft(changes.captureDraft.newValue);
       if (typeof changes.captureError?.newValue === 'string')
-        setNotice(changes.captureError.newValue);
+        setNotice(changes.captureError.newValue, 'error');
     };
     chrome.storage.onChanged.addListener(changed);
     return () => chrome.storage.onChanged.removeListener(changed);
-  }, []);
+  }, [setNotice]);
   const refresh = useCallback(async () => {
     if (!connection) return;
     const ticket = refreshGate.current.start();
@@ -158,10 +199,10 @@ function App() {
       });
     } catch (error) {
       if (!refreshGate.current.accept(ticket)) return;
-      setNotice(message(error));
+      setNotice(message(error), 'error');
       if (error instanceof ApiError && error.status === 401) await unpair();
     }
-  }, [connection, unpair]);
+  }, [connection, unpair, setNotice]);
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => {
@@ -185,9 +226,9 @@ function App() {
       await chrome.storage.local.set({ connection: next, serverUrl: url });
       setSession({ kind: 'paired', connection: next });
       setCode('');
-      setNotice('Connected to your workspace.');
+      setNotice('Connected to your workspace.', 'paired');
     } catch (error) {
-      setNotice(message(error));
+      setNotice(message(error), 'error');
     } finally {
       setBusy(false);
     }
@@ -199,7 +240,7 @@ function App() {
     try {
       await work();
     } catch (error) {
-      setNotice(message(error));
+      setNotice(message(error), 'error');
       if (error instanceof ApiError && error.status === 401) await unpair();
     } finally {
       setBusy(false);
@@ -217,15 +258,16 @@ function App() {
         });
         if (!result.ok)
           throw new Error('This occurrence has already changed. Refresh and try again.');
+        void playSound('completion', stateRef.current?.sound ?? defaultSoundPreferences);
         pendingTicks.current.delete(task.id);
         await refresh();
         if (detail?.task.id === task.id)
           setDetail(
             await request(connection, 'tasks/' + encodeURIComponent(task.id), CompanionTaskSchema),
           );
-        setNotice('Occurrence completed.');
+        setNotice('Occurrence completed.', 'completion');
       } catch (error) {
-        setNotice(message(error));
+        setNotice(message(error), 'error');
       } finally {
         pendingTicks.current.delete(task.id);
         setPendingTickIds(new Set(pendingTicks.current.keys()));
@@ -233,6 +275,18 @@ function App() {
       return;
     }
     const done = !task.done;
+    const scope = visibleRef.current.scope;
+    const wasLastVisible =
+      done &&
+      tab === 'tasks' &&
+      !showDone &&
+      !search &&
+      pendingTicks.current.size === 0 &&
+      visibleRef.current.taskIds.length === 1 &&
+      visibleRef.current.waits === 0 &&
+      tasks[0]?.id === task.id;
+    const row = document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(task.id)}"]`);
+    const finishRow = captureCompletedRow(row);
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
     refreshGate.current.invalidate();
@@ -251,6 +305,27 @@ function App() {
     try {
       await request(connection, 'tick', OkSchema, { id: task.id, done });
       refreshGate.current.invalidate();
+      if (done) {
+        finishRow();
+        void playSound('completion', stateRef.current?.sound ?? defaultSoundPreferences);
+        setNotice(
+          task.kind === 'question'
+            ? 'Question answered.'
+            : task.kind === 'reminder'
+              ? 'Reminder dismissed.'
+              : task.kind === 'event' || task.kind === 'reference'
+                ? 'Item archived.'
+                : 'Task completed.',
+          'completion',
+        );
+        if (
+          wasLastVisible &&
+          visibleRef.current.scope === scope &&
+          visibleRef.current.waits === 0 &&
+          visibleRef.current.taskIds.every((id) => id === task.id)
+        )
+          setCelebrationScope(scope);
+      }
     } catch (error) {
       refreshGate.current.invalidate();
       setState((previous) =>
@@ -268,7 +343,7 @@ function App() {
           ? { ...previous, task: { ...previous.task, done: task.done } }
           : previous,
       );
-      setNotice(message(error));
+      setNotice(message(error), 'error');
       if (error instanceof ApiError && error.status === 401) await unpair();
       else void refresh();
     } finally {
@@ -358,6 +433,12 @@ function App() {
             .toLowerCase()
             .includes(search.toLowerCase())),
     ) ?? [];
+  const visibleScope = JSON.stringify([tab, showDone, kindFilter, chatFilter, search]);
+  visibleRef.current = {
+    scope: visibleScope,
+    taskIds: tasks.map((task) => task.id),
+    waits: waits.length,
+  };
   const destinationChat =
     state?.chats.find((chat) => chat.id === captureChat && chat.enabled)?.id ??
     state?.chats.find((chat) => chat.enabled)?.id ??
@@ -377,13 +458,56 @@ function App() {
         )}
       </header>
       {notice && (
-        <div className="notice" role="status">
-          <span>{notice}</span>
+        <div
+          className={`notice ${notice.kind}`}
+          data-exiting={noticeExiting}
+          role={noticeExiting ? undefined : 'status'}
+        >
+          {notice.kind === 'error' ? (
+            <TriangleAlert size={16} />
+          ) : notice.kind === 'info' ? (
+            <Info size={16} />
+          ) : (
+            <CircleCheck
+              className={notice.kind === 'paired' ? 'pairing-confirmed' : 'completion-confirmed'}
+              size={16}
+            />
+          )}
+          <span>{notice.text}</span>
           <button className="icon" aria-label="Dismiss notification" onClick={() => setNotice('')}>
             <X size={14} />
           </button>
         </div>
       )}
+      <Dialog.Root open={showSoundSettings} onOpenChange={setShowSoundSettings}>
+        <Dialog.Portal>
+          <Dialog.Backdrop className="sound-dialog-backdrop modal-backdrop" />
+          <Dialog.Viewport className="sound-dialog-viewport">
+            <Dialog.Popup className="sound-dialog modal">
+              <Dialog.Title>Sound settings</Dialog.Title>
+              <Dialog.Description>
+                These settings apply to this workspace and its paired companion.
+              </Dialog.Description>
+              <SoundPreferencesEditor
+                value={state?.sound ?? defaultSoundPreferences}
+                onSave={async (value) => {
+                  if (!connection)
+                    throw new Error('Connect to your workspace to save sound settings.');
+                  const sound = await request(
+                    connection,
+                    'sound-preferences',
+                    SoundPreferencesSchema,
+                    value,
+                  );
+                  refreshGate.current.invalidate();
+                  setState((current) => (current ? { ...current, sound } : current));
+                }}
+              />
+              <Dialog.Close className="secondary sound-dialog-close">Close</Dialog.Close>
+            </Dialog.Popup>
+          </Dialog.Viewport>
+        </Dialog.Portal>
+      </Dialog.Root>
       {session.kind === 'loading' ? (
         <div className="empty">
           <LoaderCircle className="spin" />
@@ -556,7 +680,12 @@ function App() {
                 <div className="empty">Connecting to your workspace…</div>
               ) : !tasks.length && !waits.length ? (
                 <div className="empty">
-                  <CheckCheck size={28} />
+                  <CheckCheck
+                    className={
+                      celebrationScope === visibleScope ? 'completion-celebration' : undefined
+                    }
+                    size={28}
+                  />
                   <h2>{showDone ? 'No completed items here' : 'You’re all caught up'}</h2>
                   <p>
                     {search
@@ -686,7 +815,11 @@ function App() {
                     </li>
                   ))}
                   {tasks.map((task) => (
-                    <li key={task.id} className={detail?.task.id === task.id ? 'expanded' : ''}>
+                    <li
+                      key={task.id}
+                      data-task-id={task.id}
+                      className={detail?.task.id === task.id ? 'expanded' : ''}
+                    >
                       <div className="task-row">
                         <button
                           className="completion"
@@ -706,14 +839,20 @@ function App() {
                                 setDetail(null);
                                 return;
                               }
-                              if (connection)
-                                setDetail(
-                                  await request(
-                                    connection,
-                                    'tasks/' + encodeURIComponent(task.id),
-                                    CompanionTaskSchema,
-                                  ),
-                                );
+                              if (connection) {
+                                setLoadingTaskId(task.id);
+                                try {
+                                  setDetail(
+                                    await request(
+                                      connection,
+                                      'tasks/' + encodeURIComponent(task.id),
+                                      CompanionTaskSchema,
+                                    ),
+                                  );
+                                } finally {
+                                  setLoadingTaskId(null);
+                                }
+                              }
                             })
                           }
                         >
@@ -734,20 +873,28 @@ function App() {
                             <small>Needs a detail</small>
                           ) : null}
                         </button>
-                        {detail?.task.id === task.id ? (
-                          <button
-                            className="icon"
-                            aria-label="Collapse task"
-                            onClick={() => setDetail(null)}
-                          >
-                            <ChevronUp size={16} />
-                          </button>
-                        ) : (
-                          <ChevronRight size={15} />
-                        )}
+                        <span className="task-chevron" data-expanded={detail?.task.id === task.id}>
+                          {loadingTaskId === task.id ? (
+                            <LoaderCircle
+                              className="spin"
+                              size={15}
+                              aria-label="Loading task details"
+                            />
+                          ) : detail?.task.id === task.id ? (
+                            <button
+                              className="icon"
+                              aria-label="Collapse task"
+                              onClick={() => setDetail(null)}
+                            >
+                              <ChevronRight size={16} />
+                            </button>
+                          ) : (
+                            <ChevronRight size={15} />
+                          )}
+                        </span>
                       </div>
                       {detail?.task.id === task.id && (
-                        <div className="task-expansion">
+                        <div className="task-expansion task-expansion-arrived">
                           <label>
                             Category
                             <select
@@ -933,13 +1080,13 @@ function App() {
                         chatId: destinationChat,
                       });
                       await chrome.storage.session.remove('captureDraft');
-                      setDraft(null);
-                      await refresh();
-                      setNotice(
+                      setCaptureSaved(
                         result.queued
                           ? 'Selection saved. Your server will debounce and decide when to analyze it.'
                           : 'Selection saved. Choose Run now when you’re ready to analyze.',
                       );
+                      setDraft(null);
+                      await refresh();
                     });
                   }}
                 >
@@ -992,6 +1139,11 @@ function App() {
                     Discard selection
                   </button>
                 </form>
+              ) : captureSaved ? (
+                <div className="capture-confirmation" role="status">
+                  <CircleCheck size={22} />
+                  <p>{captureSaved}</p>
+                </div>
               ) : (
                 <div className="empty">
                   <MessageSquare size={30} />
@@ -1069,6 +1221,14 @@ function App() {
                     </Menu.Item>
                     <Menu.Item onClick={openWorkspace}>
                       <ArrowUpRight size={16} /> Open workspace
+                    </Menu.Item>
+                    <Menu.Item
+                      onClick={() => {
+                        setShowOptions(false);
+                        setShowSoundSettings(true);
+                      }}
+                    >
+                      <Volume2 size={16} /> Sound settings
                     </Menu.Item>
                     <Menu.Item onClick={() => void action(disconnect)}>
                       <Unplug size={16} /> Disconnect

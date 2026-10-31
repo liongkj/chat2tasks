@@ -1,3 +1,4 @@
+import type { Notify } from '../shared/useNotice.js';
 import { useState } from 'react';
 import { Link2, LoaderCircle } from 'lucide-react';
 import { TaskEvidenceSchema, type Task, type TaskEvidence } from '../shared/schema.js';
@@ -14,7 +15,7 @@ export function TaskMerge({
   tasks: Task[];
   dirty: boolean;
   onMerged: (evidence: TaskEvidence) => void;
-  notify: (message: string) => void;
+  notify: Notify;
 }) {
   const [open, setOpen] = useState(false);
   const [targetId, setTargetId] = useState('');
@@ -37,7 +38,10 @@ export function TaskMerge({
       onMerged(result);
       notify(task.reference + ' merged into ' + result.task.reference);
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not merge these TODOs. Try again.');
+      notify(
+        error instanceof Error ? error.message : 'Could not merge these TODOs. Try again.',
+        'error',
+      );
     } finally {
       setMerging(false);
     }
