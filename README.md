@@ -46,7 +46,7 @@ The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGI
 
 ## Tasks and conversations
 
-The sidebar separates **Tasks**, **Actions**, **Questions**, **Reminders**, and **Waiting for**, with an **All items** view. Tasks are substantial work or actionable issues; actions are concrete one-step work; questions are for the workspace owner to answer; reminders are lightweight updates or follow-ups. Waiting for tracks an expected result from someone else, either on its own or linked to work. Marking a wait received does not complete its linked task. Automatically matching a reply requires an outgoing source message; a wait added manually without one can be marked received or reopened by the owner. **Review** holds uncertain categories and possible replies. Choosing **Still waiting** dismisses that particular suggested reply while allowing later or edited replies to be considered. Status and conversation filters narrow item views. Search by title, text or TODO reference; **⌘/Ctrl K** moves to workspace search. **More task actions → Show all items** includes open and completed items together.
+The sidebar separates **Tasks**, **Actions**, **Questions**, **Reminders**, and **Waiting for**, with an **All items** view. Tasks are substantial work or actionable issues; actions are concrete one-step work; questions are for the workspace owner to answer; reminders are lightweight updates or follow-ups. Waiting for tracks an expected result from someone else, either on its own or linked to work. Marking a wait received does not complete its linked task. Automatically matching a reply requires an outgoing source message; a wait added manually without one can be marked received or reopened by the owner. **Review** holds uncertain categories and possible replies. Choosing **Still waiting** dismisses that particular suggested reply while allowing later or edited replies to be considered. Status and conversation filters narrow item views. Search by title, text or TODO reference; **⌘/Ctrl K** opens Spotlight. **More task actions → Show all items** includes open and completed items together.
 
 Use **Organize** on an item to set a project, area of responsibility, date, or Someday/Maybe commitment. Tasks and actions can repeat daily, weekly, monthly, or yearly; completing one occurrence advances the next date without completing the series. **Upcoming** shows active items with owner-entered dates and repeating work; past dated events leave that view. Source-stated times remain in the item text until you add a structured date. Reminders and dates appear in the app only; the app sends no notifications or messages.
 
@@ -62,24 +62,26 @@ Choose **Conversations** to read a followed chat's cached messages and linked ta
 
 Task completion and new clarification sounds are on by default at 30% volume. Choose **Settings → Attention → Sounds** to change the volume, preview either sound, or turn each one off. The companion has the same controls under **More options → Sound settings**; paired surfaces share the saved preferences and pick up changes on refresh. Sounds play only in the active, visible surface after a successful completion or when a new clarification appears. Browsers may require an interaction with the page before they allow audio.
 
-## Search across your workspace
+## Spotlight: search across your workspace
 
-Choose **Search** in the sidebar or press **⌘/Ctrl K** to search all saved items and conversation messages. Exact matches work without a model. Related results use the text-only **EmbeddingGemma 2** model, run with Ollama on the workspace host. The first search builds a local index; later searches reuse it. The search includes saved image readings when available, but does not inspect image or audio files itself. Results are suggestions and may miss a match or include unrelated material.
+Choose **Spotlight** in the sidebar or press **⌘/Ctrl K** to search saved items and conversation messages. Exact matches work without a model. Related results use **EmbeddingGemma 2** through Ollama, including the contents of available image, audio, and video attachments. Audio is indexed in 30-second segments; video uses frames sampled every five seconds and its audio, when present. Indexing runs in the background and later searches reuse the index. Results are suggestions and may miss a match or include unrelated material; embeddings do not produce a transcript.
 
 On a Mac or a directly hosted workspace, [install and start Ollama](https://ollama.com/download), then download the model once:
 
 ```sh
 ollama pull embeddinggemma-2:270m-q8_0-text
+ollama pull embeddinggemma-2:740m-q8_0
 ```
 
-For Docker, an optional local CPU service is included in `compose.search.yml`. It publishes no host port and does not replace the existing Chat2Tasks image. Apply it alongside your existing Compose files, then download the model into its persistent volume:
+For Docker, optional local CPU workers are included in `compose.search.yml`. They publish no host ports and do not replace the existing Chat2Tasks image. Separate text and media workers keep text search responsive during media indexing, while sharing one model volume. Apply them alongside your existing Compose files, then download the models into that volume:
 
 ```sh
 docker compose -f compose.yml -f compose.search.yml up -d --build
 docker compose -f compose.yml -f compose.search.yml exec search-model ollama pull embeddinggemma-2:270m-q8_0-text
+docker compose -f compose.yml -f compose.search.yml exec search-model ollama pull embeddinggemma-2:740m-q8_0
 ```
 
-The Ollama image is several gigabytes; the text model is about 304 MB. The service works on CPU, though initial indexing may take longer than with a GPU. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in the search screen and enter its address. Search queries and indexed text are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
+The Ollama image is several gigabytes; the full model is about 1.3 GB and shares its text weights with the smaller model. The service works on CPU, though first-time media indexing can take longer than with a GPU. Audio and video indexing requires FFmpeg and FFprobe on the workspace machine; they are included in the Docker image. Spotlight can index attachments already cached locally or still available from the configured WhatsApp gateway, up to 20 MB per image and 100 MB per audio or video attachment. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in Spotlight and enter its address. Search queries, indexed text, and media are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. A single Ollama server can be slower to answer text searches while it indexes media. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
 
 Search does not use your configured task-generation or decision models. Your separate task-generation and decision-provider settings still determine where task-processing evidence is sent. Search currently covers the full workspace, independent of the item filters and the Chrome companion's task filter.
 

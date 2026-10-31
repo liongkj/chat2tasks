@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Chat2Tasks Preview",
+  "productName": "Wawa",
   "version": "0.1.0",
   "identifier": "com.chat2tasks.tauri-preview",
   "build": { "frontendDist": "../dist/client" },

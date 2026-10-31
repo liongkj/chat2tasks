@@ -185,7 +185,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
           <span>
             <Check size={17} />
           </span>{' '}
-          chat2tasks
+          wawa
         </div>
         <p className="onboarding-eyebrow">YOUR WORKSPACE</p>
         <nav aria-label="Setup progress">
@@ -206,7 +206,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
       </aside>
       <div className="onboarding-main">
         <div className="onboarding-top">
-          <span>SET UP CHAT2TASKS</span>
+          <span>SET UP WAWA</span>
           <span>
             {step + 1} / {steps.length}
           </span>
@@ -218,7 +218,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                 <Sparkles size={23} />
               </div>
               <p className="onboarding-kicker">A LITTLE MORE SPACE TO THINK</p>
-              <h1>Welcome to Chat2Tasks.</h1>
+              <h1>Welcome to Wawa.</h1>
               <p className="onboarding-lede">
                 Turn the things that need your attention into a calmer place to work.
               </p>
@@ -369,7 +369,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
               <p className="onboarding-kicker">CHOOSE WHAT TO FOLLOW</p>
               <h1>Make it yours.</h1>
               <p className="onboarding-lede">
-                Choose the conversations Chat2Tasks should process. You can change this later.
+                Choose the conversations Wawa should process. You can change this later.
               </p>
               <p className="onboarding-hint">
                 New messages and any history available to this connection can be processed after
@@ -432,7 +432,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
               <p className="onboarding-kicker">CONNECT YOUR AI</p>
               <h1>Sign in to Codex.</h1>
               <p className="onboarding-lede">
-                Chat2Tasks uses the Codex CLI on this computer. Sign in with your ChatGPT account to
+                Wawa uses the Codex CLI on this computer. Sign in with your ChatGPT account to
                 connect it.
               </p>
               {status?.codex.signedIn ? (
@@ -479,7 +479,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
               )}
               {status && !status.codex.installed && (
                 <p className="onboarding-hint">
-                  The bundled Codex CLI could not be found. Reinstall Chat2Tasks or contact support.
+                  The bundled Codex CLI could not be found. Reinstall Wawa or contact support.
                 </p>
               )}
               {status?.codex.signedIn && (

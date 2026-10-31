@@ -35,7 +35,7 @@ export function WorkspacePicker() {
 
   return (
     <main className="workspace-picker">
-      <p className="workspace-picker-eyebrow">CHAT2TASKS WORKSPACE</p>
+      <p className="workspace-picker-eyebrow">WAWA WORKSPACE</p>
       <h1>Where should work happen?</h1>
       <p>Choose the workspace you want to use. You can switch again at any time.</p>
       <div className="workspace-picker-options" role="radiogroup" aria-label="Workspace location">
@@ -66,7 +66,7 @@ export function WorkspacePicker() {
       </div>
       {kind === 'remote' && (
         <div className="workspace-picker-address">
-          <label htmlFor="workspace-server">Chat2Tasks server address</label>
+          <label htmlFor="workspace-server">Wawa server address</label>
           <input
             id="workspace-server"
             type="url"
@@ -77,7 +77,7 @@ export function WorkspacePicker() {
           />
           <small>
             Use a private Tailscale HTTPS address or another secure address for your running
-            Chat2Tasks workspace.
+            Wawa workspace.
           </small>
         </div>
       )}

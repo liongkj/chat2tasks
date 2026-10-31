@@ -45,6 +45,7 @@ export function SearchView({
   const [serverUrl, setServerUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
+  const consumedRetry = useRef(0);
   const sourceRevision = useMemo(() => JSON.stringify([tasks, messages]), [tasks, messages]);
 
   useEffect(() => {
@@ -70,14 +71,17 @@ export function SearchView({
     setError('');
     const run = async (first: boolean) => {
       try {
+        const retryNow = first && retry > consumedRetry.current;
+        if (retryNow) consumedRetry.current = retry;
         const found = await api('search', SearchResponseSchema, {
           query: query.trim(),
-          retry: first && retry > 0,
+          retry: retryNow,
         });
         if (cancelled) return;
         setResult(found);
         setBusy(false);
-        if (found.status.kind === 'indexing') timer = setTimeout(() => void run(false), 1000);
+        if (found.status.kind === 'indexing' || found.media?.kind === 'indexing')
+          timer = setTimeout(() => void run(false), 1000);
       } catch {
         if (!cancelled) {
           setBusy(false);
@@ -107,6 +111,7 @@ export function SearchView({
       setDraft(saved);
       setSettings(saved);
       setRetry(0);
+      consumedRetry.current = 0;
     } catch {
       setError('Could not save the search server. Try again.');
     } finally {
@@ -127,13 +132,13 @@ export function SearchView({
     }
   }
   return (
-    <section className="workspace-search" aria-label="Search workspace">
+    <section className="workspace-search" aria-label="Spotlight">
       <div className="page-heading">
         {navigationTrigger}
-        <h1>Search your workspace</h1>
+        <h1>Spotlight</h1>
       </div>
       <p className="search-intro">
-        Find saved items and conversation messages by their words or meaning.
+        Find saved items, messages, images, audio and video by their words or meaning.
       </p>
       <label className="task-search workspace-search-input">
         <Search size={17} />
@@ -161,8 +166,9 @@ export function SearchView({
       <details className="search-settings">
         <summary>Search model and server</summary>
         <p>
-          Related results use EmbeddingGemma 2 through Ollama. By default, the model and search
-          index stay on your workspace machine.
+          Related results use EmbeddingGemma 2 through Ollama. Audio is indexed in short clips and
+          video as sampled frames and audio. By default, the models and search index stay on your
+          workspace machine.
         </p>
         <label>
           <input
@@ -194,14 +200,15 @@ export function SearchView({
               />
             </label>
             <p>
-              Task details, saved messages and search queries are sent to this server. Use a server
-              you trust and an encrypted connection when traffic leaves this machine.
+              Task details, saved messages, attachments and search queries are sent to this server.
+              Use a server you trust and an encrypted connection when traffic leaves this machine.
             </p>
           </>
         )}
         <p>
           Install Ollama on the machine running the search model, then run{' '}
-          <code>ollama pull embeddinggemma-2:270m-q8_0-text</code>.
+          <code>ollama pull embeddinggemma-2:270m-q8_0-text</code> and{' '}
+          <code>ollama pull embeddinggemma-2:740m-q8_0</code>.
         </p>
         <button
           className="button secondary"
@@ -222,7 +229,19 @@ export function SearchView({
                 : result?.status.kind === 'ready'
                   ? 'Search complete'
                   : ''}
-          {result?.status.kind === 'unavailable' && (
+          {result?.media?.kind === 'indexing' && (
+            <span>
+              {' '}
+              · Preparing media · {result.media.indexed} of {result.media.total}
+            </span>
+          )}
+          {result?.media?.kind === 'unavailable' && (
+            <span>
+              {' '}
+              · Some media could not be indexed. Check the model, FFmpeg and attachments.
+            </span>
+          )}
+          {(result?.status.kind === 'unavailable' || result?.media?.kind === 'unavailable') && (
             <button className="text-button" onClick={() => setRetry((value) => value + 1)}>
               Retry
             </button>
@@ -281,16 +300,24 @@ export function SearchView({
                     ...(row.message.image_reading?.observations ?? []),
                     ...(row.message.image_reading?.uncertainties ?? []),
                   ].filter(Boolean);
+                  const mediaLabel =
+                    row.message.type === 'image'
+                      ? 'Image'
+                      : row.message.type === 'video'
+                        ? 'Video'
+                        : ['audio', 'ptt'].includes(row.message.type)
+                          ? 'Audio'
+                          : 'Message';
                   const bestText =
                     messageText.find((value) =>
                       value.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
                     ) ??
                     messageText[0] ??
-                    'Saved message';
+                    `Saved ${mediaLabel.toLowerCase()}`;
                   const content = (
                     <>
                       <span className="search-result-meta">
-                        Message · {chat?.name ?? 'Saved conversation'} ·{' '}
+                        {mediaLabel} · {chat?.name ?? 'Saved conversation'} ·{' '}
                         {time(row.message.timestamp)}
                       </span>
                       <strong>{excerpt(bestText, query)}</strong>

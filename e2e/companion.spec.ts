@@ -1687,7 +1687,7 @@ test('workspace threads open the exact source message and remain navigable on a 
   }
 });
 
-test('workspace search finds items and opens matching saved messages without a model', async () => {
+test('Spotlight finds items and opens matching saved messages without a model', async () => {
   const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
   const task = snapshot.tasks[0];
   const message = snapshot.messages.find((item) => item.body.length > 25);
@@ -1700,7 +1700,8 @@ test('workspace search finds items and opens matching saved messages without a m
   try {
     const page = await context.newPage();
     await page.goto(base);
-    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('button', { name: 'Spotlight', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Spotlight', exact: true })).toBeVisible();
     const input = page.getByRole('textbox', { name: 'Search workspace' });
     await input.fill(task.reference);
     const taskResult = page
@@ -1736,6 +1737,117 @@ test('workspace search finds items and opens matching saved messages without a m
       .toBe('server');
     await page.getByRole('radio', { name: 'This workspace machine' }).check();
     await page.getByRole('button', { name: 'Save search server' }).click();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('Spotlight opens matching audio and video messages with playback controls', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const original = snapshot.messages[0];
+  if (!original) throw Error('The sample needs a saved message');
+  const attachments = ['audio', 'video'].map((type) => ({
+    ...original,
+    id: `spotlight-${type}`,
+    type,
+    body: '',
+    mediaMimetype: type === 'audio' ? 'audio/ogg' : 'video/mp4',
+    image_reading: undefined,
+  }));
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 1200, height: 800 },
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    const searches: { query: string; retry: boolean }[] = [];
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const state = SnapshotSchema.parse(await response.json());
+      await route.fulfill({
+        response,
+        json: { ...state, messages: [...state.messages, ...attachments] },
+      });
+    });
+    await page.route('**/api/search', async (route) => {
+      const { query, retry } = z
+        .object({ query: z.string(), retry: z.boolean() })
+        .parse(route.request().postDataJSON());
+      searches.push({ query, retry });
+      const type = query === 'video' ? 'video' : 'audio';
+      await route.fulfill({
+        json: {
+          moreExact: false,
+          status: { kind: 'ready' },
+          media: {
+            kind: query === 'audio' && !retry ? 'unavailable' : 'ready',
+            indexed: 2,
+            total: 2,
+          },
+          results: [{ kind: 'message', id: `spotlight-${type}`, match: 'related' }],
+        },
+      });
+    });
+    await page.goto(base);
+    await page.getByRole('button', { name: 'Spotlight', exact: true }).click();
+    const input = page.getByRole('textbox', { name: 'Search workspace' });
+    for (const type of ['audio', 'video']) {
+      await input.fill(type);
+      if (type === 'audio') {
+        await page.getByRole('button', { name: 'Retry', exact: true }).click();
+        await expect
+          .poll(() => searches.some((item) => item.query === 'audio' && item.retry))
+          .toBe(true);
+      } else {
+        await expect
+          .poll(() => searches.some((item) => item.query === 'video' && !item.retry))
+          .toBe(true);
+      }
+      await page.getByRole('button', { name: new RegExp(`^${type}`, 'i') }).click();
+      await expect(page.locator(`[data-message-id="spotlight-${type}"] ${type}`)).toHaveAttribute(
+        'controls',
+        '',
+      );
+      await page.keyboard.press('Meta+k');
+    }
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('desktop opens its workspace when the server becomes available after startup', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    httpCredentials: { username: 'admin', password },
+  });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        value: {
+          invoke: async (command: string) => {
+            if (command !== 'retry_remote_workspace') return;
+            const attempts = Number(sessionStorage.getItem('reconnect-attempts') ?? 0) + 1;
+            sessionStorage.setItem('reconnect-attempts', String(attempts));
+            if (attempts === 2) window.location.assign('/');
+          },
+        },
+      });
+    });
+    await page.clock.install();
+    await page.goto(`${base}/?desktop=connecting`);
+    await expect(page.getByRole('heading', { name: 'Connecting to your server' })).toBeVisible();
+    await page.clock.fastForward(10000);
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem('reconnect-attempts')))
+      .toBe('1');
+    await page.clock.fastForward(10000);
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+    await page.clock.fastForward(30000);
+    expect(await page.evaluate(() => sessionStorage.getItem('reconnect-attempts'))).toBe('2');
   } finally {
     await context.close();
     await browser.close();

@@ -129,3 +129,231 @@ test('changing the search server stops indexing on the old server and rebuilds o
     db.close();
   }
 });
+
+test('search finds image, audio, and video messages by their contents and removes revoked media', async () => {
+  const db = new DatabaseSync(':memory:');
+  let source = {
+    tasks: [],
+    messages: ['image', 'ptt', 'video'].map((type) =>
+      MessageSchema.parse({ ...message, id: type, type, body: '', image_digest: 'sample' }),
+    ),
+  };
+  function seasideVector(text: string) {
+    const result = Array(256).fill(0);
+    result[/seaside/i.test(text) ? 0 : 1] = 1;
+    return result;
+  }
+  const engine = new LocalSearch(
+    db,
+    () => source,
+    async ({ input }) => input.map(seasideVector),
+    undefined,
+    {
+      load: async (item) => ({ mime: 'application/octet-stream', bytes: Buffer.from(item.id) }),
+      prepare: async (_attachment, kind) =>
+        kind === 'image'
+          ? [{ image: Buffer.from('seaside photograph').toString('base64') }]
+          : kind === 'audio'
+            ? [{ audio: Buffer.from('seaside recording').toString('base64') }]
+            : [
+                { image: Buffer.from('seaside frame').toString('base64') },
+                { audio: Buffer.from('seaside soundtrack').toString('base64') },
+              ],
+      embed: async ({ input }) =>
+        input.map((item) => {
+          const text = Buffer.from('image' in item ? item.image : item.audio, 'base64').toString();
+          return seasideVector(text);
+        }),
+    },
+  );
+  async function mediaReady() {
+    let result = await engine.find('seaside');
+    for (let attempt = 0; result.media?.kind === 'indexing' && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      result = await engine.find('seaside');
+    }
+    return result;
+  }
+  try {
+    const initial = await mediaReady();
+    assert.equal(initial.media?.kind, 'ready');
+    for (const id of ['image', 'ptt', 'video'])
+      assert.ok(initial.results.some((result) => result.id === id && result.match === 'related'));
+
+    source = {
+      ...source,
+      messages: source.messages.map((item) =>
+        item.id === 'image' ? { ...item, type: 'revoked' } : item,
+      ),
+    };
+    const afterRevocation = await mediaReady();
+    assert.ok(!afterRevocation.results.some((result) => result.id === 'image'));
+    assert.ok(afterRevocation.results.some((result) => result.id === 'video'));
+  } finally {
+    db.close();
+  }
+});
+
+test('text search remains usable when media cannot be indexed', async () => {
+  const db = new DatabaseSync(':memory:');
+  const picture = MessageSchema.parse({ ...message, id: 'picture', type: 'image', body: '' });
+  const engine = new LocalSearch(
+    db,
+    () => ({ tasks: [task], messages: [picture] }),
+    async ({ input }) => input.map(vector),
+    undefined,
+    {
+      load: async () => null,
+      prepare: async () => [],
+    },
+  );
+  try {
+    let result = await engine.find('export');
+    for (
+      let attempt = 0;
+      (result.status.kind === 'indexing' || result.media?.kind === 'indexing') && attempt < 100;
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      result = await engine.find('export');
+    }
+    assert.equal(result.status.kind, 'ready');
+    assert.equal(result.media?.kind, 'unavailable');
+    assert.ok(result.results.some((item) => item.id === task.id && item.match === 'exact'));
+  } finally {
+    db.close();
+  }
+});
+
+test('media indexing uses its workspace worker and follows a selected server', async () => {
+  const db = new DatabaseSync(':memory:');
+  const picture = MessageSchema.parse({ ...message, id: 'picture', type: 'image', body: '' });
+  const urls: string[] = [];
+  const textUrls: string[] = [];
+  let release: (() => void) | undefined;
+  let oldSignal: AbortSignal | undefined;
+  const engine = new LocalSearch(
+    db,
+    () => ({ tasks: [task], messages: [picture] }),
+    async ({ input, url }) => {
+      textUrls.push(url);
+      return input.map(() => vector('export'));
+    },
+    undefined,
+    {
+      workspaceUrl: 'http://media-worker:11434',
+      load: async () => ({ mime: 'image/png', bytes: Buffer.from('sample') }),
+      prepare: async () => [{ image: Buffer.from('sample').toString('base64') }],
+      embed: async ({ input, url, signal }) => {
+        urls.push(url);
+        if (url === 'http://media-worker:11434') {
+          oldSignal = signal;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return input.map(() => {
+          const values = Array(256).fill(0);
+          values[0] = 1;
+          return values;
+        });
+      },
+    },
+  );
+  try {
+    assert.equal((await engine.find('sample')).media?.kind, 'indexing');
+    for (let attempt = 0; !oldSignal && attempt < 100; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(oldSignal);
+    assert.ok(textUrls.includes('http://127.0.0.1:11434'));
+    engine.saveSettings({ kind: 'server', url: 'https://search.example.invalid' });
+    assert.equal(oldSignal.aborted, true);
+    release?.();
+    let result = await engine.find('sample');
+    for (let attempt = 0; result.media?.kind === 'indexing' && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      result = await engine.find('sample');
+    }
+    assert.equal(result.media?.kind, 'ready');
+    assert.ok(result.results.some((item) => item.id === picture.id && item.match === 'related'));
+    assert.ok(urls.includes('https://search.example.invalid'));
+  } finally {
+    db.close();
+  }
+});
+
+test('already indexed media remains searchable while other attachments are being prepared', async () => {
+  const db = new DatabaseSync(':memory:');
+  const pictures = ['first', 'second'].map((id) =>
+    MessageSchema.parse({ ...message, id, type: 'image', body: '' }),
+  );
+  let release: (() => void) | undefined;
+  const engine = new LocalSearch(
+    db,
+    () => ({ tasks: [], messages: pictures }),
+    async ({ input }) => input.map(() => vector('export')),
+    undefined,
+    {
+      load: async (item) => ({ mime: 'image/png', bytes: Buffer.from(item.id) }),
+      prepare: async (attachment) => {
+        if (attachment.bytes.toString() === 'second')
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        return [{ image: attachment.bytes.toString('base64') }];
+      },
+      embed: async ({ input }) => input.map(() => vector('export')),
+    },
+  );
+  try {
+    await engine.find('sample');
+    for (let attempt = 0; !release && attempt < 100; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(release);
+    const during = await engine.find('sample');
+    assert.equal(during.media?.kind, 'indexing');
+    assert.ok(during.results.some((item) => item.id === 'first' && item.match === 'related'));
+    release();
+    for (
+      let attempt = 0;
+      (await engine.find('sample')).media?.kind === 'indexing' && attempt < 100;
+      attempt++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+  } finally {
+    release?.();
+    db.close();
+  }
+});
+
+test('media search can return a relevant image whose similarity is below the text cutoff', async () => {
+  const db = new DatabaseSync(':memory:');
+  const picture = MessageSchema.parse({ ...message, id: 'picture', type: 'image', body: '' });
+  const engine = new LocalSearch(
+    db,
+    () => ({ tasks: [], messages: [picture] }),
+    async ({ input }) => input.map(() => vector('export')),
+    undefined,
+    {
+      load: async () => ({ mime: 'image/png', bytes: Buffer.from('sample') }),
+      prepare: async () => [{ image: 'sample' }],
+      embed: async ({ input }) =>
+        input.map(() => {
+          const values = Array(256).fill(0);
+          values[0] = 0.68;
+          values[1] = Math.sqrt(1 - 0.68 ** 2);
+          return values;
+        }),
+    },
+  );
+  try {
+    let result = await engine.find('sample');
+    for (let attempt = 0; result.media?.kind === 'indexing' && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      result = await engine.find('sample');
+    }
+    assert.ok(result.results.some((item) => item.id === picture.id && item.match === 'related'));
+  } finally {
+    db.close();
+  }
+});

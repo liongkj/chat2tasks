@@ -59,7 +59,7 @@ const sectionCopy: Record<SettingsSection, { title: string; description: string 
   models: { title: 'AI models', description: 'Choose and manage your AI connections.' },
   automation: {
     title: 'Automation',
-    description: 'Choose when Chat2Tasks reviews new messages.',
+    description: 'Choose when Wawa reviews new messages.',
   },
   attention: {
     title: 'Attention',
@@ -293,7 +293,7 @@ export function SettingsPanel({
                 <div className="gateway-options">
                   {(
                     [
-                      ['local', 'This computer', 'Chat2Tasks runs its own WhatsApp server here.'],
+                      ['local', 'This computer', 'Wawa runs its own WhatsApp server here.'],
                       [
                         'remote',
                         'Another server',
@@ -354,8 +354,8 @@ export function SettingsPanel({
                 {gatewayPending && (
                   <p className="gateway-restart" role="status">
                     {config.desktopGatewayRestartRequired && !hasChanges
-                      ? 'Quit and reopen Chat2Tasks to use the saved server.'
-                      : 'Save your changes, then quit and reopen Chat2Tasks to use this server.'}
+                      ? 'Quit and reopen Wawa to use the saved server.'
+                      : 'Save your changes, then quit and reopen Wawa to use this server.'}
                   </p>
                 )}
               </>
@@ -371,7 +371,7 @@ export function SettingsPanel({
                   />
                   <small>
                     {window.chat2tasksDesktop || window.chat2tasksTauri
-                      ? 'This local address is managed by Chat2Tasks.'
+                      ? 'This local address is managed by Wawa.'
                       : 'Use the address reachable from this Docker container.'}
                   </small>
                 </div>
@@ -611,7 +611,7 @@ export function SettingsPanel({
             <ShieldCheck size={18} />
             <p>
               Pausing a chat stops new AI processing. Existing tasks, ticks, notes, and cached
-              messages stay available. Chat2Tasks never sends a reply to WhatsApp.
+              messages stay available. Wawa never sends a reply to WhatsApp.
             </p>
           </div>
           <ChatDialog
@@ -1161,7 +1161,7 @@ function ProfileCard({
             <div className="connection-route full-width">
               <ShieldCheck size={14} />
               <span>
-                Chat2Tasks <ChevronRight size={12} /> Cloudflare Gateway <ChevronRight size={12} />{' '}
+                Wawa <ChevronRight size={12} /> Cloudflare Gateway <ChevronRight size={12} />{' '}
                 {profile.route === 'proxy' ? 'OpenAI' : 'Your selected model'}
               </span>
             </div>

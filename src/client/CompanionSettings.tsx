@@ -78,7 +78,7 @@ export function CompanionSettings({ notify }: { notify: Notify }) {
         </li>
         <li>
           <p>
-            Pin Chat2Tasks in Chrome. Open its side panel, enter this server’s address, and paste a
+            Pin Wawa in Chrome. Open its side panel, enter this server’s address, and paste a
             pairing code below. Allow access to WhatsApp Web, then refresh that tab to see Chats and
             Threads.
           </p>

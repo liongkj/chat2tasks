@@ -25,8 +25,9 @@ export function MessageCard({
   const [loadedImageId, setLoadedImageId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ id: string; url: string } | null>(null);
   const mediaPath = `/api/media?id=${encodeURIComponent(message.id)}`;
+  const playable = ['audio', 'ptt', 'video'].includes(message.type);
   useEffect(() => {
-    if (!window.chat2tasksTauri || message.type !== 'image') return;
+    if (!window.chat2tasksTauri || (message.type !== 'image' && !playable)) return;
     const controller = new AbortController();
     let objectUrl: string | undefined;
     setFailed(false);
@@ -47,8 +48,8 @@ export function MessageCard({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [mediaPath, message.id, message.type]);
-  const imageUrl = window.chat2tasksTauri
+  }, [mediaPath, message.id, message.type, playable]);
+  const mediaUrl = window.chat2tasksTauri
     ? preview?.id === message.id
       ? preview.url
       : null
@@ -116,10 +117,10 @@ export function MessageCard({
                     Loading image…
                   </p>
                 )}
-                {imageUrl && (
-                  <a href={imageUrl} target="_blank" rel="noreferrer">
+                {mediaUrl && (
+                  <a href={mediaUrl} target="_blank" rel="noreferrer">
                     <img
-                      src={imageUrl}
+                      src={mediaUrl}
                       alt={`Attachment in ${name}, ${time(message.timestamp)}`}
                       loading="lazy"
                       onLoad={() => setLoadedImageId(message.id)}
@@ -128,6 +129,21 @@ export function MessageCard({
                   </a>
                 )}
               </>
+            )}
+          </div>
+        )}
+        {playable && (
+          <div className="media-preview">
+            {failed ? (
+              <p role="status">The original attachment is unavailable from OpenWA.</p>
+            ) : mediaUrl ? (
+              message.type === 'video' ? (
+                <video controls preload="none" src={mediaUrl} onError={() => setFailed(true)} />
+              ) : (
+                <audio controls preload="none" src={mediaUrl} onError={() => setFailed(true)} />
+              )
+            ) : (
+              <p role="status">Loading attachment…</p>
             )}
           </div>
         )}
