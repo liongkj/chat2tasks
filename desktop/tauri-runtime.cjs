@@ -5,12 +5,14 @@ const { createServer } = require('node:net');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { replaceWorkspace } = require('./workspace-replace.cjs');
-const { workspaceGatewayLaunch } = require('./gateway-mode.cjs');
+const { workspaceGatewayLaunch, workspaceSharingPort } = require('./gateway-mode.cjs');
+const { acquireLock } = require('./process-lock.mjs');
 
 const resources = process.env.C2T_TAURI_RESOURCES;
 const data = process.env.C2T_TAURI_DATA;
 const demo = process.env.C2T_TAURI_DEMO === '1';
 const testDiagnostics = process.env.C2T_TAURI_TEST_DIAGNOSTICS === '1';
+const enableMoves = !demo;
 if (!resources || !data) throw new Error('The preview runtime is not configured.');
 
 const runtime = join(resources, 'runtime');
@@ -20,14 +22,20 @@ let gatewayData = join(data, 'gateway');
 const codexHome = join(data, 'codex');
 const token = randomBytes(32).toString('hex');
 const tauriOrigin = process.platform === 'win32' ? 'http://tauri.localhost' : 'tauri://localhost';
-const codexPlatform = process.platform === 'win32' ? 'win32' : 'darwin';
+const codexTargets = {
+  darwin: 'apple-darwin',
+  linux: 'unknown-linux-musl',
+  win32: 'pc-windows-msvc',
+};
+const codexTarget = codexTargets[process.platform];
+if (!codexTarget || !['x64', 'arm64'].includes(process.arch))
+  throw new Error('This desktop architecture is not supported.');
 const codexArch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
-const codexTarget = process.platform === 'win32' ? 'pc-windows-msvc' : 'apple-darwin';
 const codex = join(
   runtime,
   'node_modules',
   '@openai',
-  `codex-${codexPlatform}-${process.arch}`,
+  `codex-${process.platform}-${process.arch}`,
   'vendor',
   `${codexArch}-${codexTarget}`,
   'bin',
@@ -40,8 +48,11 @@ let gateway,
   gatewayMode = 'local',
   gatewayEngine = 'whatsapp-web.js',
   runningGatewayEngine,
-  resumeSessions = false;
+  resumeSessions = false,
+  sharingUnavailable = false,
+  moveRecovery = false;
 let stopping = false;
+let desktopLock;
 
 function cleanEnv() {
   const env = { ...process.env };
@@ -68,6 +79,13 @@ function freePort(preferred = 0) {
         return reject(new Error('Could not choose a local port.'));
       socket.close(() => resolve(address.port));
     });
+  });
+}
+function portAvailable(port) {
+  return new Promise((resolve) => {
+    const socket = createServer();
+    socket.once('error', () => resolve(false));
+    socket.listen(port, '127.0.0.1', () => socket.close(() => resolve(true)));
   });
 }
 async function workspacePort() {
@@ -122,22 +140,26 @@ async function startGateway() {
     );
     await access(browser);
   }
-  gateway = spawn(process.execPath, [join(gatewayRuntime, 'dist', 'main.js')], {
-    cwd: gatewayData,
-    stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
-    windowsHide: true,
-    env: {
-      ...cleanEnv(),
-      NODE_ENV: 'production',
-      PORT: String(gatewayPort),
-      LOG_LEVEL: testDiagnostics ? 'info' : 'error',
-      UPDATE_CHECK_ENABLED: 'false',
-      AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
-      ENGINE_TYPE: gatewayEngine,
-      SSRF_ALLOWED_HOSTS: '127.0.0.1',
-      ...(browser ? { PUPPETEER_EXECUTABLE_PATH: browser, PUPPETEER_ARGS: '--disable-gpu' } : {}),
+  gateway = spawn(
+    process.execPath,
+    [join(__dirname, 'gateway-runner.cjs'), join(gatewayRuntime, 'dist', 'main.js')],
+    {
+      cwd: gatewayData,
+      stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
+      windowsHide: true,
+      env: {
+        ...cleanEnv(),
+        NODE_ENV: 'production',
+        PORT: String(gatewayPort),
+        LOG_LEVEL: testDiagnostics ? 'info' : 'error',
+        UPDATE_CHECK_ENABLED: 'false',
+        AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
+        ENGINE_TYPE: gatewayEngine,
+        SSRF_ALLOWED_HOSTS: '127.0.0.1',
+        ...(browser ? { PUPPETEER_EXECUTABLE_PATH: browser, PUPPETEER_ARGS: '--disable-gpu' } : {}),
+      },
     },
-  });
+  );
   runningGatewayEngine = gatewayEngine;
   await ready(gatewayPort, gateway, 'The WhatsApp gateway');
   await access(join(gatewayData, 'data', '.api-key'));
@@ -145,7 +167,7 @@ async function startGateway() {
 async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
-  if (!demo) {
+  if (!demo && !sharingUnavailable && !moveRecovery) {
     ({
       mode: gatewayMode,
       engine: gatewayEngine,
@@ -177,7 +199,7 @@ async function startServer() {
   const origin = `http://127.0.0.1:${serverPort}`;
   server = spawn(process.execPath, [join(runtime, 'dist', 'server', 'index.js')], {
     cwd: runtime,
-    stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
+    stdio: testDiagnostics ? ['ignore', 2, 2, 'ipc'] : ['ignore', 'ignore', 'ignore', 'ipc'],
     windowsHide: true,
     env: {
       ...cleanEnv(),
@@ -198,7 +220,18 @@ async function startServer() {
       DESKTOP_GATEWAY_ENGINE: gatewayEngine,
       CHAT2TASKS_TAURI_ORIGIN: tauriOrigin,
       CHAT2TASKS_TAURI_TOKEN: token,
+      CHAT2TASKS_SHARING_UNAVAILABLE: sharingUnavailable ? 'port_in_use' : '',
+      CHAT2TASKS_SERVER_MOVE: enableMoves ? 'true' : 'false',
+      CHAT2TASKS_MOVE_RECOVERY: moveRecovery ? 'true' : 'false',
     },
+  });
+  const child = server;
+  child.on('message', (message) => {
+    if (!message || message.type !== 'stop-gateway' || typeof message.id !== 'string') return;
+    void stop(gateway).then(() => {
+      gateway = undefined;
+      if (child.connected) child.send({ type: 'gateway-stopped', id: message.id });
+    });
   });
   await ready(serverPort, server, 'The app service');
 }
@@ -223,16 +256,28 @@ async function shutdown() {
   if (stopping) return;
   stopping = true;
   await Promise.all([stop(server), stop(gateway)]);
+  desktopLock?.close();
   process.exit(0);
 }
 async function main() {
-  serverPort = await workspacePort();
+  desktopLock = acquireLock(join(data, demo ? 'sample-control' : 'workspace-control'));
+  if (!demo) {
+    const { WorkspaceOwnership } = require(join(runtime, 'dist', 'desktop', 'ownership.cjs'));
+    const ownership = WorkspaceOwnership.open(join(workspace, '.ownership'), 'server');
+    const role = ownership.role();
+    moveRecovery = enableMoves && (role === 'preparing' || role === 'fenced');
+    if (!moveRecovery) ownership.assertCanRun();
+  }
+  const sharingPort = demo ? undefined : workspaceSharingPort(workspace);
+  sharingUnavailable = sharingPort !== undefined && !(await portAvailable(sharingPort));
+  const availableSharingPort = sharingUnavailable ? undefined : sharingPort;
+  serverPort = availableSharingPort ?? (await workspacePort());
   do {
     gatewayPort = await freePort();
   } while (gatewayPort === serverPort);
   await startServer();
   report({
-    type: 'ready',
+    type: moveRecovery ? 'move-recovery' : 'ready',
     origin: `http://127.0.0.1:${serverPort}`,
     token,
     demo,
@@ -281,6 +326,13 @@ process.once('SIGTERM', () => void shutdown());
 process.once('SIGINT', () => void shutdown());
 main().catch((error) => {
   if (testDiagnostics) console.error(error.message);
-  report({ type: 'error' });
+  report({
+    type: 'error',
+    ...(error.code === 'CHAT2TASKS_IN_USE'
+      ? { code: 'already_running' }
+      : error.code === 'CHAT2TASKS_MOVE_RECOVERY'
+        ? { code: 'move_recovery' }
+        : {}),
+  });
   void shutdown();
 });

@@ -1,11 +1,13 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import staticFiles from '@fastify/static';
 import { timingSafeEqual } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { acquireLock } from '../../desktop/process-lock.mjs';
+import type { DesktopSharing } from '../shared/desktop-sharing.js';
 import { Store } from './store.js';
 import { LocalSearch } from './search.js';
 import { prepareSearchMedia } from './search-media.js';
@@ -25,8 +27,16 @@ import { registerThreadRoutes } from './thread-routes.js';
 import { registerTaskRoutes } from './task-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
-import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
+import {
+  configureDesktopGateway,
+  registerDesktop,
+  stopManagedGateway,
+  waitForDesktopGateway,
+} from './desktop.js';
 import { RemoteEvents } from './remote-events.js';
+import { WorkspaceOwnership } from './workspace-ownership.js';
+import { MoveGate } from './move-gate.js';
+import { registerServerMoveRoutes } from './server-move-routes.js';
 import {
   desktopSessionCookie,
   desktopSignInCsp,
@@ -41,18 +51,49 @@ const port = z.coerce
   .min(1)
   .max(65535)
   .parse(process.env.PORT ?? 2786);
-const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
+const managedServer = process.env.WAWA_MANAGED_SERVER === 'true';
+const desktop = process.env.CHAT2TASKS_DESKTOP === 'true' || managedServer;
+const dataDirectory = resolve(process.env.DATA_DIR ?? 'data');
+const workspaceLock = desktop
+  ? acquireLock(join(dirname(dataDirectory), 'workspace-server-control'))
+  : undefined;
+const moveEnabled = desktop && process.env.CHAT2TASKS_SERVER_MOVE === 'true';
+const moveRecovery = moveEnabled && process.env.CHAT2TASKS_MOVE_RECOVERY === 'true';
+const ownership = desktop
+  ? WorkspaceOwnership.open(join(dataDirectory, '.ownership'), 'server')
+  : undefined;
+if (ownership) {
+  if (moveRecovery) {
+    if (!['preparing', 'fenced'].includes(ownership.role()))
+      throw new Error('This workspace does not need move recovery.');
+  } else ownership.assertCanRun();
+}
+const store = new Store(dataDirectory);
 const openwa = new OpenWA(store);
 const localSearch = new LocalSearch(store.db, () => store.snapshot(), undefined, undefined, {
   workspaceUrl: process.env.LOCAL_SEARCH_MEDIA_OLLAMA_URL,
   load: (message) => openwa.attachment(message),
   prepare: prepareSearchMedia,
 });
-const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
+const configuredDesktopSharing: DesktopSharing = desktop
+  ? store.desktopSharing()
+  : { kind: 'disabled' };
+const sharingUnavailable =
+  configuredDesktopSharing.kind === 'enabled' &&
+  process.env.CHAT2TASKS_SHARING_UNAVAILABLE === 'port_in_use';
+const recoveryOnly = sharingUnavailable || moveRecovery;
+const desktopSharing: DesktopSharing = sharingUnavailable
+  ? { kind: 'disabled' }
+  : configuredDesktopSharing;
+const sharingPassword =
+  desktopSharing.kind === 'enabled' ? store.secret('desktop-sharing-password') : '';
+const workspacePassword = sharingPassword || process.env.APP_PASSWORD || '';
+if (desktopSharing.kind === 'enabled' && !workspacePassword)
+  throw new Error('The desktop sharing password is missing. Configure sharing again.');
 const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
-if (desktop) await configureDesktopGateway(store);
+if (desktop && !recoveryOnly) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
-const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
+const syncEnabled = !demo && !recoveryOnly && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
 const sync = new Sync(store, openwa);
 const threads = new Threads(store);
@@ -70,6 +111,9 @@ const server = Fastify({
   bodyLimit: 2_000_000,
   disableRequestLogging: true,
 });
+const moveGate = moveEnabled ? new MoveGate(server) : undefined;
+const startupAbort = new AbortController();
+let starting: Promise<void> = Promise.resolve();
 const additionalOrigins = (process.env.ADDITIONAL_ORIGINS ?? '')
   .split(',')
   .map((value) => value.trim())
@@ -89,7 +133,7 @@ const additionalOrigins = (process.env.ADDITIONAL_ORIGINS ?? '')
       );
     if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
       if (url.protocol !== 'https:') throw new Error('Remote workspace addresses must use HTTPS.');
-      if (!process.env.APP_PASSWORD)
+      if (!workspacePassword)
         throw new Error('Set APP_PASSWORD before adding a remote workspace address.');
     }
     return url.origin;
@@ -101,6 +145,7 @@ const origins = new Set([
     ? ['http://127.0.0.1:5173', 'http://localhost:5173']
     : []),
   ...(process.env.PUBLIC_ORIGIN ? [new URL(process.env.PUBLIC_ORIGIN).origin] : []),
+  ...(desktopSharing.kind === 'enabled' ? [desktopSharing.origin] : []),
   ...additionalOrigins,
 ]);
 const allowedHosts = new Set([...origins].map((origin) => new URL(origin).host));
@@ -117,6 +162,12 @@ if (
 )
   throw new Error('Invalid Tauri workspace configuration.');
 if (tauriOrigin) origins.add(tauriOrigin);
+function localTauriSession(request: FastifyRequest) {
+  if (!tauriOrigin || !tauriToken || request.headers.origin !== tauriOrigin) return false;
+  const expected = Buffer.from(tauriToken);
+  const supplied = Buffer.from(String(request.headers['x-chat2tasks-session'] ?? ''));
+  return expected.length === supplied.length && timingSafeEqual(expected, supplied);
+}
 if (
   process.env.PUBLIC_ORIGIN &&
   !['localhost', '127.0.0.1'].includes(new URL(process.env.PUBLIC_ORIGIN).hostname) &&
@@ -135,6 +186,28 @@ server.addHook('onRequest', async (request, reply) => {
     'Content-Security-Policy':
       "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   });
+  if (recoveryOnly && request.routeOptions.url === '/mcp')
+    return reply.code(503).send({ error: 'The workspace is in recovery.' });
+  if (
+    recoveryOnly &&
+    request.url.startsWith('/api/') &&
+    !(request.method === 'OPTIONS' && request.headers.origin === tauriOrigin)
+  ) {
+    const readable = [
+      '/api/health',
+      '/api/state',
+      '/api/settings',
+      '/api/preferences',
+      '/api/desktop/status',
+      '/api/desktop/sharing',
+    ].includes(request.url);
+    const permitted = moveRecovery
+      ? (request.method === 'GET' && request.url === '/api/health') ||
+        request.url.startsWith('/api/workspace/move/')
+      : (request.method === 'GET' && readable) ||
+        (request.method === 'POST' && request.url === '/api/desktop/sharing');
+    if (!permitted) return reply.code(503).send({ error: 'The workspace is in recovery.' });
+  }
   if (request.url === '/api/webhooks/openwa') return;
   if (!allowedHosts.has(request.headers.host ?? ''))
     return reply
@@ -159,19 +232,20 @@ server.addHook('onRequest', async (request, reply) => {
     });
     if (request.method === 'OPTIONS') return reply.code(204).send();
   }
-  if (tauriToken && request.url.startsWith('/api/')) {
-    const expected = Buffer.from(tauriToken);
-    const supplied = Buffer.from(String(request.headers['x-chat2tasks-session'] ?? ''));
-    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied))
-      return reply.code(403).send({ error: 'The workspace session is not authorized.' });
-  }
-  const password = process.env.APP_PASSWORD;
-  if (password) {
-    const expected = Buffer.from(`Basic ${Buffer.from(`admin:${password}`).toString('base64')}`),
+  const localSession = localTauriSession(request);
+  const sharedHost =
+    desktopSharing.kind === 'enabled' &&
+    request.headers.host === new URL(desktopSharing.origin).host;
+  if (tauriToken && request.url.startsWith('/api/') && !localSession && !sharedHost)
+    return reply.code(403).send({ error: 'The workspace session is not authorized.' });
+  if (workspacePassword && !localSession) {
+    const expected = Buffer.from(
+        `Basic ${Buffer.from(`admin:${workspacePassword}`).toString('base64')}`,
+      ),
       actual = Buffer.from(request.headers.authorization ?? '');
     if (
       (expected.length !== actual.length || !timingSafeEqual(expected, actual)) &&
-      !validDesktopSession(request.headers.cookie ?? '', store.key, password)
+      !validDesktopSession(request.headers.cookie ?? '', store.key, workspacePassword)
     )
       return reply
         .header('WWW-Authenticate', 'Basic realm="Wawa", charset="UTF-8"')
@@ -198,6 +272,7 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.get('/api/setup-mode', () => ({ managedServer }));
 server.get('/api/search/settings', () => localSearch.settings());
 server.post('/api/search/settings', (request) =>
   localSearch.saveSettings(SearchSettingsSchema.parse(request.body)),
@@ -215,8 +290,8 @@ server.addContentTypeParser(
 );
 server.get('/desktop-sign-in', (request, reply) => {
   if (
-    !process.env.APP_PASSWORD ||
-    validDesktopSession(request.headers.cookie ?? '', store.key, process.env.APP_PASSWORD)
+    !workspacePassword ||
+    validDesktopSession(request.headers.cookie ?? '', store.key, workspacePassword)
   )
     return reply.code(303).header('Location', '/').send();
   return reply
@@ -228,7 +303,7 @@ server.post('/desktop-sign-in', (request, reply) => {
   const origin = request.headers.origin;
   if (!origin || !origins.has(origin) || new URL(origin).host !== request.headers.host)
     return reply.code(403).send({ error: 'Invalid request origin' });
-  const password = process.env.APP_PASSWORD;
+  const password = workspacePassword;
   if (!password) return reply.code(303).header('Location', '/').send();
   const input = z.object({ password: z.string().max(1024) }).safeParse(request.body);
   const expected = Buffer.from(password);
@@ -449,15 +524,65 @@ server.post('/api/handoff', async (request, reply) => {
     handoffRunning = false;
   }
 });
-if (desktop) await registerDesktop(server, store, openwa, sync, webhooks);
-await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
-const startupAbort = new AbortController();
 if (desktop) {
+  function sharingStatus() {
+    const configured = store.desktopSharing();
+    return {
+      configured,
+      active: desktopSharing,
+      unavailableReason: sharingUnavailable && configured.kind === 'enabled' ? 'port_in_use' : null,
+      restartRequired:
+        JSON.stringify(configured) !== JSON.stringify(desktopSharing) ||
+        (configured.kind === 'enabled' &&
+          store.secret('desktop-sharing-password') !== sharingPassword),
+    };
+  }
+  server.get('/api/desktop/sharing', (request, reply) => {
+    if (!localTauriSession(request))
+      return reply.code(403).send({ error: 'Use the server computer to change sharing.' });
+    return sharingStatus();
+  });
+  server.post('/api/desktop/sharing', (request, reply) => {
+    if (!localTauriSession(request))
+      return reply.code(403).send({ error: 'Use the server computer to change sharing.' });
+    store.saveDesktopSharing(request.body);
+    return sharingStatus();
+  });
+  await registerDesktop(server, store, openwa, sync, webhooks, managedServer);
+}
+if (moveGate && ownership) {
+  registerServerMoveRoutes(server, {
+    gate: moveGate,
+    ownership,
+    store,
+    stopBackground: async () => {
+      startupAbort.abort();
+      remoteEvents?.stop();
+      sync.stop();
+      const threadJob = organiser.stop();
+      await Promise.all([moveGate.pause(), starting, threadJob]);
+      await localSearch.stopAndWait();
+      await sync.stopAndWait();
+      if (!remoteGateway && !moveRecovery) await stopManagedGateway();
+    },
+    completed: async (id, targetOrigin) => {
+      const directory = dirname(dataDirectory);
+      const temporary = join(directory, `workspace-target.${id}.tmp`);
+      await writeFile(temporary, JSON.stringify({ kind: 'remote', url: targetOrigin }), {
+        mode: 0o600,
+      });
+      await rename(temporary, join(directory, 'workspace-target.json'));
+    },
+  });
+}
+await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
+if (desktop && !recoveryOnly) {
   sync.stop();
   store.status({ syncing: true, phase: 'Starting WhatsApp connection…', error: null });
 }
 await server.listen({ port, host: process.env.BIND_HOST ?? '127.0.0.1' });
 async function startBackground() {
+  if (recoveryOnly) return;
   if (desktop) {
     try {
       if (!remoteGateway)
@@ -496,7 +621,7 @@ async function startBackground() {
   remoteEvents?.start();
   organiser.start();
 }
-const starting = startBackground();
+starting = startBackground();
 async function shutdown() {
   startupAbort.abort();
   const threadJob = organiser.stop();
@@ -505,7 +630,10 @@ async function shutdown() {
   await server.close();
   await starting;
   await threadJob;
+  await sync.stopAndWait();
+  await localSearch.stopAndWait();
   store.close();
+  workspaceLock?.close();
 }
 process.on('SIGTERM', () => void shutdown());
 process.on('SIGINT', () => void shutdown());

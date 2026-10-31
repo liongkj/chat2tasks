@@ -27,7 +27,9 @@
       "../work/tauri/bun/": "bun/",
       "../desktop/tauri-runtime.cjs": "tauri-runtime.cjs",
       "../desktop/workspace-replace.cjs": "workspace-replace.cjs",
-      "../desktop/gateway-mode.cjs": "gateway-mode.cjs"
+      "../desktop/gateway-mode.cjs": "gateway-mode.cjs",
+      "../desktop/process-lock.mjs": "process-lock.mjs",
+      "../desktop/gateway-runner.cjs": "gateway-runner.cjs"
     }
   }
 }

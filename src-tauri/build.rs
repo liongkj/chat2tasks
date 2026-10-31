@@ -3,6 +3,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "choose_import",
             "import_workspace",
+            "move_workspace",
             "open_external",
             "open_workspace_picker",
             "retry_remote_workspace",

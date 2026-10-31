@@ -348,12 +348,18 @@ test('TODO references stay unique and stable through edits, completion and resta
     f.store.tick(first.id, true);
     f.store.apply([{ ...f.change, title: 'Review the next export' }], [f.message]);
     assert.equal(f.store.taskEvidence(first.reference).task.id, first.id);
-    const references = f.store.snapshot().tasks.map((task) => task.reference);
+    const references = f.store
+      .snapshot()
+      .tasks.map((task) => task.reference)
+      .sort();
     assert.deepEqual(references, ['TODO-001', 'TODO-002']);
     const reopened = new Store(f.dir);
     try {
       assert.deepEqual(
-        reopened.snapshot().tasks.map((task) => task.reference),
+        reopened
+          .snapshot()
+          .tasks.map((task) => task.reference)
+          .sort(),
         references,
       );
       assert.equal(reopened.taskEvidence(first.reference).task.done, true);
@@ -381,7 +387,10 @@ test('upgrading existing tasks assigns references without changing their content
       assert.deepEqual(upgraded.snapshot().tasks[0], before);
       upgraded.apply([{ ...f.change, title: 'A task after upgrade' }], [f.message]);
       assert.deepEqual(
-        upgraded.snapshot().tasks.map((item) => item.reference),
+        upgraded
+          .snapshot()
+          .tasks.map((item) => item.reference)
+          .sort(),
         ['TODO-001', 'TODO-002'],
       );
     } finally {

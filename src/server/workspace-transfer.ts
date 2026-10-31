@@ -89,6 +89,24 @@ export async function exportWorkspace(store: Store, destination: string, passphr
 
 /** Restore only into a new directory; keep the old gateway and all chats paused. */
 export async function importWorkspace(source: string, destination: string, passphrase: string) {
+  return restoreWorkspace(source, destination, passphrase, 'copy');
+}
+
+/** Prepare a moved workspace without losing work queued before the handover. */
+export async function importMovedWorkspace(
+  source: string,
+  destination: string,
+  passphrase: string,
+) {
+  return restoreWorkspace(source, destination, passphrase, 'move');
+}
+
+async function restoreWorkspace(
+  source: string,
+  destination: string,
+  passphrase: string,
+  kind: 'copy' | 'move',
+) {
   const exists = await lstat(destination).then(
     () => true,
     (error: NodeJS.ErrnoException) => {
@@ -179,6 +197,9 @@ export async function importWorkspace(source: string, destination: string, passp
         secrets: {},
         removeSecrets: ['openwa', 'remote-openwa'],
       });
+      restored.saveDesktopSharing({ kind: 'disabled' });
+      if (kind === 'move') restored.suspendMoveJobs();
+      else restored.setMeta('move_pending_jobs', []);
       restored.db.exec(
         'DELETE FROM chat_jobs; DROP TABLE IF EXISTS search_settings; DROP TABLE IF EXISTS search_embeddings; DROP TABLE IF EXISTS search_media_index; DROP TABLE IF EXISTS search_media_embeddings',
       );

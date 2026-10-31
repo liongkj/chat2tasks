@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { z } from 'zod';
+import { DesktopSharingStatusSchema } from '../shared/desktop-sharing.js';
 import {
   AttentionPreferencesSchema,
   PublicSettingsSchema,
@@ -39,15 +40,29 @@ const steps = ['Welcome', 'WhatsApp', 'Conversations', 'Codex', 'Preferences', '
 const message = (error: unknown) => errorMessage(error);
 
 export function DesktopRoot({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState<'loading' | 'ready' | 'setup' | 'error'>(
-    window.chat2tasksDesktop ? 'loading' : 'ready',
-  );
+  const [ready, setReady] = useState<'loading' | 'ready' | 'setup' | 'error'>('loading');
+  const [managedServer, setManagedServer] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
-    if (!window.chat2tasksDesktop) return;
     setReady('loading');
-    void api('desktop/status', DesktopStatus)
-      .then((state) => setReady(state.setupComplete ? 'ready' : 'setup'))
+    void (async () => {
+      const managed = window.chat2tasksDesktop
+        ? false
+        : (await api('setup-mode', z.object({ managedServer: z.boolean() }))).managedServer;
+      setManagedServer(managed);
+      if (!window.chat2tasksDesktop && !managed) return 'ready' as const;
+      const state = await api('desktop/status', DesktopStatus);
+      if (state.setupComplete || !window.chat2tasksTauri)
+        return state.setupComplete ? 'ready' : 'setup';
+      const sharing = await api('desktop/sharing', DesktopSharingStatusSchema).catch(() => null);
+      if (sharing?.unavailableReason !== 'port_in_use') return 'setup';
+      const location = new URL(window.location.href);
+      location.searchParams.set('view', 'settings');
+      location.searchParams.set('section', 'workspace');
+      window.history.replaceState(null, '', location);
+      return 'ready';
+    })()
+      .then(setReady)
       .catch(() => setReady('error'));
   }, [retry]);
   if (ready === 'loading')
@@ -65,10 +80,14 @@ export function DesktopRoot({ children }: { children: React.ReactNode }) {
         </button>
       </main>
     );
-  return ready === 'ready' ? children : <Onboarding onDone={() => setReady('ready')} />;
+  return ready === 'ready' ? (
+    children
+  ) : (
+    <Onboarding managedServer={managedServer} onDone={() => setReady('ready')} />
+  );
 }
 
-function Onboarding({ onDone }: { onDone: () => void }) {
+function Onboarding({ managedServer, onDone }: { managedServer: boolean; onDone: () => void }) {
   const [step, setStep] = useState(() =>
     localStorage.getItem('wawa-onboarding-resume') === 'whatsapp' ? 1 : 0,
   );
@@ -98,6 +117,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
   const busy = operation !== null;
   const [error, setError] = useState('');
   const [tested, setTested] = useState(false);
+  const [deviceLogin, setDeviceLogin] = useState<{ url: string; userCode: string } | null>(null);
   async function refreshStatus() {
     setStatus(await api('desktop/status', DesktopStatus));
   }
@@ -216,8 +236,9 @@ function Onboarding({ onDone }: { onDone: () => void }) {
           ))}
         </nav>
         <div className="onboarding-sidebar-note">
-          <ShieldCheck size={17} /> Your workspace stays on this computer. Selected evidence is sent
-          to your chosen AI provider.
+          <ShieldCheck size={17} /> Your workspace stays on{' '}
+          {managedServer ? 'your server' : 'this computer'}. Selected evidence is sent to your
+          chosen AI provider.
         </div>
       </aside>
       <div className="onboarding-main">
@@ -239,10 +260,16 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                 Turn the things that need your attention into a calmer place to work.
               </p>
               <div className="onboarding-explainer">
-                <strong>Start fresh or bring your work along.</strong>
+                <strong>
+                  {managedServer
+                    ? 'A workspace that keeps working.'
+                    : 'Start fresh or bring your work along.'}
+                </strong>
                 <p>
-                  We’ll connect WhatsApp, sign in to Codex, and learn what matters to you. Your
-                  computer needs to be awake while it processes messages.
+                  We’ll connect WhatsApp, sign in to Codex, and learn what matters to you.{' '}
+                  {managedServer
+                    ? 'Your server can keep working while this computer sleeps.'
+                    : 'Your computer needs to be awake while it processes messages.'}
                 </p>
               </div>
               {window.chat2tasksTauri && (
@@ -265,7 +292,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   <CheckCircle2 size={20} /> Workspace imported. Continue to reconnect your
                   accounts.
                 </div>
-              ) : (
+              ) : window.chat2tasksDesktop ? (
                 <div className="onboarding-import">
                   <h2>Already have a workspace?</h2>
                   <p>
@@ -307,7 +334,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                     </div>
                   )}
                 </div>
-              )}
+              ) : null}
             </>
           )}
           {step === 1 && (
@@ -328,7 +355,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                   gateway may store chat history separately from your selected chats.
                 </p>
               </div>
-              {whatsapp.status !== 'ready' && (
+              {!managedServer && whatsapp.status !== 'ready' && (
                 <fieldset className="onboarding-engines">
                   <legend>Choose a connection</legend>
                   <label>
@@ -512,8 +539,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
               <p className="onboarding-kicker">CONNECT YOUR AI</p>
               <h1>Sign in to Codex.</h1>
               <p className="onboarding-lede">
-                Wawa uses the Codex CLI on this computer. Sign in with your ChatGPT account to
-                connect it.
+                Wawa uses the Codex CLI on {managedServer ? 'your server' : 'this computer'}. Sign
+                in with your ChatGPT account to connect it.
               </p>
               {status?.codex.signedIn ? (
                 <div className="onboarding-connected">
@@ -527,10 +554,14 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                     void run('codex', async () => {
                       const result = await api(
                         'desktop/codex/login',
-                        z.object({ url: z.url() }),
+                        z.object({ url: z.url(), userCode: z.string().optional() }),
                         {},
                       );
-                      await window.chat2tasksDesktop?.openExternal(result.url);
+                      if (result.userCode)
+                        setDeviceLogin({ url: result.url, userCode: result.userCode });
+                      if (window.chat2tasksDesktop)
+                        await window.chat2tasksDesktop.openExternal(result.url);
+                      else window.open(result.url, '_blank', 'noopener,noreferrer');
                       await refreshStatus();
                     })
                   }
@@ -541,6 +572,18 @@ function Onboarding({ onDone }: { onDone: () => void }) {
                       ? 'Continue sign-in in your browser'
                       : 'Continue with ChatGPT'}
                 </button>
+              )}
+              {deviceLogin && !status?.codex.signedIn && (
+                <div className="onboarding-explainer">
+                  <strong>Enter this one-time code: {deviceLogin.userCode}</strong>
+                  <p>
+                    <a href={deviceLogin.url} target="_blank" rel="noreferrer">
+                      Open ChatGPT sign-in
+                    </a>{' '}
+                    and enter the code. Device-code sign-in may need to be enabled in your ChatGPT
+                    security settings.
+                  </p>
+                </div>
               )}
               {!status && (
                 <p className="onboarding-hint" role="status">

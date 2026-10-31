@@ -1,0 +1,84 @@
+services:
+  openwa:
+    image: ghcr.io/rmyndharis/openwa:0.25.0
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /tmp
+    pids_limit: 2048
+    mem_limit: 2g
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: error
+      XDG_CONFIG_HOME: /tmp/.config
+      XDG_CACHE_HOME: /tmp/.cache
+      DATABASE_SYNCHRONIZE: 'true'
+      ENGINE_TYPE: ${WAWA_ENGINE:?Choose a WhatsApp connection}
+      AUTO_START_SESSIONS: 'true'
+      SSRF_ALLOWED_HOSTS: wawa
+      UPDATE_CHECK_ENABLED: 'false'
+    volumes:
+      - openwa-data:/app/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:2785/api/health/ready']
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+    stop_grace_period: 75s
+
+  gateway-key:
+    image: node:24-bookworm-slim
+    user: '0:0'
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - 'install -m 600 -o 1000 -g 1000 /openwa/.api-key /wawa-key/openwa.key'
+    volumes:
+      - openwa-data:/openwa:ro
+      - gateway-key:/wawa-key
+    depends_on:
+      openwa:
+        condition: service_healthy
+
+  wawa:
+    build:
+      context: ../..
+    init: true
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${WAWA_PORT:?Choose a local port}:2786'
+    environment:
+      WAWA_MANAGED_SERVER: 'true'
+      DESKTOP_OPENWA_URL: http://openwa:2785
+      DESKTOP_OPENWA_KEY_FILE: /run/wawa-gateway/openwa.key
+      DESKTOP_WEBHOOK_URL: http://wawa:2786/api/webhooks/openwa
+      DESKTOP_GATEWAY_ENGINE: ${WAWA_ENGINE:?Choose a WhatsApp connection}
+      PUBLIC_ORIGIN: ${WAWA_ORIGIN:?Set the private HTTPS address}
+      APP_PASSWORD:
+    volumes:
+      - workspace-data:/app/data
+      - codex-home:/home/node/.codex
+      - gateway-key:/run/wawa-gateway:ro
+    depends_on:
+      gateway-key:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  openwa-data:
+  gateway-key:
+  workspace-data:
+  codex-home:

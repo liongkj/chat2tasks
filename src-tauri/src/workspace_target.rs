@@ -5,6 +5,7 @@ use tauri::Url;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum WorkspaceTarget {
+    Unconfigured,
     Local,
     Remote { url: String },
 }
@@ -37,7 +38,11 @@ pub fn read(data: &Path) -> Result<WorkspaceTarget, String> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(WorkspaceTarget::Local)
+            return Ok(if data.join("workspace").join("tasks.sqlite").is_file() {
+                WorkspaceTarget::Local
+            } else {
+                WorkspaceTarget::Unconfigured
+            })
         }
         Err(_) => return Err("Could not read the selected workspace.".into()),
     };
@@ -48,6 +53,9 @@ pub fn read(data: &Path) -> Result<WorkspaceTarget, String> {
 
 pub fn save(data: &Path, target: WorkspaceTarget) -> Result<(), String> {
     let target = target.validate()?;
+    if target == WorkspaceTarget::Unconfigured {
+        return Err("Choose where your workspace will run.".into());
+    }
     fs::create_dir_all(data).map_err(|_| "Could not save the workspace choice.")?;
     let bytes = serde_json::to_vec(&target).map_err(|_| "Could not save the workspace choice.")?;
     fs::write(data.join("workspace-target.json"), bytes)
@@ -97,6 +105,7 @@ mod tests {
         ));
         let workspace = data.join("workspace");
         fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("tasks.sqlite"), "existing workspace").unwrap();
         fs::write(workspace.join("marker"), "local workspace").unwrap();
         assert_eq!(read(&data).unwrap(), WorkspaceTarget::Local);
         save(
@@ -121,6 +130,33 @@ mod tests {
         assert_eq!(
             fs::read_to_string(workspace.join("marker")).unwrap(),
             "local workspace"
+        );
+        fs::remove_dir_all(data).unwrap();
+    }
+
+    #[test]
+    fn a_new_installation_requires_a_workspace_choice() {
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let data = std::env::temp_dir().join(format!(
+            "chat2tasks-new-workspace-{}-{id}",
+            std::process::id()
+        ));
+        assert_eq!(read(&data).unwrap(), WorkspaceTarget::Unconfigured);
+        save(
+            &data,
+            WorkspaceTarget::Remote {
+                url: "https://server.example".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read(&data).unwrap(),
+            WorkspaceTarget::Remote {
+                url: "https://server.example/".into()
+            }
         );
         fs::remove_dir_all(data).unwrap();
     }

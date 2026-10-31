@@ -8,12 +8,13 @@ import { Store } from '../src/server/store.js';
 import { configureDesktopGateway } from '../src/server/desktop.js';
 
 const require = createRequire(import.meta.url);
-const { workspaceGatewayLaunch } = require('../desktop/gateway-mode.cjs') as {
+const { workspaceGatewayLaunch, workspaceSharingPort } = require('../desktop/gateway-mode.cjs') as {
   workspaceGatewayLaunch(path: string): {
     mode: 'local' | 'remote';
     engine: 'whatsapp-web.js' | 'baileys';
     resumeSessions: boolean;
   };
+  workspaceSharingPort(path: string): number | undefined;
 };
 const { replaceWorkspace } = require('../desktop/workspace-replace.cjs') as {
   replaceWorkspace(options: {
@@ -76,6 +77,29 @@ test('a successful desktop import keeps the old workspace as a backup', async ()
     );
     assert.ok(backup);
     assert.equal(await readFile(join(root, backup, 'marker'), 'utf8'), 'original');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('desktop sharing keeps a stable local port and its password across settings saves', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'chat2tasks-desktop-sharing-'));
+  try {
+    assert.equal(workspaceSharingPort(root), undefined);
+    const store = new Store(root);
+    try {
+      store.saveDesktopSharing({
+        kind: 'enabled',
+        origin: 'https://shared.example:8443',
+        port: 2786,
+        password: 'fictional-sharing-password',
+      });
+      store.saveSettings({ settings: store.settings(), secrets: {}, removeSecrets: [] });
+      assert.equal(store.secret('desktop-sharing-password'), 'fictional-sharing-password');
+    } finally {
+      store.close();
+    }
+    assert.equal(workspaceSharingPort(root), 2786);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -228,6 +252,31 @@ test('switching local WhatsApp connection types keeps their followed chats separ
     });
     await configureDesktopGateway(store, { ...environment, DESKTOP_GATEWAY_ENGINE: 'baileys' });
     assert.deepEqual(store.settings().chats, [lightChat]);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a managed server connects its WhatsApp gateway using its private callback and key', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wawa-server-gateway-'));
+  const store = new Store(join(root, 'workspace'));
+  const key = join(root, 'gateway-key');
+  await writeFile(key, 'fictional-server-key');
+  try {
+    await configureDesktopGateway(store, {
+      PUBLIC_ORIGIN: 'https://workspace.example.test:8443',
+      DESKTOP_OPENWA_URL: 'http://openwa:2785',
+      DESKTOP_OPENWA_KEY_FILE: key,
+      DESKTOP_WEBHOOK_URL: 'http://wawa:2786/api/webhooks/openwa',
+      DESKTOP_GATEWAY_ENGINE: 'baileys',
+      WAWA_MANAGED_SERVER: 'true',
+    });
+    assert.equal(store.settings().openwaUrl, 'http://openwa:2785');
+    assert.equal(store.settings().webhookUrl, 'http://wawa:2786/api/webhooks/openwa');
+    assert.equal(store.secret('openwa'), 'fictional-server-key');
+    assert.equal(store.settings().desktopGateway.engine, 'baileys');
+    assert.equal(store.settings().desktopGateway.activeEngine, 'baileys');
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });

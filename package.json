@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
     "dev:ui": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build && npm run build:extension && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/index.js && esbuild src/server/transfer-cli.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/desktop/transfer-cli.js",
+    "build": "tsc --noEmit && vite build && npm run build:extension && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/index.js && esbuild src/server/transfer-cli.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/desktop/transfer-cli.js && esbuild src/server/workspace-ownership.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/desktop/ownership.cjs && esbuild src/server/destination-move.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/desktop/destination-move.cjs && esbuild src/server/move-client.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/desktop/move-client.mjs",
     "start": "node dist/server/index.js",
     "check": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",

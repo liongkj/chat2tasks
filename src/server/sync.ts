@@ -54,6 +54,7 @@ export class Sync {
   running = false;
   timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
+  private idleWaiters: Array<() => void> = [];
   constructor(
     readonly store: Store,
     readonly openwa: OpenWA,
@@ -77,6 +78,11 @@ export class Sync {
     this.stopped = true;
     clearTimeout(this.timer);
   }
+  stopAndWait() {
+    this.stop();
+    if (!this.running) return Promise.resolve();
+    return new Promise<void>((resolve) => this.idleWaiters.push(resolve));
+  }
   wake() {
     for (const chat of this.store.settings().chats.filter((c) => c.enabled))
       this.store.queueChat(chat.id, 0, true, true);
@@ -85,6 +91,7 @@ export class Sync {
   reconfigure() {
     for (const chat of this.store.settings().chats.filter((c) => c.enabled))
       this.store.queueChat(chat.id, 0, true, false);
+    this.store.resumeMoveJobs();
     this.notify();
   }
   notify() {
@@ -185,6 +192,7 @@ export class Sync {
     } finally {
       this.running = false;
       this.notify();
+      for (const resolve of this.idleWaiters.splice(0)) resolve();
     }
   }
   private async runChat(

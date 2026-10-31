@@ -54,8 +54,10 @@ async function installEnvironment() {
   return env;
 }
 
-if (!['darwin', 'win32'].includes(process.platform))
-  throw new Error('Prepare the preview on the target Mac or Windows architecture.');
+if (!['darwin', 'win32', 'linux'].includes(process.platform))
+  throw new Error('Prepare the preview on the target Mac, Windows, or Linux computer.');
+if (process.platform === 'linux' && process.arch !== 'x64')
+  throw new Error('The bundled WhatsApp browser currently requires an x64 Linux computer.');
 await mkdir(join(root, 'work'), { recursive: true });
 if (!(await exists(join(source, '.git'))))
   await run('git', [

@@ -19,3 +19,19 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:extension
       - run: docker build -t chat2tasks:test .
+  platform-check:
+    name: Check ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
