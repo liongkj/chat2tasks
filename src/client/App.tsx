@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import {
   Activity,
   ArrowLeft,
   CheckCircle2,
+  Info,
   Link2,
   ListTree,
   Menu as MenuIcon,
@@ -14,10 +15,15 @@ import {
   X,
 } from 'lucide-react';
 import { RefreshGate } from '../shared/refresh.js';
+import { captureCompletedRow } from '../shared/motion.js';
+import { playSound, useSoundActivation } from '../shared/sound.js';
+import { useNotice, type NoticeVariant } from '../shared/useNotice.js';
 import { useInputModality } from '../shared/useInputModality.js';
 import {
   PublicSettingsSchema,
+  SoundPreferencesSchema,
   SnapshotSchema,
+  defaultSoundPreferences,
   type PublicSettings,
   type Snapshot,
   type Task,
@@ -39,7 +45,12 @@ import { ReviewView } from './ReviewView.js';
 import { WaitingView } from './WaitingView.js';
 import { WorkspaceImport } from './WorkspaceImport.js';
 import { deskTitle, matchesTaskFilter, tasksForDesk } from './taskDesk.js';
-import { useWorkspaceLocation, type SettingsSection, type WorkspaceView } from './taskLocation.js';
+import {
+  useWorkspaceLocation,
+  type SettingsSection,
+  type WorkspaceLocation,
+  type WorkspaceView,
+} from './taskLocation.js';
 
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'conversations', label: 'WhatsApp & chats' },
@@ -52,6 +63,7 @@ const settingsSections: { id: SettingsSection; label: string }[] = [
 
 const empty: Snapshot = {
   demo: false,
+  sound: defaultSoundPreferences,
   tasks: [],
   waiting_for: [],
   messages: [],
@@ -70,10 +82,13 @@ function useNarrowLayout() {
   return narrow;
 }
 type Notice =
-  | { kind: 'message'; text: string }
+  | { kind: 'message'; text: string; variant: NoticeVariant }
   | { kind: 'completion'; text: string; taskId: Task['id']; previousDone: boolean; done: boolean };
+const taskScope = (location: WorkspaceLocation) =>
+  JSON.stringify([location.view, location.filter, location.kind, location.chat, location.query]);
 export function App() {
   useInputModality();
+  useSoundActivation();
   const narrow = useNarrowLayout();
   const { location, updateLocation } = useWorkspaceLocation();
   const [data, setData] = useState(empty);
@@ -83,8 +98,17 @@ export function App() {
   const [online, setOnline] = useState(true);
   const [requestingSync, setRequestingSync] = useState(false);
   const [workspaceImportOpen, setWorkspaceImportOpen] = useState(false);
-  const [notice, setNoticeState] = useState<Notice | null>(null);
-  const notify = useCallback((text: string) => setNoticeState({ kind: 'message', text }), []);
+  const {
+    notice,
+    exiting: noticeExiting,
+    show: showNotice,
+    dismiss: dismissNotice,
+  } = useNotice<Notice>();
+  const notify = useCallback(
+    (text: string, variant: NoticeVariant = 'info') =>
+      showNotice({ kind: 'message', text, variant }),
+    [showNotice],
+  );
   const [mobileMenu, setMobileMenu] = useState(false);
   const [workspaceQuery, setWorkspaceQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
@@ -98,6 +122,14 @@ export function App() {
   const refreshGate = useRef(new RefreshGate());
   const pendingTicks = useRef(new Map<string, boolean>());
   const [pendingTickIds, setPendingTickIds] = useState<Set<string>>(new Set());
+  const [completionFlash, setCompletionFlash] = useState<string | null>(null);
+  const [celebrationScope, setCelebrationScope] = useState<string | null>(null);
+  const [newQuestions, setNewQuestions] = useState<Set<string>>(new Set());
+  const seenQuestions = useRef<Set<string> | null>(null);
+  const dataRef = useRef(data);
+  const locationRef = useRef(location);
+  dataRef.current = data;
+  locationRef.current = location;
   const refresh = useCallback(async () => {
     const ticket = refreshGate.current.start();
     try {
@@ -135,12 +167,43 @@ export function App() {
   }, [refresh, data.status.syncing, data.status.debouncing, requestingSync]);
   useEffect(() => {
     if (!notice) return;
-    const timer = setTimeout(() => setNoticeState(null), 7000);
+    const timer = setTimeout(dismissNotice, 7000);
     return () => clearTimeout(timer);
-  }, [notice]);
+  }, [notice, dismissNotice]);
+  useEffect(() => {
+    if (!completionFlash && !celebrationScope) return;
+    const timer = setTimeout(() => {
+      setCompletionFlash(null);
+      setCelebrationScope(null);
+    }, 240);
+    return () => clearTimeout(timer);
+  }, [completionFlash, celebrationScope]);
+  useEffect(() => {
+    if (!newQuestions.size) return;
+    const timer = setTimeout(() => setNewQuestions(new Set()), 200);
+    return () => clearTimeout(timer);
+  }, [newQuestions]);
   const chats = config?.settings.chats ?? [];
   const chat = chats.find((item) => item.id === location.chat);
   const selectedTask = data.tasks.find((task) => matchesTaskIdentifier(task, location.task));
+  useLayoutEffect(() => {
+    if (!loaded) return;
+    if (!seenQuestions.current) {
+      seenQuestions.current = new Set(data.questions.map((question) => question.id));
+      return;
+    }
+    const arrived = data.questions.filter((question) => !seenQuestions.current?.has(question.id));
+    for (const question of arrived) seenQuestions.current.add(question.id);
+    if (!['tasks', 'review', 'conversations'].includes(location.view)) return;
+    const visible = arrived.filter((question) => {
+      if (location.view !== 'conversations') return true;
+      const message = data.messages.find((item) => item.id === question.message_id);
+      return chat && message?.chatId === chat.chatId && message.sessionId === chat.sessionId;
+    });
+    if (!visible.length || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    setNewQuestions(new Set(visible.map((question) => question.id)));
+    void playSound('attention', data.sound);
+  }, [loaded, data.questions, data.messages, data.sound, location.view, chat]);
   useEffect(() => {
     if (!loaded || !config || narrow) return;
     if (location.task) return;
@@ -308,7 +371,7 @@ export function App() {
   useEffect(() => {
     document.title = `Wawa — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
   }, [viewTitle, chat, location.view]);
-  async function tick(task: Task, done = !task.done) {
+  async function tick(task: Task, done = !task.done, source: 'direct' | 'undo' = 'direct') {
     if (pendingTicks.current.has(task.id) || task.done === done) return;
     if (done && task.gtd.recurrence) {
       pendingTicks.current.set(task.id, done);
@@ -320,12 +383,14 @@ export function App() {
         });
         if (!result.ok)
           throw new Error('This occurrence has already changed. Refresh and try again.');
+        setCompletionFlash(task.id);
+        void playSound('completion', dataRef.current.sound);
         pendingTicks.current.delete(task.id);
         setPendingTickIds(new Set(pendingTicks.current.keys()));
         await refresh();
         notify('Occurrence completed');
       } catch (error) {
-        notify(errorMessage(error));
+        notify(errorMessage(error), 'error');
         void refresh();
       } finally {
         pendingTicks.current.delete(task.id);
@@ -333,6 +398,26 @@ export function App() {
       }
       return;
     }
+    const scope = taskScope(location);
+    const visibleTasks = tasksForDesk({
+      tasks: data.tasks,
+      messages: data.messages,
+      chats,
+      location,
+    });
+    const wasLastVisible =
+      done &&
+      source === 'direct' &&
+      location.view === 'tasks' &&
+      location.filter === 'open' &&
+      !location.query &&
+      pendingTicks.current.size === 0 &&
+      visibleTasks.length === 1 &&
+      visibleTasks[0]?.id === task.id;
+    const row = document
+      .querySelector<HTMLElement>(`[data-task-reference="${CSS.escape(task.reference)}"]`)
+      ?.closest<HTMLElement>('.task-row');
+    const finishRow = captureCompletedRow(row ?? null);
     pendingTicks.current.set(task.id, done);
     setPendingTickIds(new Set(pendingTicks.current.keys()));
     refreshGate.current.invalidate();
@@ -340,12 +425,31 @@ export function App() {
       ...current,
       tasks: current.tasks.map((item) => (item.id === task.id ? { ...item, done } : item)),
     }));
+    if (done && source === 'direct') finishRow();
     try {
       await api('tick', OkSchema, { id: task.id, done });
       refreshGate.current.invalidate();
       pendingTicks.current.delete(task.id);
       setPendingTickIds(new Set(pendingTicks.current.keys()));
-      setNoticeState({
+      if (done && source === 'direct') {
+        setCompletionFlash(task.id);
+        void playSound('completion', dataRef.current.sound);
+        const currentLocation = locationRef.current;
+        if (
+          wasLastVisible &&
+          taskScope(currentLocation) === scope &&
+          tasksForDesk({
+            tasks: dataRef.current.tasks.map((item) =>
+              item.id === task.id ? { ...item, done } : item,
+            ),
+            messages: dataRef.current.messages,
+            chats,
+            location: currentLocation,
+          }).length === 0
+        )
+          setCelebrationScope(scope);
+      }
+      showNotice({
         kind: 'completion',
         text: done
           ? task.kind === 'question'
@@ -373,7 +477,7 @@ export function App() {
         ),
       }));
       void refresh();
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     }
   }
   async function sync() {
@@ -386,7 +490,7 @@ export function App() {
       );
       await refresh();
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setRequestingSync(false);
     }
@@ -468,6 +572,7 @@ export function App() {
         });
       }}
       onTick={() => void tick(selectedTask)}
+      completionConfirmed={completionFlash === selectedTask.id}
       ticking={pendingTickIds.has(selectedTask.id)}
       onSaved={() => void refresh()}
       onKindChanged={(kind) => {
@@ -630,25 +735,34 @@ export function App() {
   const undo = notice?.kind === 'completion' ? notice : null;
   const undoTask = undo ? data.tasks.find((task) => task.id === undo.taskId) : undefined;
   const notification = notice && (
-    <div className="toast" role="status">
-      <CheckCircle2 size={17} />
+    <div
+      className={`toast ${notice.kind === 'message' ? notice.variant : 'success'}`}
+      data-exiting={noticeExiting}
+      role={noticeExiting ? undefined : 'status'}
+    >
+      {notice.kind === 'message' && notice.variant === 'error' ? (
+        <TriangleAlert size={17} />
+      ) : notice.kind === 'message' && notice.variant === 'info' ? (
+        <Info size={17} />
+      ) : (
+        <CheckCircle2
+          className={notice.kind === 'completion' && notice.done ? 'completion-confirmed' : ''}
+          size={17}
+        />
+      )}
       <span>{notice.text}</span>
       {undo && (
         <button
           className="toast-undo"
           disabled={!undoTask || undoTask.done !== undo.done || pendingTickIds.has(undo.taskId)}
           onClick={() => {
-            if (undoTask) void tick(undoTask, undo.previousDone);
+            if (undoTask) void tick(undoTask, undo.previousDone, 'undo');
           }}
         >
           Undo
         </button>
       )}
-      <button
-        className="icon-btn"
-        aria-label="Dismiss notification"
-        onClick={() => setNoticeState(null)}
-      >
+      <button className="icon-btn" aria-label="Dismiss notification" onClick={dismissNotice}>
         <X size={15} />
       </button>
     </div>
@@ -660,7 +774,10 @@ export function App() {
       return chat && message?.chatId === chat.chatId && message.sessionId === chat.sessionId;
     })
     .map((question) => (
-      <div className="question-card" key={question.id}>
+      <div
+        className={`question-card ${newQuestions.has(question.id) ? 'question-arrived' : ''}`}
+        key={question.id}
+      >
         <h3>{question.question}</h3>
         <p>{data.messages.find((message) => message.id === question.message_id)?.body}</p>
         <div className="form-inline">
@@ -673,7 +790,7 @@ export function App() {
                 await api('resolve', OkSchema, { id: question.id, task_id: event.target.value });
                 await refresh();
               } catch (error) {
-                notify(errorMessage(error));
+                notify(errorMessage(error), 'error');
               }
             }}
           >
@@ -708,7 +825,7 @@ export function App() {
                 await api('resolve', OkSchema, { id: question.id, task_id: null });
                 await refresh();
               } catch (error) {
-                notify(errorMessage(error));
+                notify(errorMessage(error), 'error');
               }
             }}
           >
@@ -917,6 +1034,7 @@ export function App() {
                 onImport={() => file.current?.click()}
                 inspector={inspector}
                 questions={questions}
+                celebrate={celebrationScope === taskScope(location)}
                 navigationTrigger={navigationTrigger}
               />
             ) : location.view === 'threads' ? (
@@ -973,6 +1091,12 @@ export function App() {
                   <SettingsPanel
                     section={location.settingsSection ?? 'models'}
                     config={config}
+                    sound={data.sound}
+                    onSoundSave={async (value) => {
+                      const saved = await api('sound-preferences', SoundPreferencesSchema, value);
+                      refreshGate.current.invalidate();
+                      setData((current) => ({ ...current, sound: saved }));
+                    }}
                     onSave={(next) => {
                       setConfig(next);
                       void refresh();
@@ -1001,7 +1125,7 @@ export function App() {
                   await refresh();
                   notify('Task ticks imported');
                 } catch (error) {
-                  notify(errorMessage(error));
+                  notify(errorMessage(error), 'error');
                 } finally {
                   input.value = '';
                 }

@@ -7,6 +7,7 @@ import { matchesTaskIdentifier } from '../shared/tasks.js';
 import {
   MessageSchema,
   AttentionPreferencesSchema,
+  SoundPreferencesSchema,
   ItemKindSchema,
   GtdSchema,
   WaitInputSchema,
@@ -31,6 +32,7 @@ import {
   type Status,
   type Settings,
   type AttentionPreferences,
+  type SoundPreferences,
 } from '../shared/schema.js';
 
 export const now = () => Date.now() / 1000;
@@ -272,6 +274,14 @@ export class Store {
   savePreferences(value: unknown) {
     const preferences = AttentionPreferencesSchema.parse(value);
     this.setMeta('attention_preferences', preferences);
+    return preferences;
+  }
+  soundPreferences(): SoundPreferences {
+    return SoundPreferencesSchema.parse(this.metaValue('sound_preferences') ?? {});
+  }
+  saveSoundPreferences(value: unknown) {
+    const preferences = SoundPreferencesSchema.parse(value);
+    this.setMeta('sound_preferences', preferences);
     return preferences;
   }
   relinkConversation(id: string, sessionId: string) {
@@ -1230,6 +1240,7 @@ export class Store {
       );
     return {
       demo: this.metaValue('demo') === true,
+      sound: this.soundPreferences(),
       tasks,
       waiting_for,
       messages,

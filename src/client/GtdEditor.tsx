@@ -1,3 +1,4 @@
+import type { Notify } from '../shared/useNotice.js';
 import { useState } from 'react';
 import { GtdSchema, TaskEvidenceSchema, type Gtd, type Task } from '../shared/schema.js';
 import { api } from './api.js';
@@ -9,7 +10,7 @@ export function GtdEditor({
 }: {
   task: Task;
   onSaved: () => void;
-  notify: (text: string) => void;
+  notify: Notify;
 }) {
   const [draft, setDraft] = useState<Gtd>(task.gtd);
   const [frequency, setFrequency] = useState(task.gtd.recurrence?.frequency ?? 'none');
@@ -30,7 +31,7 @@ export function GtdEditor({
           };
     const parsed = GtdSchema.safeParse({ ...draft, recurrence });
     if (!parsed.success) {
-      notify('Add a valid date for repeating work and complete any date details.');
+      notify('Add a valid date for repeating work and complete any date details.', 'error');
       return;
     }
     setSaving(true);
@@ -39,7 +40,7 @@ export function GtdEditor({
       onSaved();
       notify('Organization saved');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save organization.');
+      notify(error instanceof Error ? error.message : 'Could not save organization.', 'error');
     } finally {
       setSaving(false);
     }

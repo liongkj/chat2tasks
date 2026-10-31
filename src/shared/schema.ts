@@ -8,6 +8,13 @@ export const AttentionPreferencesSchema = z.object({
   resolveReplies: z.enum(['automatically', 'review']).default('automatically'),
 });
 export type AttentionPreferences = z.infer<typeof AttentionPreferencesSchema>;
+export const SoundPreferencesSchema = z.object({
+  completion: z.boolean().default(true),
+  attention: z.boolean().default(true),
+  volume: z.number().min(0).max(1).default(0.3),
+});
+export type SoundPreferences = z.infer<typeof SoundPreferencesSchema>;
+export const defaultSoundPreferences = SoundPreferencesSchema.parse({});
 export const ChatSchema = z.object({
   id: text,
   name: text,
@@ -314,6 +321,7 @@ export const StatusSchema = z.object({
 });
 export const SnapshotSchema = z.object({
   demo: z.boolean().default(false),
+  sound: SoundPreferencesSchema.default(defaultSoundPreferences),
   tasks: z.array(TaskSchema),
   waiting_for: z.array(WaitSchema).default([]),
   messages: z.array(MessageSchema),

@@ -60,6 +60,8 @@ Choose **Conversations** to read a followed chat's cached messages and linked ta
 
 **Activity** separates the most recent signed message event from the last completed task analysis. These are different from the browser’s connection to the workspace server.
 
+Task completion and new clarification sounds are on by default at 30% volume. Choose **Settings → Attention → Sounds** to change the volume, preview either sound, or turn each one off. The companion has the same controls under **More options → Sound settings**; paired surfaces share the saved preferences and pick up changes on refresh. Sounds play only in the active, visible surface after a successful completion or when a new clarification appears. Browsers may require an interaction with the page before they allow audio.
+
 ## Spotlight: search across your workspace
 
 Choose **Spotlight** in the sidebar or press **⌘/Ctrl K** to search saved items and conversation messages. Exact matches work without a model. Related results use **EmbeddingGemma 2** through Ollama, including the contents of available image, audio, and video attachments. Audio is indexed in 30-second segments; video uses frames sampled every five seconds and its audio, when present. Indexing runs in the background and later searches reuse the index. Results are suggestions and may miss a match or include unrelated material; embeddings do not produce a transcript.
