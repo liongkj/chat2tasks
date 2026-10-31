@@ -140,9 +140,7 @@ export function TaskQueue({
               >
                 <X size={14} />
               </button>
-            ) : (
-              <kbd>⌘ K</kbd>
-            )}
+            ) : null}
           </label>
         </div>
         <div className="queue-context">

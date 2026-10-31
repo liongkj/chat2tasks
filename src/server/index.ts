@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { Store, TaskTriageError } from './store.js';
+import { LocalSearch } from './search.js';
+import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
@@ -45,6 +47,7 @@ const port = z.coerce
   .max(65535)
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
+const localSearch = new LocalSearch(store.db, () => store.snapshot());
 const desktop = process.env.CHAT2TASKS_DESKTOP === 'true';
 const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
 if (desktop) await configureDesktopGateway(store);
@@ -206,6 +209,14 @@ server.setErrorHandler((error, request, reply) => {
   });
 });
 server.get('/api/health', () => ({ ok: true }));
+server.get('/api/search/settings', () => localSearch.settings());
+server.post('/api/search/settings', (request) =>
+  localSearch.saveSettings(SearchSettingsSchema.parse(request.body)),
+);
+server.post('/api/search', async (request) => {
+  const { query, retry } = SearchRequestSchema.parse(request.body);
+  return localSearch.find(query, retry);
+});
 server.addContentTypeParser(
   'application/x-www-form-urlencoded',
   { parseAs: 'string', bodyLimit: 4096 },

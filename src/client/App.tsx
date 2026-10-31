@@ -8,6 +8,7 @@ import {
   ListTree,
   Menu as MenuIcon,
   MessageCircle,
+  Search,
   SquareCheck,
   Settings2,
   TriangleAlert,
@@ -32,6 +33,7 @@ import { ActivityView } from './Activity.js';
 import { SettingsPanel } from './Settings.js';
 import { TaskDetail } from './TaskDetail.js';
 import { TaskQueue } from './TaskQueue.js';
+import { SearchView } from './SearchView.js';
 import { TaskFilters } from './TaskFilters.js';
 import { Overview } from './Overview.js';
 import { ReviewView } from './ReviewView.js';
@@ -85,9 +87,9 @@ export function App() {
   const [notice, setNoticeState] = useState<Notice | null>(null);
   const notify = useCallback((text: string) => setNoticeState({ kind: 'message', text }), []);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [workspaceQuery, setWorkspaceQuery] = useState('');
   const search = useRef<HTMLInputElement>(null);
   const file = useRef<HTMLInputElement>(null);
-  const focusSearch = useRef(false);
   const taskReturnFocus = useRef<{
     element: HTMLElement | null;
     reference: Task['reference'];
@@ -273,50 +275,37 @@ export function App() {
     });
   }, [updateLocation]);
   useEffect(() => {
-    if (location.view === 'tasks' && focusSearch.current) {
-      search.current?.focus();
-      focusSearch.current = false;
-    }
-  }, [location.view]);
-  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
-        focusSearch.current = true;
-        updateLocation({
-          view: 'tasks',
-          task: null,
-          chat: null,
-          filter: 'open',
-          kind: 'all',
-          query: '',
-          tab: 'overview',
-          expanded: false,
-        });
-        search.current?.focus();
+        setMobileMenu(false);
+        document.querySelector<HTMLInputElement>('input[aria-label="Search workspace"]')?.focus();
+        updateLocation({ view: 'search', task: null, message: null, chat: null, query: '' });
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [updateLocation]);
   const viewTitle =
-    location.view === 'overview'
-      ? 'Overview'
-      : location.view === 'waiting'
-        ? 'Waiting for'
-        : location.view === 'review'
-          ? 'Review'
-          : location.view === 'connections'
-            ? 'Connections'
-            : location.view === 'conversations'
-              ? 'Conversations'
-              : location.view === 'threads'
-                ? 'Threads'
-                : location.view === 'tasks'
-                  ? deskTitle(location)
-                  : location.view === 'settings'
-                    ? 'Settings'
-                    : 'Activity';
+    location.view === 'search'
+      ? 'Search'
+      : location.view === 'overview'
+        ? 'Overview'
+        : location.view === 'waiting'
+          ? 'Waiting for'
+          : location.view === 'review'
+            ? 'Review'
+            : location.view === 'connections'
+              ? 'Connections'
+              : location.view === 'conversations'
+                ? 'Conversations'
+                : location.view === 'threads'
+                  ? 'Threads'
+                  : location.view === 'tasks'
+                    ? deskTitle(location)
+                    : location.view === 'settings'
+                      ? 'Settings'
+                      : 'Activity';
   useEffect(() => {
     document.title = `Chat2Tasks — ${chat && location.view === 'conversations' ? chat.name : viewTitle}`;
   }, [viewTitle, chat, location.view]);
@@ -563,6 +552,14 @@ export function App() {
       />
       <div className="sidebar-bottom">
         <button
+          className={`nav-item ${location.view === 'search' ? 'active' : ''}`}
+          aria-current={location.view === 'search' ? 'page' : undefined}
+          onClick={() => navigate('search')}
+        >
+          <Search size={16} />
+          <span>Search</span>
+        </button>
+        <button
           className={`nav-item ${location.view === 'threads' ? 'active' : ''}`}
           aria-current={location.view === 'threads' ? 'page' : undefined}
           onClick={() => navigate('threads')}
@@ -727,7 +724,8 @@ export function App() {
         <div className="app">
           <aside className="sidebar">{navigation}</aside>
           <main className="workspace">
-            {location.view !== 'conversations' &&
+            {location.view !== 'search' &&
+              location.view !== 'conversations' &&
               location.view !== 'tasks' &&
               location.view !== 'overview' &&
               location.view !== 'waiting' &&
@@ -781,7 +779,27 @@ export function App() {
                 </button>
               </div>
             )}
-            {location.view === 'overview' ? (
+            {location.view === 'search' ? (
+              <SearchView
+                tasks={data.tasks}
+                messages={data.messages}
+                chats={chats}
+                query={workspaceQuery}
+                onQuery={setWorkspaceQuery}
+                onTask={openInDesk}
+                onMessage={(message, targetChat) =>
+                  updateLocation({
+                    view: 'conversations',
+                    chat: targetChat.id,
+                    message: message.id,
+                    task: null,
+                    tab: 'overview',
+                    expanded: false,
+                  })
+                }
+                navigationTrigger={navigationTrigger}
+              />
+            ) : location.view === 'overview' ? (
               <Overview
                 tasks={data.tasks}
                 waits={data.waiting_for}
