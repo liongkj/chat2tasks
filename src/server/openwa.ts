@@ -32,7 +32,7 @@ export class OpenWA {
     const settings = this.store.settings(),
       key = this.store.secret('openwa');
     if (!settings.openwaUrl || !key)
-      throw new Error('Connect OpenWA in Settings → Chats to start syncing.');
+      throw new UserError('Connect OpenWA in Settings → Chats to start syncing.');
     const response = await fetch(settings.openwaUrl.replace(/\/$/, '') + path, {
       method,
       headers: {
@@ -54,7 +54,7 @@ export class OpenWA {
   }
   async saveMedia(id: string, bytes: Buffer, maximum = 20_000_000) {
     if (!bytes.length || bytes.length > maximum)
-      throw new Error('Attachment is empty or too large');
+      throw new UserError('Attachment is empty or too large');
     await mkdir(join(this.store.dir, 'media'), { recursive: true, mode: 0o700 });
     const path = this.mediaPath(id),
       temp = path + '.' + randomUUID();
@@ -129,11 +129,13 @@ export class OpenWA {
       const next = result.messages.at(-1)?.id;
       if (found || result.messages.length < 100 || !next) break;
       if (pages.has(next))
-        throw new Error('OpenWA repeated a history page. Sync paused to avoid skipping messages.');
+        throw new UserError(
+          'OpenWA repeated a history page. Sync paused to avoid skipping messages.',
+        );
       pages.add(next);
       after = next;
       if (page === 999)
-        throw new Error('History is too large for one pass. No cursor was advanced.');
+        throw new UserError('History is too large for one pass. No cursor was advanced.');
     }
     const normalized: Message[] = [];
     for (const row of raw) {
@@ -184,6 +186,7 @@ export class OpenWA {
   }
 }
 import { createHash } from 'node:crypto';
+import { UserError } from './errors.js';
 const hashString = (text: string) => createHash('sha256').update(text).digest('hex');
 const hashBytes = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 export async function boundedBytes(response: Response, maximum: number) {
@@ -198,7 +201,7 @@ export async function boundedBytes(response: Response, maximum: number) {
       size += value.length;
       if (size > maximum) {
         await reader.cancel();
-        throw new Error('The attachment is too large');
+        throw new UserError('The attachment is too large');
       }
       chunks.push(value);
     }

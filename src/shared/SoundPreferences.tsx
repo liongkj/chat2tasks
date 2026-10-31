@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SoundPreferences } from './schema.js';
 import { playSound, type SoundKind } from './sound.js';
+import { errorMessage } from './errors.js';
 
 export function SoundPreferencesEditor({
   value,
@@ -26,7 +27,7 @@ export function SoundPreferencesEditor({
       await onSave(draft);
       setMessage('Sound settings saved.');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not save sound settings.');
+      setMessage(errorMessage(error, 'Could not save sound settings.'));
     } finally {
       setBusy(false);
     }

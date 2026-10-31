@@ -21,6 +21,7 @@ import { api, OkSchema } from './api.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
 import { openWorkspacePicker } from './tauri.js';
 import './onboarding.css';
+import { errorMessage } from '../shared/errors.js';
 
 const DesktopStatus = z.object({
   setupComplete: z.boolean(),
@@ -36,9 +37,7 @@ const WhatsappStatus = z.object({ status: z.string(), qr: z.string().nullable() 
 const Chats = z.object({ chats: z.array(z.object({ id: z.string(), name: z.string() })) });
 const steps = ['Welcome', 'WhatsApp', 'Conversations', 'Codex', 'Preferences', 'Ready'];
 
-function message(error: unknown) {
-  return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
-}
+const message = (error: unknown) => errorMessage(error);
 
 export function DesktopRoot({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState<'loading' | 'ready' | 'setup' | 'error'>('loading');

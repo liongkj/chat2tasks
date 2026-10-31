@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { z } from 'zod';
+import { UserError } from './errors.js';
 
 const execute = promisify(execFile);
 
@@ -44,7 +45,7 @@ export class CodexLogin {
 
   private request(method: string, params: unknown) {
     const child = this.child;
-    if (!child) throw new Error('Codex is not running.');
+    if (!child) throw new UserError('Codex is not running.');
     const id = this.nextId++;
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -67,7 +68,7 @@ export class CodexLogin {
 
   async start(mode: 'browser' | 'device' = 'browser') {
     if (this.child && this.authInfo) return this.authInfo;
-    if (this.child) throw new Error('Sign-in is already starting.');
+    if (this.child) throw new UserError('Sign-in is already starting.');
     this.failure = false;
     const child = spawn(process.env.CODEX_BIN ?? 'codex', ['app-server'], {
       env: environment(),
@@ -139,7 +140,7 @@ export class CodexLogin {
       }
       const url = new URL(result.url);
       if (url.protocol !== 'https:' || !['auth.openai.com', 'chatgpt.com'].includes(url.hostname))
-        throw new Error('Codex returned an unexpected sign-in address.');
+        throw new UserError('Codex returned an unexpected sign-in address.');
       this.authInfo = result;
       return result;
     } catch (error) {

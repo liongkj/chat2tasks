@@ -41,6 +41,7 @@ import { TaskQueue } from './TaskQueue.js';
 import { SearchView } from './SearchView.js';
 import { TaskFilters } from './TaskFilters.js';
 import { Overview } from './Overview.js';
+import { QuestionCard } from './QuestionCard.js';
 import { ReviewView } from './ReviewView.js';
 import { WaitingView } from './WaitingView.js';
 import { WorkspaceImport } from './WorkspaceImport.js';
@@ -51,6 +52,7 @@ import {
   type WorkspaceLocation,
   type WorkspaceView,
 } from './taskLocation.js';
+import { errorMessage } from '../shared/errors.js';
 
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'conversations', label: 'WhatsApp & chats' },
@@ -161,13 +163,24 @@ export function App() {
     void refreshConfig();
   }, [refresh, refreshConfig]);
   useEffect(() => {
+    // Hidden windows skip background polling and catch up when shown again.
     const interval = data.status.syncing || data.status.debouncing || requestingSync ? 1000 : 5000;
-    const timer = setInterval(() => void refresh(), interval);
-    return () => clearInterval(timer);
+    const timer = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, interval);
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh, data.status.syncing, data.status.debouncing, requestingSync]);
   useEffect(() => {
     if (!notice) return;
-    const timer = setTimeout(dismissNotice, 7000);
+    // Leave time to read and reach Undo when it is offered.
+    const timer = setTimeout(dismissNotice, notice.kind === 'completion' ? 10000 : 7000);
     return () => clearTimeout(timer);
   }, [notice, dismissNotice]);
   useEffect(() => {
@@ -681,6 +694,7 @@ export function App() {
         </button>
         <button
           className={`nav-item ${location.view === 'activity' ? 'active' : ''}`}
+          aria-current={location.view === 'activity' ? 'page' : undefined}
           onClick={() => navigate('activity')}
         >
           <Activity size={16} />
@@ -688,6 +702,9 @@ export function App() {
         </button>
         <button
           className={`nav-item ${location.view === 'settings' || location.view === 'connections' ? 'active' : ''}`}
+          aria-current={
+            location.view === 'settings' || location.view === 'connections' ? 'page' : undefined
+          }
           onClick={() => navigate('settings')}
         >
           <Settings2 size={16} />
@@ -738,7 +755,13 @@ export function App() {
     <div
       className={`toast ${notice.kind === 'message' ? notice.variant : 'success'}`}
       data-exiting={noticeExiting}
-      role={noticeExiting ? undefined : 'status'}
+      role={
+        noticeExiting
+          ? undefined
+          : notice.kind === 'message' && notice.variant === 'error'
+            ? 'alert'
+            : 'status'
+      }
     >
       {notice.kind === 'message' && notice.variant === 'error' ? (
         <TriangleAlert size={17} />
@@ -774,65 +797,15 @@ export function App() {
       return chat && message?.chatId === chat.chatId && message.sessionId === chat.sessionId;
     })
     .map((question) => (
-      <div
-        className={`question-card ${newQuestions.has(question.id) ? 'question-arrived' : ''}`}
+      <QuestionCard
         key={question.id}
-      >
-        <h3>{question.question}</h3>
-        <p>{data.messages.find((message) => message.id === question.message_id)?.body}</p>
-        <div className="form-inline">
-          <select
-            aria-label="Choose the completed task"
-            defaultValue=""
-            onChange={async (event) => {
-              if (!event.target.value) return;
-              try {
-                await api('resolve', OkSchema, { id: question.id, task_id: event.target.value });
-                await refresh();
-              } catch (error) {
-                notify(errorMessage(error), 'error');
-              }
-            }}
-          >
-            <option value="" disabled>
-              Choose the completed task…
-            </option>
-            {data.tasks
-              .filter((task) => {
-                const message = data.messages.find((item) => item.id === question.message_id);
-                return (
-                  message &&
-                  task.source_ids.some((id) =>
-                    data.messages.some(
-                      (source) =>
-                        source.id === id &&
-                        source.chatId === message.chatId &&
-                        source.sessionId === message.sessionId,
-                    ),
-                  )
-                );
-              })
-              .map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.title}
-                </option>
-              ))}
-          </select>
-          <button
-            className="text-button"
-            onClick={async () => {
-              try {
-                await api('resolve', OkSchema, { id: question.id, task_id: null });
-                await refresh();
-              } catch (error) {
-                notify(errorMessage(error), 'error');
-              }
-            }}
-          >
-            Dismiss
-          </button>
-        </div>
-      </div>
+        question={question}
+        messages={data.messages}
+        tasks={data.tasks}
+        arrived={newQuestions.has(question.id)}
+        notify={notify}
+        refresh={refresh}
+      />
     ));
   return (
     <>
@@ -1030,7 +1003,7 @@ export function App() {
                 onLocation={updateLocation}
                 onSelectTask={openTask}
                 onSync={() => void sync()}
-                onExport={() => download('chat2tasks-export.json', JSON.stringify(data, null, 2))}
+                onExport={() => download('wawa-export.json', JSON.stringify(data, null, 2))}
                 onImport={() => file.current?.click()}
                 inspector={inspector}
                 questions={questions}
@@ -1196,7 +1169,4 @@ export function App() {
       </Dialog.Root>
     </>
   );
-}
-export function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Something went wrong. Try again.';
 }

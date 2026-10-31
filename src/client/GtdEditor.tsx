@@ -2,6 +2,7 @@ import type { Notify } from '../shared/useNotice.js';
 import { useState } from 'react';
 import { GtdSchema, TaskEvidenceSchema, type Gtd, type Task } from '../shared/schema.js';
 import { api } from './api.js';
+import { errorMessage } from '../shared/errors.js';
 
 export function GtdEditor({
   task,
@@ -40,7 +41,7 @@ export function GtdEditor({
       onSaved();
       notify('Organization saved');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save organization.', 'error');
+      notify(errorMessage(error, 'Could not save organization.'), 'error');
     } finally {
       setSaving(false);
     }

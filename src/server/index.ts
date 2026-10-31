@@ -8,30 +8,23 @@ import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { acquireLock } from '../../desktop/process-lock.mjs';
 import type { DesktopSharing } from '../shared/desktop-sharing.js';
-import { Store, TaskTriageError } from './store.js';
+import { Store } from './store.js';
 import { LocalSearch } from './search.js';
 import { prepareSearchMedia } from './search-media.js';
 import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
-import {
-  ItemKindSchema,
-  GtdSchema,
-  WaitInputSchema,
-  WaitStateSchema,
-  SettingsUpdateSchema,
-  TaskSchema,
-  TaskMergeSchema,
-} from '../shared/schema.js';
+import { SettingsUpdateSchema, TaskSchema, TaskMergeSchema } from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
-import { Companion, CompanionError, registerCompanion } from './companion.js';
+import { Companion, registerCompanion } from './companion.js';
 import { registerMcp } from './mcp.js';
-import { Threads, ThreadError } from './threads.js';
+import { Threads } from './threads.js';
 import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
+import { registerTaskRoutes } from './task-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
 import {
@@ -50,6 +43,7 @@ import {
   desktopSignInPage,
   validDesktopSession,
 } from './desktop-session.js';
+import { UserError } from './errors.js';
 
 const port = z.coerce
   .number()
@@ -254,7 +248,7 @@ server.addHook('onRequest', async (request, reply) => {
       !validDesktopSession(request.headers.cookie ?? '', store.key, workspacePassword)
     )
       return reply
-        .header('WWW-Authenticate', 'Basic realm="Chat2Tasks", charset="UTF-8"')
+        .header('WWW-Authenticate', 'Basic realm="Wawa", charset="UTF-8"')
         .code(401)
         .send({ error: 'Sign in to your workspace' });
   }
@@ -267,21 +261,11 @@ server.addHook('onRequest', async (request, reply) => {
     return reply.code(403).send({ error: 'Invalid request origin or content type' });
 });
 server.setErrorHandler((error, request, reply) => {
-  if (error instanceof ThreadError)
-    return reply.code(error.statusCode).send({ error: error.message });
-  if (error instanceof TaskTriageError)
-    return reply.code(error.statusCode).send({ error: error.message });
-  if (error instanceof CompanionError)
+  if (error instanceof UserError)
     return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof z.ZodError)
     return reply.code(400).send({ error: error.issues.map((x) => x.message).join('. ') });
   // Provider response bodies and supplied credentials never enter logs or API errors.
-  const safe =
-    error instanceof Error &&
-    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|Enter the remote WhatsApp|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
-      error.message,
-    );
-  if (safe) return reply.code(400).send({ error: error.message });
   request.log.error({ event: 'request_failed', route: request.routeOptions.url }, 'Request failed');
   return reply.code(503).send({
     error: 'The request could not be completed. Check your connection settings and retry.',
@@ -371,35 +355,8 @@ await server.register(async (receiver) => {
   });
 });
 server.get('/api/state', () => store.snapshot());
-server.get('/api/tasks/:id', (request) =>
-  store.taskEvidence(z.object({ id: z.string() }).parse(request.params).id),
-);
 server.post('/api/tasks/merge', (request) => store.mergeTasks(TaskMergeSchema.parse(request.body)));
-server.post('/api/tasks/kind', (request) => {
-  const value = z.object({ id: z.string(), kind: ItemKindSchema }).parse(request.body);
-  store.setTaskKind(value.id, value.kind);
-  return { ok: true };
-});
-server.post('/api/tasks/gtd', (request) => {
-  const value = z.object({ id: z.string(), gtd: GtdSchema }).parse(request.body);
-  return store.setGtd(value.id, value.gtd);
-});
-server.post('/api/tasks/occurrence', (request) => {
-  const value = z.object({ id: z.string(), date: z.iso.date() }).parse(request.body);
-  return { ok: store.completeOccurrence(value.id, value.date) };
-});
-server.get('/api/waiting/:id', (request) =>
-  store.waitEvidence(z.object({ id: z.string() }).parse(request.params).id),
-);
-server.post('/api/waiting', (request) => store.createWait(WaitInputSchema.parse(request.body)));
-server.post('/api/waiting/state', (request) => {
-  const value = z.object({ id: z.string(), state: WaitStateSchema }).parse(request.body);
-  return store.setWaitState(value.id, value.state);
-});
-server.post('/api/waiting/confirm', (request) => {
-  const value = z.object({ id: z.string() }).parse(request.body);
-  return store.confirmWait(value.id);
-});
+registerTaskRoutes(server, '/api', store);
 server.get('/api/settings', () => store.publicSettings());
 server.get('/api/preferences', () => store.preferences());
 server.post('/api/preferences', (request) => store.savePreferences(request.body));
@@ -413,7 +370,7 @@ server.post('/api/settings', async (request) => {
       Boolean(update.secrets['remote-openwa']?.trim()) ||
       (!update.removeSecrets.includes('remote-openwa') && Boolean(store.secret('remote-openwa')));
     if (!update.settings.desktopGateway.remoteUrl || !hasKey)
-      throw new Error('Enter the remote WhatsApp server address and API key.');
+      throw new UserError('Enter the remote WhatsApp server address and API key.');
   }
   store.saveSettings(update);
   if (
@@ -426,16 +383,6 @@ server.post('/api/settings', async (request) => {
   remoteEvents?.reconfigure();
   if (syncEnabled) sync.reconfigure();
   return store.publicSettings();
-});
-server.post('/api/tick', async (request) => {
-  const value = z.object({ id: z.string(), done: z.boolean() }).parse(request.body);
-  store.transaction(() => store.tick(value.id, value.done));
-  return { ok: true };
-});
-server.post('/api/remark', async (request) => {
-  const value = z.object({ id: z.string(), remark: z.string().max(4000) }).parse(request.body);
-  store.remark(value.id, value.remark);
-  return { ok: true };
 });
 server.post('/api/resolve', async (request) => {
   const value = z.object({ id: z.string(), task_id: z.string().nullable() }).parse(request.body);
@@ -471,7 +418,7 @@ server.post('/api/import', async (request) => {
   const valid = new Set(store.snapshot().tasks.map((t) => t.id));
   store.transaction(() => {
     for (const t of tasks) {
-      if (!valid.has(t.id)) throw new Error('Task not found');
+      if (!valid.has(t.id)) throw new UserError('Task not found');
       store.tick(t.id, t.done);
     }
   });
@@ -529,7 +476,7 @@ server.post('/api/models', async (request) => {
 server.post('/api/test-model', async (request) => {
   const { profileId } = z.object({ profileId: z.string() }).parse(request.body),
     profile = store.settings().profiles.find((p) => p.id === profileId);
-  if (!profile) throw new Error('Unknown model connection');
+  if (!profile) throw new UserError('Unknown model connection');
   if (profile.kind === 'decision') {
     await decideTrigger(store, profile, [], [], 0);
     return { ok: true };
@@ -552,11 +499,11 @@ server.post('/api/handoff', async (request, reply) => {
   const { id } = z.object({ id: z.string() }).parse(request.body);
   const snapshot = store.snapshot(),
     task = snapshot.tasks.find((t) => t.id === id);
-  if (!task) throw new Error('Task not found');
+  if (!task) throw new UserError('Task not found');
   if (handoffRunning) return reply.code(409).send({ error: 'A handoff is already being prepared' });
   const settings = store.settings(),
     profile = settings.profiles.find((p) => p.id === settings.activeProfileId);
-  if (!profile) throw new Error('Unknown model connection');
+  if (!profile) throw new UserError('Unknown model connection');
   handoffRunning = true;
   try {
     const sources = snapshot.messages.filter((m) => task.source_ids.includes(m.id));
@@ -644,7 +591,7 @@ async function startBackground() {
       if (!startupAbort.signal.aborted)
         store.status({
           syncing: false,
-          error: 'WhatsApp could not start. Quit Chat2Tasks and try again.',
+          error: 'WhatsApp could not start. Quit Wawa and try again.',
         });
       return;
     }

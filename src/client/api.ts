@@ -18,11 +18,18 @@ export async function api<T>(path: string, schema: z.ZodType<T>, body?: unknown)
           body: JSON.stringify(body),
         },
   );
-  const payload: unknown = await response.json();
+  const payload: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(payload);
-    throw new Error(error.success ? error.data.error : 'The request failed. Try again.');
+    throw new Error(
+      error.success
+        ? error.data.error
+        : response.status === 401
+          ? 'Sign in to your workspace and try again.'
+          : `The workspace did not complete the request (HTTP ${response.status}). Try again.`,
+    );
   }
+  if (payload === undefined) throw new Error('The workspace returned an unreadable response.');
   return schema.parse(payload);
 }
 export const OkSchema = z.object({ ok: z.boolean() });

@@ -4,7 +4,7 @@ import { Copy, Download, Link2, LoaderCircle, ShieldCheck, Trash2 } from 'lucide
 import { z } from 'zod';
 import { DevicesSchema, PairCodeSchema } from '../shared/companion.js';
 import { api, appFetch, OkSchema, time } from './api.js';
-import { errorMessage } from './App.js';
+import { errorMessage } from '../shared/errors.js';
 
 export function CompanionSettings({ notify }: { notify: Notify }) {
   const [devices, setDevices] = useState<z.infer<typeof DevicesSchema>['devices']>([]);

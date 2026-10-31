@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import { LoaderCircle } from 'lucide-react';
+import { errorMessage } from '../shared/errors.js';
 
 export function WorkspaceImport({
   open,
@@ -43,7 +44,7 @@ export function WorkspaceImport({
       setPassphrase('');
       window.location.reload();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not import this workspace.');
+      setError(errorMessage(reason, 'Could not import this workspace.'));
       setBusy(null);
     }
   }

@@ -56,6 +56,7 @@ import { SoundPreferencesEditor } from '../../src/shared/SoundPreferences.js';
 import { useNotice } from '../../src/shared/useNotice.js';
 import { ApiError, OkSchema, pair, request } from './api.js';
 import './style.css';
+import { errorMessage } from '../../src/shared/errors.js';
 
 type Session =
   { kind: 'loading' } | { kind: 'unpaired' } | { kind: 'paired'; connection: Connection };
@@ -63,9 +64,7 @@ type PanelNotice = { text: string; kind: 'info' | 'error' | 'paired' | 'completi
 const message = (error: unknown) =>
   error instanceof TypeError
     ? 'Cannot reach your server. Check its address and your network connection.'
-    : error instanceof Error
-      ? error.message
-      : 'Something went wrong. Try again.';
+    : errorMessage(error);
 const completionAction = (task: Task) =>
   task.gtd.recurrence && !task.done
     ? 'Complete occurrence'

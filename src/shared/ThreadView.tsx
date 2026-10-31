@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from './schema.js';
 import type { ThreadMessage, ThreadMove, ThreadSnapshot } from './threads.js';
+import { errorMessage } from './errors.js';
 
 type Selection = { kind: 'thread'; id: string } | { kind: 'other' } | { kind: 'initial' };
 type Props = {
@@ -90,7 +91,7 @@ export function ThreadView({
     try {
       await onOrganise();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not organise threads.');
+      setError(errorMessage(e, 'Could not organise threads.'));
     }
   }
   async function move(event: React.FormEvent) {
@@ -114,7 +115,7 @@ export function ThreadView({
       setMoving(null);
       setNotice('Message moved. This choice will be kept.');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not move this message.');
+      setError(errorMessage(e, 'Could not move this message.'));
     } finally {
       setBusy(false);
     }
@@ -395,7 +396,7 @@ function ThreadImage({ id, onMedia }: { id: string; onMedia: (id: string) => Pro
     } catch (e) {
       setState({
         kind: 'error',
-        message: e instanceof Error ? e.message : 'The original image is unavailable.',
+        message: errorMessage(e, 'The original image is unavailable.'),
       });
     }
   }

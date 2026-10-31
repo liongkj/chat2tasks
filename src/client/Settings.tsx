@@ -5,6 +5,7 @@ import {
   ArrowUpRight,
   Check,
   ChevronRight,
+  Eye,
   EyeOff,
   KeyRound,
   LoaderCircle,
@@ -35,7 +36,7 @@ import {
 } from '../shared/schema.js';
 import { SoundPreferencesEditor } from '../shared/SoundPreferences.js';
 import { api, appFetch, OkSchema } from './api.js';
-import { errorMessage } from './App.js';
+import { errorMessage } from '../shared/errors.js';
 import { CompanionSettings } from './CompanionSettings.js';
 import { AttentionPreferencesEditor } from './AttentionPreferences.js';
 import { DesktopSharingStatusSchema } from '../shared/desktop-sharing.js';
@@ -92,6 +93,7 @@ export function SettingsPanel({
   const [draft, setDraft] = useState(config.settings),
     [secrets, setSecrets] = useState<Record<string, string>>({}),
     [remove, setRemove] = useState<string[]>([]);
+  const [shownSecrets, setShownSecrets] = useState<Set<string>>(() => new Set());
   const [pendingChat, setPendingChat] = useState<{
     id: string;
     action: 'pausing' | 'resuming';
@@ -145,7 +147,7 @@ export function SettingsPanel({
           <KeyRound size={14} />
           <input
             id={'secret-' + id}
-            type="password"
+            type={shownSecrets.has(id) ? 'text' : 'password'}
             autoComplete="new-password"
             value={secrets[id] ?? ''}
             placeholder={exists ? '•••••••••••• · leave blank to keep' : 'Paste a key…'}
@@ -154,7 +156,22 @@ export function SettingsPanel({
               setRemove(remove.filter((key) => key !== id));
             }}
           />
-          <EyeOff size={14} />
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={shownSecrets.has(id) ? `Hide ${label}` : `Show ${label}`}
+            aria-pressed={shownSecrets.has(id)}
+            onClick={() =>
+              setShownSecrets((current) => {
+                const next = new Set(current);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              })
+            }
+          >
+            {shownSecrets.has(id) ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
         </div>
         {exists && (
           <button
