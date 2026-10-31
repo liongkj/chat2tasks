@@ -202,7 +202,26 @@ export function App() {
     data.messages,
     updateLocation,
   ]);
+  const settingsDirty = useRef(false);
+  const onSettingsDirty = useCallback((dirty: boolean) => {
+    settingsDirty.current = dirty;
+  }, []);
+  const locationRef = useRef(location);
+  locationRef.current = location;
+  /** False when the owner has unsaved settings and chooses to stay. Reads refs so the keyboard shortcut sees the current view. */
+  const mayLeaveSettings = (view: WorkspaceView | undefined) => {
+    const current = locationRef.current.view;
+    const inSettings = current === 'settings' || current === 'connections';
+    const leaving = view !== undefined && view !== 'settings' && view !== 'connections';
+    return (
+      !inSettings ||
+      !leaving ||
+      !settingsDirty.current ||
+      window.confirm('You have unsaved settings changes. Leave without saving them?')
+    );
+  };
   const navigate = (view: WorkspaceView) => {
+    if (!mayLeaveSettings(view)) return;
     setMobileMenu(false);
     updateLocation({
       view,
@@ -240,6 +259,7 @@ export function App() {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
+        if (!mayLeaveSettings('search')) return;
         setMobileMenu(false);
         document.querySelector<HTMLInputElement>('input[aria-label="Search workspace"]')?.focus();
         updateLocation({ view: 'search', task: null, message: null, chat: null, query: '' });
@@ -417,6 +437,7 @@ export function App() {
       location={location}
       onNavigate={navigate}
       onLocation={(patch) => {
+        if (!mayLeaveSettings(patch.view)) return;
         setMobileMenu(false);
         updateLocation(patch);
       }}
@@ -735,6 +756,7 @@ export function App() {
                     onImportWorkspace={
                       window.chat2tasksDesktop ? () => setWorkspaceImportOpen(true) : undefined
                     }
+                    onDirty={onSettingsDirty}
                   />
                 ) : (
                   <p className="empty-copy">Loading settings…</p>

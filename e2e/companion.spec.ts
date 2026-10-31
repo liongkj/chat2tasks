@@ -576,6 +576,37 @@ test('a workspace transfer needs the passphrase typed twice', async () => {
   }
 });
 
+test('leaving settings with unsaved changes asks first', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '?view=connections');
+    const url = page.getByLabel('OpenWA API URL');
+    await expect(url).toBeVisible();
+    await url.fill('http://changed.example:2785');
+    const prompts: string[] = [];
+    page.once('dialog', (dialog) => {
+      prompts.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect.poll(() => prompts.length).toBe(1);
+    expect(prompts[0]).toContain('unsaved settings');
+    await expect(url).toHaveValue('http://changed.example:2785');
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Waiting for', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Waiting for', exact: true })).toBeVisible();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
 test('the last-item celebration waits for a confirmed completion', async () => {
   const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
   const task = snapshot.tasks.find(

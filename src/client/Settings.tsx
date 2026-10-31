@@ -50,6 +50,8 @@ type Props = {
   onSave: (config: PublicSettings) => void;
   notify: Notify;
   onImportWorkspace?: () => void;
+  /** Reports whether the draft differs from what is saved, so the shell can guard navigation. */
+  onDirty?: (dirty: boolean) => void;
 };
 type DiscoveredEntry = { id: string; name: string };
 const WhatsappStatus = z.object({ status: z.string(), qr: z.string().nullable() });
@@ -84,6 +86,7 @@ export function SettingsPanel({
   onSave,
   notify,
   onImportWorkspace,
+  onDirty,
 }: Props) {
   const page = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -297,6 +300,16 @@ export function SettingsPanel({
     JSON.stringify(draft) !== JSON.stringify(config.settings) ||
     Object.values(secrets).some((value) => value.trim().length > 0) ||
     remove.length > 0;
+  useEffect(() => {
+    onDirty?.(hasChanges);
+    if (!hasChanges) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => {
+      window.removeEventListener('beforeunload', warn);
+      onDirty?.(false);
+    };
+  }, [hasChanges, onDirty]);
   return (
     <div className="settings-page" ref={page}>
       <div className="settings-page-heading">
