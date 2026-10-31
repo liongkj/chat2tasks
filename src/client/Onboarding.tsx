@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -72,6 +72,19 @@ function Onboarding({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(() =>
     localStorage.getItem('wawa-onboarding-resume') === 'whatsapp' ? 1 : 0,
   );
+  const content = useRef<HTMLDivElement>(null);
+  const visitedStep = useRef(step);
+  useEffect(() => {
+    // Moving between steps replaces the whole panel; put focus on its heading
+    // so keyboard and screen reader users start at the top of the new step.
+    if (visitedStep.current === step) return;
+    visitedStep.current = step;
+    const heading = content.current?.querySelector<HTMLElement>('h1');
+    if (!heading) return;
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+    content.current?.scrollTo({ top: 0 });
+  }, [step]);
   const [engine, setEngine] = useState<'whatsapp-web.js' | 'baileys'>('whatsapp-web.js');
   const [activeEngine, setActiveEngine] = useState<'whatsapp-web.js' | 'baileys' | null>(null);
   const [engineError, setEngineError] = useState(false);
@@ -205,15 +218,18 @@ function Onboarding({ onDone }: { onDone: () => void }) {
         </div>
         <p className="onboarding-eyebrow">YOUR WORKSPACE</p>
         <nav aria-label="Setup progress">
-          {steps.map((name, index) => (
-            <div
-              key={name}
-              className={`onboarding-step ${index === step ? 'current' : ''} ${index < step ? 'complete' : ''}`}
-            >
-              <span>{index < step ? <Check size={14} /> : index + 1}</span>
-              {name}
-            </div>
-          ))}
+          <ol>
+            {steps.map((name, index) => (
+              <li
+                key={name}
+                className={`onboarding-step ${index === step ? 'current' : ''} ${index < step ? 'complete' : ''}`}
+                aria-current={index === step ? 'step' : undefined}
+              >
+                <span aria-hidden="true">{index < step ? <Check size={14} /> : index + 1}</span>
+                {name}
+              </li>
+            ))}
+          </ol>
         </nav>
         <div className="onboarding-sidebar-note">
           <ShieldCheck size={17} /> Your workspace stays on this computer. Selected evidence is sent
@@ -227,7 +243,7 @@ function Onboarding({ onDone }: { onDone: () => void }) {
             {step + 1} / {steps.length}
           </span>
         </div>
-        <div className="onboarding-content">
+        <div className="onboarding-content" ref={content}>
           {step === 0 && (
             <>
               <div className="onboarding-icon">
