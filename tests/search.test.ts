@@ -225,23 +225,28 @@ test('text search remains usable when media cannot be indexed', async () => {
   }
 });
 
-test('media indexing follows the selected search server and cancels the old one', async () => {
+test('media indexing uses its workspace worker and follows a selected server', async () => {
   const db = new DatabaseSync(':memory:');
   const picture = MessageSchema.parse({ ...message, id: 'picture', type: 'image', body: '' });
   const urls: string[] = [];
+  const textUrls: string[] = [];
   let release: (() => void) | undefined;
   let oldSignal: AbortSignal | undefined;
   const engine = new LocalSearch(
     db,
-    () => ({ tasks: [], messages: [picture] }),
-    async ({ input }) => input.map(() => vector('export')),
+    () => ({ tasks: [task], messages: [picture] }),
+    async ({ input, url }) => {
+      textUrls.push(url);
+      return input.map(() => vector('export'));
+    },
     undefined,
     {
+      workspaceUrl: 'http://media-worker:11434',
       load: async () => ({ mime: 'image/png', bytes: Buffer.from('sample') }),
       prepare: async () => [{ image: Buffer.from('sample').toString('base64') }],
       embed: async ({ input, url, signal }) => {
         urls.push(url);
-        if (url === 'http://127.0.0.1:11434') {
+        if (url === 'http://media-worker:11434') {
           oldSignal = signal;
           await new Promise<void>((resolve) => {
             release = resolve;
@@ -260,6 +265,7 @@ test('media indexing follows the selected search server and cancels the old one'
     for (let attempt = 0; !oldSignal && attempt < 100; attempt++)
       await new Promise((resolve) => setTimeout(resolve, 5));
     assert.ok(oldSignal);
+    assert.ok(textUrls.includes('http://127.0.0.1:11434'));
     engine.saveSettings({ kind: 'server', url: 'https://search.example.invalid' });
     assert.equal(oldSignal.aborted, true);
     release?.();

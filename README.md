@@ -71,7 +71,7 @@ ollama pull embeddinggemma-2:270m-q8_0-text
 ollama pull embeddinggemma-2:740m-q8_0
 ```
 
-For Docker, an optional local CPU service is included in `compose.search.yml`. It publishes no host port and does not replace the existing Chat2Tasks image. Apply it alongside your existing Compose files, then download the model into its persistent volume:
+For Docker, optional local CPU workers are included in `compose.search.yml`. They publish no host ports and do not replace the existing Chat2Tasks image. Separate text and media workers keep text search responsive during media indexing, while sharing one model volume. Apply them alongside your existing Compose files, then download the models into that volume:
 
 ```sh
 docker compose -f compose.yml -f compose.search.yml up -d --build
@@ -79,7 +79,7 @@ docker compose -f compose.yml -f compose.search.yml exec search-model ollama pul
 docker compose -f compose.yml -f compose.search.yml exec search-model ollama pull embeddinggemma-2:740m-q8_0
 ```
 
-The Ollama image is several gigabytes; the full model is about 1.3 GB and shares its text weights with the smaller model. The service works on CPU, though first-time media indexing can take longer than with a GPU. Audio and video indexing requires FFmpeg and FFprobe on the workspace machine; they are included in the Docker image. Spotlight can index attachments already cached locally or still available from the configured WhatsApp gateway, up to 20 MB per image and 100 MB per audio or video attachment. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in Spotlight and enter its address. Search queries, indexed text, and media are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
+The Ollama image is several gigabytes; the full model is about 1.3 GB and shares its text weights with the smaller model. The service works on CPU, though first-time media indexing can take longer than with a GPU. Audio and video indexing requires FFmpeg and FFprobe on the workspace machine; they are included in the Docker image. Spotlight can index attachments already cached locally or still available from the configured WhatsApp gateway, up to 20 MB per image and 100 MB per audio or video attachment. On Docker Desktop for macOS, the container cannot use the Mac GPU. To use a different machine with a GPU, choose **Another Ollama server** in Spotlight and enter its address. Search queries, indexed text, and media are then sent to that server, so use one you trust and an encrypted connection when traffic leaves the workspace host. A single Ollama server can be slower to answer text searches while it indexes media. The index stays in the workspace database. A workspace transfer resets the search server choice and index so the restored copy follows its new host.
 
 Search does not use your configured task-generation or decision models. Your separate task-generation and decision-provider settings still determine where task-processing evidence is sent. Search currently covers the full workspace, independent of the item filters and the Chrome companion's task filter.
 

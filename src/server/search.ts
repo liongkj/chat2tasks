@@ -25,6 +25,7 @@ type MediaEmbed = (args: {
   signal: AbortSignal;
 }) => Promise<number[][]>;
 type MediaOptions = {
+  workspaceUrl?: string;
   load: (message: Message) => Promise<Attachment | null>;
   prepare: (
     attachment: Attachment,
@@ -175,6 +176,8 @@ export class LocalSearch {
       CREATE TABLE IF NOT EXISTS search_media_embeddings (id TEXT NOT NULL, part INTEGER NOT NULL, digest TEXT NOT NULL,
         vector BLOB NOT NULL, PRIMARY KEY(id,part));`);
     SearchSettingsSchema.parse({ kind: 'server', url: this.localUrl });
+    if (this.mediaOptions?.workspaceUrl)
+      SearchSettingsSchema.parse({ kind: 'server', url: this.mediaOptions.workspaceUrl });
   }
   settings(): SearchSettings {
     const row = this.db.prepare('SELECT value FROM search_settings WHERE id=1').get();
@@ -202,6 +205,12 @@ export class LocalSearch {
   private url() {
     const settings = this.settings();
     return settings.kind === 'workspace' ? this.localUrl : settings.url;
+  }
+  private mediaUrl() {
+    const settings = this.settings();
+    return settings.kind === 'workspace'
+      ? (this.mediaOptions?.workspaceUrl ?? this.localUrl)
+      : settings.url;
   }
   private rows() {
     return this.db
@@ -380,7 +389,7 @@ export class LocalSearch {
     const exactResults = exact
       .slice(0, 50)
       .map(({ kind, id }) => ({ kind, id, match: 'exact' as const }));
-    const media = this.findMedia(snapshot.messages, url, retry);
+    const media = this.findMedia(snapshot.messages, this.mediaUrl(), retry);
     const mediaField = media ? { media: media.status } : {};
     const matches = new Map<string, Scored>();
     const relatedResults = () =>

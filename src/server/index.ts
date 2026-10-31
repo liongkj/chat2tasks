@@ -50,6 +50,7 @@ const port = z.coerce
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
 const openwa = new OpenWA(store);
 const localSearch = new LocalSearch(store.db, () => store.snapshot(), undefined, undefined, {
+  workspaceUrl: process.env.LOCAL_SEARCH_MEDIA_OLLAMA_URL,
   load: (message) => openwa.attachment(message),
   prepare: prepareSearchMedia,
 });
