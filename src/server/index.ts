@@ -1,9 +1,7 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import staticFiles from '@fastify/static';
 import { timingSafeEqual } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { acquireLock } from '../../desktop/process-lock.mjs';
@@ -13,20 +11,20 @@ import { LocalSearch } from './search.js';
 import { prepareSearchMedia } from './search-media.js';
 import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
 import { OpenWA } from './openwa.js';
-import { Sync, prompt } from './sync.js';
-import { callModel } from './ai.js';
-import { SettingsUpdateSchema, TaskSchema, TaskMergeSchema } from '../shared/schema.js';
+import { Sync } from './sync.js';
+import { SettingsUpdateSchema } from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
-import { decideTrigger } from './decisions.js';
 import { Companion, registerCompanion } from './companion.js';
 import { registerMcp } from './mcp.js';
 import { Threads } from './threads.js';
 import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
 import { registerTaskRoutes } from './task-routes.js';
+import { registerModelRoutes } from './model-routes.js';
+import { registerWorkspaceRoutes } from './workspace-routes.js';
+import { registerDesktopSignIn } from './desktop-sign-in.js';
 import { seedDemoThreads } from './thread-demo.js';
-import { exportWorkspace } from './workspace-transfer.js';
 import {
   configureDesktopGateway,
   registerDesktop,
@@ -37,12 +35,7 @@ import { RemoteEvents } from './remote-events.js';
 import { WorkspaceOwnership } from './workspace-ownership.js';
 import { MoveGate } from './move-gate.js';
 import { registerServerMoveRoutes } from './server-move-routes.js';
-import {
-  desktopSessionCookie,
-  desktopSignInCsp,
-  desktopSignInPage,
-  validDesktopSession,
-} from './desktop-session.js';
+import { validDesktopSession } from './desktop-session.js';
 import { UserError } from './errors.js';
 
 const port = z.coerce
@@ -281,45 +274,7 @@ server.post('/api/search', async (request) => {
   const { query, retry } = SearchRequestSchema.parse(request.body);
   return localSearch.find(query, retry);
 });
-server.addContentTypeParser(
-  'application/x-www-form-urlencoded',
-  { parseAs: 'string', bodyLimit: 4096 },
-  (_request, body, done) => {
-    done(null, Object.fromEntries(new URLSearchParams(String(body))));
-  },
-);
-server.get('/desktop-sign-in', (request, reply) => {
-  if (
-    !workspacePassword ||
-    validDesktopSession(request.headers.cookie ?? '', store.key, workspacePassword)
-  )
-    return reply.code(303).header('Location', '/').send();
-  return reply
-    .header('Content-Security-Policy', desktopSignInCsp)
-    .type('text/html')
-    .send(desktopSignInPage());
-});
-server.post('/desktop-sign-in', (request, reply) => {
-  const origin = request.headers.origin;
-  if (!origin || !origins.has(origin) || new URL(origin).host !== request.headers.host)
-    return reply.code(403).send({ error: 'Invalid request origin' });
-  const password = workspacePassword;
-  if (!password) return reply.code(303).header('Location', '/').send();
-  const input = z.object({ password: z.string().max(1024) }).safeParse(request.body);
-  const expected = Buffer.from(password);
-  const actual = Buffer.from(input.success ? input.data.password : '');
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual))
-    return reply
-      .code(401)
-      .header('Content-Security-Policy', desktopSignInCsp)
-      .type('text/html')
-      .send(desktopSignInPage(true));
-  return reply
-    .code(303)
-    .header('Location', '/')
-    .header('Set-Cookie', desktopSessionCookie(store.key, password, origin.startsWith('https://')))
-    .send();
-});
+registerDesktopSignIn(server, { key: store.key, password: workspacePassword, origins });
 await registerCompanion(
   server,
   new Companion(store, sync, syncEnabled),
@@ -354,13 +309,8 @@ await server.register(async (receiver) => {
     }
   });
 });
-server.get('/api/state', () => store.snapshot());
-server.post('/api/tasks/merge', (request) => store.mergeTasks(TaskMergeSchema.parse(request.body)));
+registerWorkspaceRoutes(server, store, openwa);
 registerTaskRoutes(server, '/api', store);
-server.get('/api/settings', () => store.publicSettings());
-server.get('/api/preferences', () => store.preferences());
-server.post('/api/preferences', (request) => store.savePreferences(request.body));
-server.post('/api/sound-preferences', (request) => store.saveSoundPreferences(request.body));
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);
@@ -384,146 +334,11 @@ server.post('/api/settings', async (request) => {
   if (syncEnabled) sync.reconfigure();
   return store.publicSettings();
 });
-server.post('/api/resolve', async (request) => {
-  const value = z.object({ id: z.string(), task_id: z.string().nullable() }).parse(request.body);
-  store.resolve(value.id, value.task_id);
-  return { ok: true };
-});
 server.post('/api/sync', async () => {
   if (syncEnabled) sync.wake();
   return { ok: true };
 });
-server.get('/api/export', () => store.snapshot());
-server.post('/api/workspace/transfer', async (request, reply) => {
-  const { passphrase } = z.object({ passphrase: z.string().min(8).max(1024) }).parse(request.body);
-  const directory = await mkdtemp(join(tmpdir(), 'chat2tasks-download-'));
-  const path = join(directory, 'workspace.c2t');
-  try {
-    await exportWorkspace(store, path, passphrase);
-    const stream = createReadStream(path);
-    stream.once('close', () => void rm(directory, { recursive: true, force: true }));
-    return reply
-      .header('Content-Disposition', 'attachment; filename="chat2tasks-workspace.c2t"')
-      .type('application/octet-stream')
-      .send(stream);
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true });
-    throw error;
-  }
-});
-server.post('/api/import', async (request) => {
-  const { tasks } = z
-    .object({ tasks: z.array(z.object({ id: z.string(), done: z.boolean() })).max(10000) })
-    .parse(request.body);
-  const valid = new Set(store.snapshot().tasks.map((t) => t.id));
-  store.transaction(() => {
-    for (const t of tasks) {
-      if (!valid.has(t.id)) throw new UserError('Task not found');
-      store.tick(t.id, t.done);
-    }
-  });
-  return { ok: true };
-});
-server.get('/api/prompts', async () =>
-  Object.fromEntries(
-    await Promise.all(
-      ['triage', 'review', 'vision', 'completion', 'handoff'].map(async (name) => [
-        name,
-        await prompt(name),
-      ]),
-    ),
-  ),
-);
-server.get('/api/media', async (request, reply) => {
-  const { id } = z.object({ id: z.string() }).parse(request.query),
-    message = store.messages().find((m) => m.id === id);
-  if (!message) return reply.code(404).send({ error: 'Attachment not found' });
-  const attachment = await openwa.attachment(message);
-  return attachment
-    ? reply.type(attachment.mime).send(attachment.bytes)
-    : reply.code(404).send({ error: 'OpenWA no longer serves this attachment' });
-});
-server.post('/api/discover', async (request) => {
-  const { sessionId } = z.object({ sessionId: z.string().optional() }).parse(request.body);
-  const response = await openwa.request(
-    sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/chats` : '/api/sessions',
-  );
-  return z
-    .array(z.object({ id: z.string(), name: z.string().nullish() }))
-    .parse(await response.json())
-    .map((row) => ({ id: row.id, name: row.name ?? row.id }));
-});
-server.post('/api/models', async (request) => {
-  const { profileId } = z.object({ profileId: z.string() }).parse(request.body),
-    profile = store.settings().profiles.find((p) => p.id === profileId);
-  if (!profile || profile.kind !== 'compatible') return { models: [] };
-  const key = store.secret(profile.id + ':key');
-  const response = await fetch(profile.baseUrl.replace(/\/$/, '') + '/models', {
-    headers: key ? { Authorization: `Bearer ${key}` } : {},
-    redirect: 'error',
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok)
-    return {
-      models: [],
-      error: 'This endpoint does not expose a model catalog. Enter a model ID manually.',
-    };
-  const payload = z
-    .object({ data: z.array(z.object({ id: z.string() })) })
-    .parse(await response.json());
-  return { models: payload.data.map((m) => m.id).sort() };
-});
-server.post('/api/test-model', async (request) => {
-  const { profileId } = z.object({ profileId: z.string() }).parse(request.body),
-    profile = store.settings().profiles.find((p) => p.id === profileId);
-  if (!profile) throw new UserError('Unknown model connection');
-  if (profile.kind === 'decision') {
-    await decideTrigger(store, profile, [], [], 0);
-    return { ok: true };
-  }
-  const result = z
-    .object({ handoff: z.string() })
-    .parse(
-      await callModel(
-        store,
-        profile,
-        'Connection test. Return {"handoff":"Connection works"}. Do not use tools.',
-        'handoff-schema.json',
-        'connection test',
-      ),
-    );
-  return { ok: Boolean(result.handoff) };
-});
-let handoffRunning = false;
-server.post('/api/handoff', async (request, reply) => {
-  const { id } = z.object({ id: z.string() }).parse(request.body);
-  const snapshot = store.snapshot(),
-    task = snapshot.tasks.find((t) => t.id === id);
-  if (!task) throw new UserError('Task not found');
-  if (handoffRunning) return reply.code(409).send({ error: 'A handoff is already being prepared' });
-  const settings = store.settings(),
-    profile = settings.profiles.find((p) => p.id === settings.activeProfileId);
-  if (!profile) throw new UserError('Unknown model connection');
-  handoffRunning = true;
-  try {
-    const sources = snapshot.messages.filter((m) => task.source_ids.includes(m.id));
-    const result = z
-      .object({ handoff: z.string().min(1).max(100000) })
-      .parse(
-        await callModel(
-          store,
-          profile,
-          (await prompt('handoff')) +
-            JSON.stringify({ task: TaskSchema.parse(task), source_messages: sources }),
-          'handoff-schema.json',
-          'task handoff',
-        ),
-      );
-    return { filename: `chat2tasks-${task.id.slice(0, 8)}.md`, content: result.handoff };
-  } finally {
-    handoffRunning = false;
-  }
-});
+registerModelRoutes(server, store, openwa);
 if (desktop) {
   function sharingStatus() {
     const configured = store.desktopSharing();

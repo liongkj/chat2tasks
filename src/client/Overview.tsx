@@ -1,7 +1,20 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ArrowRight, CheckCircle2, Circle, CircleAlert, Clock3, LoaderCircle } from 'lucide-react';
 import type { ItemKind, Snapshot, Task, Wait } from '../shared/schema.js';
 import { isUpcoming } from '../shared/tasks.js';
+
+/**
+ * The value once it has stopped changing for `delay` ms, so a screen reader
+ * hears one announcement per phase instead of every polling update.
+ */
+function useSettled<T>(value: T, delay: number) {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return settled;
+}
 
 export function Overview({
   tasks,
@@ -62,6 +75,7 @@ export function Overview({
             : status.debouncing
               ? 'Waiting for a quiet moment'
               : 'Workspace ready';
+  const announcedStatus = useSettled(statusTitle, 1500);
   const statusHint = !online
     ? 'Showing saved data while the connection is restored.'
     : !loaded
@@ -101,9 +115,12 @@ export function Overview({
         ) : (
           <CheckCircle2 size={18} />
         )}
-        <div role="status" aria-live="polite">
+        <div>
           <strong title={statusTitle}>{statusTitle}</strong>
           <p title={statusHint}>{statusHint}</p>
+          <span className="sr-only" role="status" aria-live="polite">
+            {announcedStatus}
+          </span>
         </div>
         {loaded && online && (working || status.error) && (
           <button className="text-button" onClick={onActivity}>

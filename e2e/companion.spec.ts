@@ -327,7 +327,18 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
         (task) => task.id === beforeWait.task_id,
       )?.done,
     ).toBe(false);
-    await page.getByRole('button', { name: 'Reopen waiting item', exact: true }).click();
+    const receivedToast = page.getByRole('status').filter({ hasText: 'Marked as received' });
+    await expect(receivedToast).toBeVisible();
+    await receivedToast.getByRole('button', { name: 'Undo', exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          SnapshotSchema.parse(await (await owner('state')).json()).waiting_for.find(
+            (wait) => wait.id === beforeWait.id,
+          )?.state,
+      )
+      .toBe('waiting');
+    await expect(page.getByRole('button', { name: 'Mark received', exact: true })).toBeVisible();
     const linkedTask = SnapshotSchema.parse(await (await owner('state')).json()).tasks.find(
       (task) => task.id === beforeWait.task_id,
     );
@@ -713,6 +724,59 @@ test('a clarification is only resolved after the owner confirms the chosen task'
     await resolve.click();
     await expect(page.getByRole('status')).toContainText('Task marked as done');
     expect(resolved).toEqual([{ id: 'pending-question', task_id: task.id }]);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('a workspace transfer needs the passphrase typed twice', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '?view=settings&section=workspace');
+    const download = page.getByRole('button', { name: 'Download transfer', exact: true });
+    await expect(download).toBeDisabled();
+    await page.getByLabel('Create a passphrase').fill('correct horse battery');
+    await expect(download).toBeDisabled();
+    await page.getByLabel('Repeat the passphrase').fill('correct horse');
+    await expect(page.getByRole('alert')).toContainText('The passphrases do not match.');
+    await expect(download).toBeDisabled();
+    await page.getByLabel('Repeat the passphrase').fill('correct horse battery');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(download).toBeEnabled();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
+test('leaving settings with unsaved changes asks first', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '?view=connections');
+    const url = page.getByLabel('OpenWA API URL');
+    await expect(url).toBeVisible();
+    await url.fill('http://changed.example:2785');
+    const prompts: string[] = [];
+    page.once('dialog', (dialog) => {
+      prompts.push(dialog.message());
+      void dialog.dismiss();
+    });
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect.poll(() => prompts.length).toBe(1);
+    expect(prompts[0]).toContain('unsaved settings');
+    await expect(url).toHaveValue('http://changed.example:2785');
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Waiting for', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
+    await page.getByRole('button', { name: 'Waiting for', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Waiting for', exact: true })).toBeVisible();
   } finally {
     await context.close();
     await browser.close();

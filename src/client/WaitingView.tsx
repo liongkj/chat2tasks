@@ -77,20 +77,18 @@ export function WaitingView({
       setBusy(false);
     }
   }
-  async function change(state: 'waiting' | 'received' | 'dismissed') {
-    if (!selected) return;
+  async function change(state: 'waiting' | 'received' | 'dismissed', id = selected?.id) {
+    if (!id) return;
     setBusy(true);
     try {
-      await api('waiting/state', WaitEvidenceSchema, { id: selected.id, state });
+      await api('waiting/state', WaitEvidenceSchema, { id, state });
       setHistory(state !== 'waiting');
       await onRefresh();
-      notify(
-        state === 'received'
-          ? 'Marked as received'
-          : state === 'dismissed'
-            ? 'Stopped tracking'
-            : 'Waiting item reopened',
-      );
+      if (state === 'waiting') notify('Waiting item reopened');
+      else
+        notify(state === 'received' ? 'Marked as received' : 'Stopped tracking', 'info', {
+          undo: () => void change('waiting', id),
+        });
     } catch (error) {
       notify(errorMessage(error, 'Could not update this waiting item.'), 'error');
     } finally {
