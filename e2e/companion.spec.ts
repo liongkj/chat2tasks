@@ -339,7 +339,27 @@ test('readable workspace keeps completion, notes, source context, and mobile nav
     await expect(page.getByRole('checkbox', { name: 'Clarification sound' })).toBeChecked();
     await expect(page.getByRole('slider', { name: 'Sound volume' })).toHaveValue('30');
     await page.getByRole('checkbox', { name: 'Task completion sound' }).uncheck();
+    let releaseSoundSave!: () => void;
+    const heldSoundSave = new Promise<void>((resolve) => {
+      releaseSoundSave = resolve;
+    });
+    await page.route(
+      '**/api/sound-preferences',
+      async (route) => {
+        await heldSoundSave;
+        await route.continue();
+      },
+      { times: 1 },
+    );
     await page.getByRole('button', { name: 'Save sound settings' }).click();
+    await expect(page.getByRole('checkbox', { name: 'Task completion sound' })).toBeDisabled();
+    await expect(page.getByRole('checkbox', { name: 'Clarification sound' })).toBeDisabled();
+    await expect(page.getByRole('slider', { name: 'Sound volume' })).toBeDisabled();
+    releaseSoundSave();
+    await expect(page.getByText('Sound settings saved.', { exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'Clarification sound' }).uncheck();
+    await expect(page.getByText('Sound settings saved.', { exact: true })).not.toBeVisible();
+    await page.getByRole('checkbox', { name: 'Clarification sound' }).check();
     await expect
       .poll(async () => SnapshotSchema.parse(await (await owner('state')).json()).sound.completion)
       .toBe(false);

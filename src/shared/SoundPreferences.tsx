@@ -37,7 +37,11 @@ export function SoundPreferencesEditor({
         <input
           type="checkbox"
           checked={draft.completion}
-          onChange={(event) => setDraft({ ...draft, completion: event.target.checked })}
+          disabled={busy}
+          onChange={(event) => {
+            setMessage('');
+            setDraft({ ...draft, completion: event.target.checked });
+          }}
         />
         <span>Task completion sound</span>
       </label>
@@ -45,7 +49,11 @@ export function SoundPreferencesEditor({
         <input
           type="checkbox"
           checked={draft.attention}
-          onChange={(event) => setDraft({ ...draft, attention: event.target.checked })}
+          disabled={busy}
+          onChange={(event) => {
+            setMessage('');
+            setDraft({ ...draft, attention: event.target.checked });
+          }}
         />
         <span>Clarification sound</span>
       </label>
@@ -57,13 +65,18 @@ export function SoundPreferencesEditor({
           min="0"
           max="100"
           value={Math.round(draft.volume * 100)}
-          onChange={(event) => setDraft({ ...draft, volume: Number(event.target.value) / 100 })}
+          disabled={busy}
+          onChange={(event) => {
+            setMessage('');
+            setDraft({ ...draft, volume: Number(event.target.value) / 100 });
+          }}
         />
       </label>
       <div className="sound-actions">
         <button
           type="button"
           className="button secondary"
+          disabled={busy}
           onClick={() => void preview('completion')}
         >
           Preview completion
@@ -71,6 +84,7 @@ export function SoundPreferencesEditor({
         <button
           type="button"
           className="button secondary"
+          disabled={busy}
           onClick={() => void preview('attention')}
         >
           Preview clarification
