@@ -16,6 +16,7 @@ import {
 } from '../../src/shared/threads.js';
 import styles from '../../src/shared/thread-view.css';
 import { pageRequest } from './page-protocol.js';
+import { errorMessage } from '../../src/shared/errors.js';
 
 const Ok = z.object({ ok: z.boolean() });
 type Mode = 'chats' | 'threads';
@@ -170,7 +171,7 @@ async function annotate() {
         button.setAttribute('aria-label', `Open ${task.reference}: ${task.title}`);
         button.onclick = () => {
           void pageRequest({ kind: 'open-task', id: task.taskId }, Ok).catch((e) =>
-            toast(e instanceof Error ? e.message : 'Open the companion to check its connection.'),
+            toast(errorMessage(e, 'Open the companion to check its connection.')),
           );
         };
         root.append(button);
@@ -300,7 +301,7 @@ function App() {
       if (gate.current.accept(ticket)) {
         clearAnnotations();
         setData(null);
-        setError(e instanceof Error ? e.message : 'Could not load threads.');
+        setError(errorMessage(e, 'Could not load threads.'));
       }
     }
   }, []);
@@ -351,7 +352,7 @@ function App() {
               <button
                 onClick={() =>
                   void pageRequest({ kind: 'open-panel' }, Ok).catch((e) =>
-                    toast(e instanceof Error ? e.message : 'Open the companion from your toolbar.'),
+                    toast(errorMessage(e, 'Open the companion from your toolbar.')),
                   )
                 }
               >
@@ -374,7 +375,7 @@ function App() {
               onMove={move}
               onOpenTask={(task) => {
                 void pageRequest({ kind: 'open-task', id: task.id }, Ok).catch((e) =>
-                  toast(e instanceof Error ? e.message : 'Could not open the task.'),
+                  toast(errorMessage(e, 'Could not open the task.')),
                 );
               }}
               onOpenSource={(message) => {

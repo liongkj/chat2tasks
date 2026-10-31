@@ -11,6 +11,7 @@ import {
 } from '../shared/schema.js';
 import { api, time } from './api.js';
 import { MessageCard } from './Evidence.js';
+import { errorMessage } from '../shared/errors.js';
 
 export function WaitingView({
   waits,
@@ -71,7 +72,7 @@ export function WaitingView({
       onSelect(wait.id);
       notify('Added to Waiting for');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save this waiting item.', 'error');
+      notify(errorMessage(error, 'Could not save this waiting item.'), 'error');
     } finally {
       setBusy(false);
     }
@@ -91,10 +92,7 @@ export function WaitingView({
             : 'Waiting item reopened',
       );
     } catch (error) {
-      notify(
-        error instanceof Error ? error.message : 'Could not update this waiting item.',
-        'error',
-      );
+      notify(errorMessage(error, 'Could not update this waiting item.'), 'error');
     } finally {
       setBusy(false);
     }
@@ -107,10 +105,7 @@ export function WaitingView({
       await onRefresh();
       notify(response ? 'Still waiting' : 'Added to Waiting for');
     } catch (error) {
-      notify(
-        error instanceof Error ? error.message : 'Could not confirm this waiting item.',
-        'error',
-      );
+      notify(errorMessage(error, 'Could not confirm this waiting item.'), 'error');
     } finally {
       setBusy(false);
     }

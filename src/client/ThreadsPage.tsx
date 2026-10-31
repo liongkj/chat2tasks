@@ -12,6 +12,7 @@ import {
 import type { Task } from '../shared/schema.js';
 import { api, OkSchema } from './api.js';
 import '../shared/thread-view.css';
+import { errorMessage } from '../shared/errors.js';
 
 export function ThreadsPage({
   onOpenTask,
@@ -36,8 +37,7 @@ export function ThreadsPage({
         started.current = true;
       }
     } catch (e) {
-      if (gate.current.accept(ticket))
-        setError(e instanceof Error ? e.message : 'Could not load threads.');
+      if (gate.current.accept(ticket)) setError(errorMessage(e, 'Could not load threads.'));
     }
   }, []);
   useEffect(() => {

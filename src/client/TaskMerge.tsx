@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link2, LoaderCircle } from 'lucide-react';
 import { TaskEvidenceSchema, type Task, type TaskEvidence } from '../shared/schema.js';
 import { api } from './api.js';
+import { errorMessage } from '../shared/errors.js';
 
 export function TaskMerge({
   task,
@@ -38,10 +39,7 @@ export function TaskMerge({
       onMerged(result);
       notify(task.reference + ' merged into ' + result.task.reference);
     } catch (error) {
-      notify(
-        error instanceof Error ? error.message : 'Could not merge these TODOs. Try again.',
-        'error',
-      );
+      notify(errorMessage(error, 'Could not merge these TODOs. Try again.'), 'error');
     } finally {
       setMerging(false);
     }

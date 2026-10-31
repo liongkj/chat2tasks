@@ -28,6 +28,7 @@ import { MessageCard } from './Evidence.js';
 import { taskUrl, type TaskTab } from './taskLocation.js';
 import { TaskMerge } from './TaskMerge.js';
 import { GtdEditor } from './GtdEditor.js';
+import { errorMessage } from '../shared/errors.js';
 
 export function TaskState({ task }: { task: Task }) {
   return (
@@ -113,7 +114,7 @@ export function TaskDetail({
       onSaved();
       notify('Your note is saved');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not save your note.', 'error');
+      notify(errorMessage(error, 'Could not save your note.'), 'error');
     } finally {
       setSaving(false);
     }
@@ -126,7 +127,7 @@ export function TaskDetail({
       onKindChanged(kind);
       notify(`Moved to ${itemKindPlural[kind].toLowerCase()}`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not change the category.', 'error');
+      notify(errorMessage(error, 'Could not change the category.'), 'error');
     } finally {
       setKindSaving(false);
     }
@@ -144,7 +145,7 @@ export function TaskDetail({
       download(file.filename, file.content, 'text/markdown');
       notify('Handoff prepared and downloaded');
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Could not prepare the handoff.', 'error');
+      notify(errorMessage(error, 'Could not prepare the handoff.'), 'error');
     } finally {
       setHandoff(false);
     }
