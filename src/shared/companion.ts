@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { MessageSchema, StatusSchema, TaskSchema, WaitSchema } from './schema.js';
+import {
+  MessageSchema,
+  SoundPreferencesSchema,
+  StatusSchema,
+  TaskSchema,
+  WaitSchema,
+  defaultSoundPreferences,
+} from './schema.js';
 
 export const ExtensionIdSchema = z.string().regex(/^[a-p]{32}$/);
 export const BackendUrlSchema = z
@@ -48,6 +55,7 @@ export const CompanionChatSchema = z.object({
   enabled: z.boolean(),
 });
 export const CompanionStateSchema = z.object({
+  sound: SoundPreferencesSchema.default(defaultSoundPreferences),
   tasks: z.array(TaskSchema.extend({ chatIds: z.array(z.string()) })),
   waiting_for: z.array(WaitSchema).default([]),
   chats: z.array(CompanionChatSchema),

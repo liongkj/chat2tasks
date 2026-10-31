@@ -123,6 +123,7 @@ export class Companion {
       ]),
     );
     return {
+      sound: snapshot.sound,
       waiting_for: snapshot.waiting_for,
       tasks: snapshot.tasks.map((task) => ({
         ...task,
@@ -185,18 +186,14 @@ export class Companion {
         .run(key, message.id, deviceId, contentDigest);
       const queued = this.enabled && this.store.settings().trigger.mode === 'automatic';
       if (queued) this.store.queueChat(chat.id, this.store.settings().quietSeconds, false);
-      const activeChats = this.store.settings().chats.filter((item) => item.enabled);
-      const messages = this.store
-        .messages()
-        .filter((m) =>
-          activeChats.some((item) => item.sessionId === m.sessionId && item.chatId === m.chatId),
-        );
       this.store.status({
-        pending: this.store.pending(messages).length + this.store.pendingReplies(messages).length,
-        debouncing: queued,
-        phase: queued
-          ? 'Browser selection saved · waiting for a quiet moment'
-          : 'Browser selection saved · ready for Run now',
+        pending: this.store.pendingMessageCount(),
+        ...(!this.store.status().syncing && {
+          debouncing: queued,
+          phase: queued
+            ? 'Browser selection saved · waiting for a quiet moment'
+            : 'Browser selection saved · ready for Run now',
+        }),
       });
       return { saved: true satisfies true, duplicate: false, messageId: message.id, queued };
     });
@@ -270,6 +267,9 @@ export async function registerCompanion(
       return companion.pair(input.code, input.name, id);
     });
     routes.get('/api/companion/state', () => companion.state());
+    routes.post('/api/companion/sound-preferences', (request) =>
+      companion.store.saveSoundPreferences(request.body),
+    );
     routes.get('/api/companion/tasks/:id', (request) =>
       companion.task(z.object({ id: z.string() }).parse(request.params).id),
     );

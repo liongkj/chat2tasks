@@ -10,8 +10,17 @@ export function RemoteConnecting() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setSlow(false);
     const timer = setTimeout(() => setSlow(true), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void invoke('retry_remote_workspace')
+        .then(() => setError(''))
+        .catch(() => setError('Could not retry. Try again.'))
+        .finally(() => setAttempt((current) => current + 1));
+    }, 10000);
     return () => clearTimeout(timer);
   }, [attempt]);
 
@@ -20,10 +29,10 @@ export function RemoteConnecting() {
     setError('');
     try {
       await invoke('retry_remote_workspace');
-      setAttempt((current) => current + 1);
     } catch (reason) {
       setError(typeof reason === 'string' ? reason : 'Could not retry. Try again.');
     } finally {
+      setAttempt((current) => current + 1);
       setRetrying(false);
     }
   }
@@ -35,8 +44,8 @@ export function RemoteConnecting() {
         <h1>Connecting to your server</h1>
         <p role="status">
           {slow
-            ? 'Taking longer than expected. Check that your server and private connection are on.'
-            : 'Opening your workspace. This can take a moment.'}
+            ? 'Still trying automatically. Check that your server and network are on.'
+            : 'Opening your workspace. We’ll keep trying automatically.'}
         </p>
         {error && (
           <p className="remote-connecting-error" role="alert">

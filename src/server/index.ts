@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { Store, TaskTriageError } from './store.js';
+import { LocalSearch } from './search.js';
+import { prepareSearchMedia } from './search-media.js';
+import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
@@ -46,14 +49,19 @@ const port = z.coerce
   .parse(process.env.PORT ?? 2786);
 const store = new Store(resolve(process.env.DATA_DIR ?? 'data'));
 const managedServer = process.env.WAWA_MANAGED_SERVER === 'true';
+const openwa = new OpenWA(store);
+const localSearch = new LocalSearch(store.db, () => store.snapshot(), undefined, undefined, {
+  workspaceUrl: process.env.LOCAL_SEARCH_MEDIA_OLLAMA_URL,
+  load: (message) => openwa.attachment(message),
+  prepare: prepareSearchMedia,
+});
 const desktop = process.env.CHAT2TASKS_DESKTOP === 'true' || managedServer;
 const remoteGateway = desktop && process.env.DESKTOP_GATEWAY_MODE === 'remote';
 if (desktop) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
 const syncEnabled = !demo && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
-const openwa = new OpenWA(store),
-  sync = new Sync(store, openwa);
+const sync = new Sync(store, openwa);
 const threads = new Threads(store);
 if (demo) seedDemoThreads(threads);
 const organiser = new Threading(
@@ -208,6 +216,14 @@ server.setErrorHandler((error, request, reply) => {
 });
 server.get('/api/health', () => ({ ok: true }));
 server.get('/api/setup-mode', () => ({ managedServer }));
+server.get('/api/search/settings', () => localSearch.settings());
+server.post('/api/search/settings', (request) =>
+  localSearch.saveSettings(SearchSettingsSchema.parse(request.body)),
+);
+server.post('/api/search', async (request) => {
+  const { query, retry } = SearchRequestSchema.parse(request.body);
+  return localSearch.find(query, retry);
+});
 server.addContentTypeParser(
   'application/x-www-form-urlencoded',
   { parseAs: 'string', bodyLimit: 4096 },
@@ -314,6 +330,7 @@ server.post('/api/waiting/confirm', (request) => {
 server.get('/api/settings', () => store.publicSettings());
 server.get('/api/preferences', () => store.preferences());
 server.post('/api/preferences', (request) => store.savePreferences(request.body));
+server.post('/api/sound-preferences', (request) => store.saveSoundPreferences(request.body));
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);
@@ -400,11 +417,11 @@ server.get('/api/prompts', async () =>
 server.get('/api/media', async (request, reply) => {
   const { id } = z.object({ id: z.string() }).parse(request.query),
     message = store.messages().find((m) => m.id === id);
-  if (!message) return reply.code(404).send({ error: 'Image not found' });
-  const image = await openwa.media(message);
-  return image
-    ? reply.type(image.mime).send(image.bytes)
-    : reply.code(404).send({ error: 'OpenWA no longer serves this image' });
+  if (!message) return reply.code(404).send({ error: 'Attachment not found' });
+  const attachment = await openwa.attachment(message);
+  return attachment
+    ? reply.type(attachment.mime).send(attachment.bytes)
+    : reply.code(404).send({ error: 'OpenWA no longer serves this attachment' });
 });
 server.post('/api/discover', async (request) => {
   const { sessionId } = z.object({ sessionId: z.string().optional() }).parse(request.body);

@@ -1,3 +1,4 @@
+import type { Notify } from '../shared/useNotice.js';
 import { useEffect, useRef, useState } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import {
@@ -15,6 +16,7 @@ import {
   Server,
   ShieldCheck,
   Sparkles,
+  Volume2,
   Trash2,
   X,
   Zap,
@@ -29,7 +31,9 @@ import {
   type Profile,
   type PublicSettings,
   type Settings,
+  type SoundPreferences,
 } from '../shared/schema.js';
+import { SoundPreferencesEditor } from '../shared/SoundPreferences.js';
 import { api, appFetch, OkSchema } from './api.js';
 import { errorMessage } from './App.js';
 import { CompanionSettings } from './CompanionSettings.js';
@@ -40,8 +44,10 @@ import { openWorkspacePicker } from './tauri.js';
 type Props = {
   section: SettingsSection;
   config: PublicSettings;
+  sound: SoundPreferences;
+  onSoundSave: (value: SoundPreferences) => Promise<void>;
   onSave: (config: PublicSettings) => void;
-  notify: (text: string) => void;
+  notify: Notify;
   onImportWorkspace?: () => void;
 };
 type DiscoveredEntry = { id: string; name: string };
@@ -69,7 +75,15 @@ const sectionCopy: Record<SettingsSection, { title: string; description: string 
     description: 'Connect the browser extension to this workspace.',
   },
 };
-export function SettingsPanel({ section, config, onSave, notify, onImportWorkspace }: Props) {
+export function SettingsPanel({
+  section,
+  config,
+  sound,
+  onSoundSave,
+  onSave,
+  notify,
+  onImportWorkspace,
+}: Props) {
   const page = useRef<HTMLDivElement>(null);
   useEffect(() => {
     page.current?.scrollTo({ top: 0 });
@@ -108,7 +122,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
       notify('Workspace settings saved');
       return true;
     } catch (e) {
-      notify(errorMessage(e));
+      notify(errorMessage(e), 'error');
       return false;
     } finally {
       setSaving(false);
@@ -185,7 +199,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
     } catch (e) {
       const message = errorMessage(e);
       setDiscoveryError(message);
-      notify(message);
+      notify(message, 'error');
     } finally {
       setDiscovering(null);
     }
@@ -216,7 +230,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
       }));
       notify(`${chat.name} ${saved.enabled ? 'paused' : 'activated'}.`);
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setPendingChat(null);
       setSaving(false);
@@ -698,7 +712,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                       onSave(next);
                       notify('Webhooks connected. OpenWA delivered a signed test successfully.');
                     } catch (e) {
-                      notify(errorMessage(e));
+                      notify(errorMessage(e), 'error');
                     } finally {
                       setSaving(false);
                     }
@@ -804,7 +818,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                   z.object({ models: z.array(z.string()), error: z.string().optional() }),
                   { profileId: profile.id },
                 );
-                if (result.error) notify(result.error);
+                if (result.error) notify(result.error, 'error');
                 return result.models;
               }}
               notify={notify}
@@ -928,6 +942,18 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
       </div>
       <div hidden={section !== 'attention'}>
         <AttentionSettings notify={notify} />
+        <section className="settings-card">
+          <div className="card-title">
+            <span className="card-icon">
+              <Volume2 size={20} />
+            </span>
+            <div>
+              <h2>Sounds</h2>
+              <p>Choose sounds for this workspace and its paired browser companion.</p>
+            </div>
+          </div>
+          <SoundPreferencesEditor value={sound} onSave={onSoundSave} />
+        </section>
       </div>
       <div hidden={section !== 'workspace'}>
         {window.chat2tasksTauri && (
@@ -947,7 +973,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
             <button
               className="button secondary"
               onClick={() =>
-                void openWorkspacePicker().catch((error) => notify(errorMessage(error)))
+                void openWorkspacePicker().catch((error) => notify(errorMessage(error), 'error'))
               }
             >
               Switch workspace
@@ -973,13 +999,13 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
   );
 }
 
-function AttentionSettings({ notify }: { notify: (text: string) => void }) {
+function AttentionSettings({ notify }: { notify: Notify }) {
   const [value, setValue] = useState<AttentionPreferences | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     void api('preferences', AttentionPreferencesSchema)
       .then(setValue)
-      .catch((error) => notify(errorMessage(error)));
+      .catch((error) => notify(errorMessage(error), 'error'));
   }, [notify]);
   async function save() {
     if (!value) return;
@@ -988,7 +1014,7 @@ function AttentionSettings({ notify }: { notify: (text: string) => void }) {
       setValue(await api('preferences', AttentionPreferencesSchema, value));
       notify('Attention preferences saved.');
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setBusy(false);
     }
@@ -1015,13 +1041,7 @@ function AttentionSettings({ notify }: { notify: (text: string) => void }) {
   );
 }
 
-function WorkspaceTransfer({
-  notify,
-  onImport,
-}: {
-  notify: (text: string) => void;
-  onImport?: () => void;
-}) {
+function WorkspaceTransfer({ notify, onImport }: { notify: Notify; onImport?: () => void }) {
   const [passphrase, setPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   async function downloadTransfer() {
@@ -1042,7 +1062,7 @@ function WorkspaceTransfer({
       setPassphrase('');
       notify('Encrypted workspace transfer downloaded.');
     } catch (error) {
-      notify(errorMessage(error));
+      notify(errorMessage(error), 'error');
     } finally {
       setBusy(false);
     }
@@ -1120,7 +1140,7 @@ function ProfileCard({
   credential: (id: string, label: string) => React.ReactNode;
   onTest: () => Promise<void>;
   onModels: () => Promise<string[]>;
-  notify: (text: string) => void;
+  notify: Notify;
 }) {
   const [testing, setTesting] = useState(false),
     [models, setModels] = useState<string[]>([]),
@@ -1304,7 +1324,7 @@ function ProfileCard({
                 try {
                   setModels(await onModels());
                 } catch (e) {
-                  notify(errorMessage(e));
+                  notify(errorMessage(e), 'error');
                 } finally {
                   setLoading(false);
                 }
@@ -1322,7 +1342,7 @@ function ProfileCard({
               try {
                 await onTest();
               } catch (e) {
-                notify(errorMessage(e));
+                notify(errorMessage(e), 'error');
               } finally {
                 setTesting(false);
               }
