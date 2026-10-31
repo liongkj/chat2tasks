@@ -2656,6 +2656,9 @@ html[data-input='pointer'] .navigation-popup:is([data-starting-style], [data-end
   color: var(--muted);
   font-size: 13px;
 }
+.field-error {
+  color: var(--danger);
+}
 .search-error {
   color: var(--danger);
   margin: 12px 0;

@@ -554,6 +554,28 @@ test('a clarification is only resolved after the owner confirms the chosen task'
   }
 });
 
+test('a workspace transfer needs the passphrase typed twice', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.goto(base + '?view=settings&section=workspace');
+    const download = page.getByRole('button', { name: 'Download transfer', exact: true });
+    await expect(download).toBeDisabled();
+    await page.getByLabel('Create a passphrase').fill('correct horse battery');
+    await expect(download).toBeDisabled();
+    await page.getByLabel('Repeat the passphrase').fill('correct horse');
+    await expect(page.getByRole('alert')).toContainText('The passphrases do not match.');
+    await expect(download).toBeDisabled();
+    await page.getByLabel('Repeat the passphrase').fill('correct horse battery');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(download).toBeEnabled();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
 test('the last-item celebration waits for a confirmed completion', async () => {
   const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
   const task = snapshot.tasks.find(

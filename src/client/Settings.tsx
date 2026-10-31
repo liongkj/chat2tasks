@@ -1060,7 +1060,9 @@ function AttentionSettings({ notify }: { notify: Notify }) {
 
 function WorkspaceTransfer({ notify, onImport }: { notify: Notify; onImport?: () => void }) {
   const [passphrase, setPassphrase] = useState('');
+  const [confirmation, setConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
+  const mismatch = confirmation.length > 0 && confirmation !== passphrase;
   async function downloadTransfer() {
     setBusy(true);
     try {
@@ -1077,6 +1079,7 @@ function WorkspaceTransfer({ notify, onImport }: { notify: Notify; onImport?: ()
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setPassphrase('');
+      setConfirmation('');
       notify('Encrypted workspace transfer downloaded.');
     } catch (error) {
       notify(errorMessage(error), 'error');
@@ -1111,11 +1114,28 @@ function WorkspaceTransfer({ notify, onImport }: { notify: Notify; onImport?: ()
           Use at least eight characters. You will need this passphrase on your new computer.
         </small>
       </div>
+      <div className="field">
+        <label htmlFor="transfer-passphrase-confirm">Repeat the passphrase</label>
+        <input
+          id="transfer-passphrase-confirm"
+          type="password"
+          autoComplete="new-password"
+          value={confirmation}
+          aria-invalid={mismatch || undefined}
+          aria-describedby={mismatch ? 'transfer-passphrase-mismatch' : undefined}
+          onChange={(event) => setConfirmation(event.target.value)}
+        />
+        {mismatch && (
+          <small id="transfer-passphrase-mismatch" role="alert" className="field-error">
+            The passphrases do not match.
+          </small>
+        )}
+      </div>
       <div className="card-footer">
         <span>Your transfer file is encrypted.</span>
         <button
           className="button secondary"
-          disabled={busy || passphrase.length < 8}
+          disabled={busy || passphrase.length < 8 || confirmation !== passphrase}
           onClick={() => void downloadTransfer()}
         >
           {busy ? 'Preparing…' : 'Download transfer'}
