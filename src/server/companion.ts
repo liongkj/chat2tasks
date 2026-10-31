@@ -3,17 +3,12 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { Store, hash, now } from './store.js';
 import type { Sync } from './sync.js';
-import {
-  GtdSchema,
-  ItemKindSchema,
-  MessageSchema,
-  WaitInputSchema,
-  WaitStateSchema,
-} from '../shared/schema.js';
+import { MessageSchema } from '../shared/schema.js';
 import type { Threads } from './threads.js';
 import type { Threading } from './threading.js';
 import type { OpenWA } from './openwa.js';
 import { registerThreadRoutes } from './thread-routes.js';
+import { registerTaskRoutes } from './task-routes.js';
 import {
   CaptureSchema,
   DeviceSchema,
@@ -268,48 +263,12 @@ export async function registerCompanion(
     routes.post('/api/companion/sound-preferences', (request) =>
       companion.store.saveSoundPreferences(request.body),
     );
-    routes.get('/api/companion/tasks/:id', (request) =>
-      companion.task(z.object({ id: z.string() }).parse(request.params).id),
-    );
-    routes.get('/api/companion/waiting/:id', (request) =>
-      companion.store.waitEvidence(z.object({ id: z.string() }).parse(request.params).id),
-    );
-    routes.post('/api/companion/waiting', (request) =>
-      companion.store.createWait(WaitInputSchema.parse(request.body)),
-    );
-    routes.post('/api/companion/waiting/state', (request) => {
-      const input = z.object({ id: z.string(), state: WaitStateSchema }).parse(request.body);
-      return companion.store.setWaitState(input.id, input.state);
-    });
-    routes.post('/api/companion/waiting/confirm', (request) => {
-      const input = z.object({ id: z.string() }).parse(request.body);
-      return companion.store.confirmWait(input.id);
-    });
-    routes.post('/api/companion/tick', (request) => {
-      const input = z.object({ id: z.string(), done: z.boolean() }).parse(request.body);
-      if (!companion.store.db.prepare('SELECT id FROM tasks WHERE id=?').get(input.id))
-        throw new CompanionError(404, 'Task not found');
-      companion.store.transaction(() => companion.store.tick(input.id, input.done));
-      return { ok: true };
-    });
+    registerTaskRoutes(routes, '/api/companion', companion.store);
     routes.post('/api/companion/note', (request) => {
       const input = z.object({ id: z.string(), remark: z.string().max(4000) }).parse(request.body);
       companion.task(input.id);
       companion.store.remark(input.id, input.remark);
       return { ok: true };
-    });
-    routes.post('/api/companion/kind', (request) => {
-      const input = z.object({ id: z.string(), kind: ItemKindSchema }).parse(request.body);
-      companion.store.setTaskKind(input.id, input.kind);
-      return { ok: true };
-    });
-    routes.post('/api/companion/gtd', (request) => {
-      const input = z.object({ id: z.string(), gtd: GtdSchema }).parse(request.body);
-      return companion.store.setGtd(input.id, input.gtd);
-    });
-    routes.post('/api/companion/occurrence', (request) => {
-      const input = z.object({ id: z.string(), date: z.iso.date() }).parse(request.body);
-      return { ok: companion.store.completeOccurrence(input.id, input.date) };
     });
     routes.post('/api/companion/activation', (request) => {
       const input = z.object({ id: z.string(), enabled: z.boolean() }).parse(request.body),

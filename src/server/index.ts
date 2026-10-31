@@ -13,15 +13,7 @@ import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
 import { callModel } from './ai.js';
-import {
-  ItemKindSchema,
-  GtdSchema,
-  WaitInputSchema,
-  WaitStateSchema,
-  SettingsUpdateSchema,
-  TaskSchema,
-  TaskMergeSchema,
-} from '../shared/schema.js';
+import { SettingsUpdateSchema, TaskSchema, TaskMergeSchema } from '../shared/schema.js';
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
@@ -30,6 +22,7 @@ import { registerMcp } from './mcp.js';
 import { Threads } from './threads.js';
 import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
+import { registerTaskRoutes } from './task-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
 import { exportWorkspace } from './workspace-transfer.js';
 import { configureDesktopGateway, registerDesktop, waitForDesktopGateway } from './desktop.js';
@@ -287,35 +280,8 @@ await server.register(async (receiver) => {
   });
 });
 server.get('/api/state', () => store.snapshot());
-server.get('/api/tasks/:id', (request) =>
-  store.taskEvidence(z.object({ id: z.string() }).parse(request.params).id),
-);
 server.post('/api/tasks/merge', (request) => store.mergeTasks(TaskMergeSchema.parse(request.body)));
-server.post('/api/tasks/kind', (request) => {
-  const value = z.object({ id: z.string(), kind: ItemKindSchema }).parse(request.body);
-  store.setTaskKind(value.id, value.kind);
-  return { ok: true };
-});
-server.post('/api/tasks/gtd', (request) => {
-  const value = z.object({ id: z.string(), gtd: GtdSchema }).parse(request.body);
-  return store.setGtd(value.id, value.gtd);
-});
-server.post('/api/tasks/occurrence', (request) => {
-  const value = z.object({ id: z.string(), date: z.iso.date() }).parse(request.body);
-  return { ok: store.completeOccurrence(value.id, value.date) };
-});
-server.get('/api/waiting/:id', (request) =>
-  store.waitEvidence(z.object({ id: z.string() }).parse(request.params).id),
-);
-server.post('/api/waiting', (request) => store.createWait(WaitInputSchema.parse(request.body)));
-server.post('/api/waiting/state', (request) => {
-  const value = z.object({ id: z.string(), state: WaitStateSchema }).parse(request.body);
-  return store.setWaitState(value.id, value.state);
-});
-server.post('/api/waiting/confirm', (request) => {
-  const value = z.object({ id: z.string() }).parse(request.body);
-  return store.confirmWait(value.id);
-});
+registerTaskRoutes(server, '/api', store);
 server.get('/api/settings', () => store.publicSettings());
 server.get('/api/preferences', () => store.preferences());
 server.post('/api/preferences', (request) => store.savePreferences(request.body));
@@ -342,16 +308,6 @@ server.post('/api/settings', async (request) => {
   remoteEvents?.reconfigure();
   if (syncEnabled) sync.reconfigure();
   return store.publicSettings();
-});
-server.post('/api/tick', async (request) => {
-  const value = z.object({ id: z.string(), done: z.boolean() }).parse(request.body);
-  store.transaction(() => store.tick(value.id, value.done));
-  return { ok: true };
-});
-server.post('/api/remark', async (request) => {
-  const value = z.object({ id: z.string(), remark: z.string().max(4000) }).parse(request.body);
-  store.remark(value.id, value.remark);
-  return { ok: true };
 });
 server.post('/api/resolve', async (request) => {
   const value = z.object({ id: z.string(), task_id: z.string().nullable() }).parse(request.body);
