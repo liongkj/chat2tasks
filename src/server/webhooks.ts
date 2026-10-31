@@ -142,16 +142,14 @@ export class Webhooks {
       if (settings.trigger.mode === 'automatic')
         this.store.queueChat(chat.id, settings.quietSeconds, false);
       this.store.status({
-        phase:
-          settings.trigger.mode === 'automatic'
-            ? 'Messages saved · waiting for a quiet moment'
-            : 'Messages saved · ready for Run now',
-        debouncing: settings.trigger.mode === 'automatic',
-        pending: this.store.pending(
-          this.store
-            .messages()
-            .filter((m) => m.sessionId === chat.sessionId && m.chatId === chat.chatId),
-        ).length,
+        pending: this.store.pendingMessageCount(),
+        ...(!this.store.status().syncing && {
+          phase:
+            settings.trigger.mode === 'automatic'
+              ? 'Messages saved · waiting for a quiet moment'
+              : 'Messages saved · ready for Run now',
+          debouncing: settings.trigger.mode === 'automatic',
+        }),
       });
       return { accepted: true, duplicate: false, ignored: false };
     });
