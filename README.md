@@ -46,7 +46,7 @@ The default port is 2786. If you change `PORT` in `.env`, also set `PUBLIC_ORIGI
 
 ## Tasks and conversations
 
-The sidebar separates **Tasks**, **Actions**, **Questions**, **Reminders**, and **Waiting for**, with an **All items** view. Tasks are substantial work or actionable issues; actions are concrete one-step work; questions are for the workspace owner to answer; reminders are lightweight updates or follow-ups. Waiting for tracks an expected result from someone else, either on its own or linked to work. Marking a wait received does not complete its linked task. Automatically matching a reply requires an outgoing source message; a wait added manually without one can be marked received or reopened by the owner. **Review** holds uncertain categories and possible replies. Choosing **Still waiting** dismisses that particular suggested reply while allowing later or edited replies to be considered. Status and conversation filters narrow item views. Search by title, text or TODO reference; **⌘/Ctrl K** moves to workspace search. **More task actions → Show all items** includes open and completed items together.
+The sidebar separates **Tasks**, **Actions**, **Questions**, **Reminders**, and **Waiting for**, with an **All items** view. Tasks are substantial work or actionable issues; actions are concrete one-step work; questions are for the workspace owner to answer; reminders are lightweight updates or follow-ups. Waiting for tracks an expected result from someone else, either on its own or linked to work. Marking a wait received does not complete its linked task. Automatically matching a reply requires an outgoing source message; a wait added manually without one can be marked received or reopened by the owner. **Review** holds uncertain categories and possible replies. Choosing **Still waiting** dismisses that particular suggested reply while allowing later or edited replies to be considered. Status and conversation filters narrow item views. Search by title, text or TODO reference; **⌘/Ctrl K** opens Spotlight. **More task actions → Show all items** includes open and completed items together.
 
 Use **Organize** on an item to set a project, area of responsibility, date, or Someday/Maybe commitment. Tasks and actions can repeat daily, weekly, monthly, or yearly; completing one occurrence advances the next date without completing the series. **Upcoming** shows active items with owner-entered dates and repeating work; past dated events leave that view. Source-stated times remain in the item text until you add a structured date. Reminders and dates appear in the app only; the app sends no notifications or messages.
 
@@ -60,9 +60,9 @@ Choose **Conversations** to read a followed chat's cached messages and linked ta
 
 **Activity** separates the most recent signed message event from the last completed task analysis. These are different from the browser’s connection to the workspace server.
 
-## Search across your workspace
+## Spotlight: search across your workspace
 
-Choose **Search** in the sidebar or press **⌘/Ctrl K** to search all saved items and conversation messages. Exact matches work without a model. Related results use the text-only **EmbeddingGemma 2** model, run with Ollama on the workspace host. The first search builds a local index; later searches reuse it. The search includes saved image readings when available, but does not inspect image or audio files itself. Results are suggestions and may miss a match or include unrelated material.
+Choose **Spotlight** in the sidebar or press **⌘/Ctrl K** to search all saved items and conversation messages. Exact matches work without a model. Related results use the text-only **EmbeddingGemma 2** model, run with Ollama on the workspace host. The first search builds a local index; later searches reuse it. Spotlight includes saved image readings when available, but does not inspect image or audio files itself. Results are suggestions and may miss a match or include unrelated material.
 
 On a Mac or a directly hosted workspace, [install and start Ollama](https://ollama.com/download), then download the model once:
 

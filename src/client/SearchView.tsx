@@ -127,10 +127,10 @@ export function SearchView({
     }
   }
   return (
-    <section className="workspace-search" aria-label="Search workspace">
+    <section className="workspace-search" aria-label="Spotlight">
       <div className="page-heading">
         {navigationTrigger}
-        <h1>Search your workspace</h1>
+        <h1>Spotlight</h1>
       </div>
       <p className="search-intro">
         Find saved items and conversation messages by their words or meaning.

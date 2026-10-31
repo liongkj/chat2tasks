@@ -288,7 +288,7 @@ export function App() {
   }, [updateLocation]);
   const viewTitle =
     location.view === 'search'
-      ? 'Search'
+      ? 'Spotlight'
       : location.view === 'overview'
         ? 'Overview'
         : location.view === 'waiting'
@@ -557,7 +557,7 @@ export function App() {
           onClick={() => navigate('search')}
         >
           <Search size={16} />
-          <span>Search</span>
+          <span>Spotlight</span>
         </button>
         <button
           className={`nav-item ${location.view === 'threads' ? 'active' : ''}`}
