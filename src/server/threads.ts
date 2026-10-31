@@ -10,6 +10,7 @@ import {
   type ThreadSnapshot,
   type ThreadStatus,
 } from '../shared/threads.js';
+import { UserError } from './errors.js';
 
 const Membership = z.object({
   message_id: z.string(),
@@ -22,12 +23,9 @@ const Topic = z.object({ id: z.string(), title: z.string(), created: z.number() 
 const digest = (m: Message) =>
   hash(['named-destinations-v1', fingerprint(m), m.image_reading ?? null]);
 
-export class ThreadError extends Error {
-  constructor(
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
+export class ThreadError extends UserError {
+  constructor(statusCode: number, message: string) {
+    super(message, statusCode);
   }
 }
 

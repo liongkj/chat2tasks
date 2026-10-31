@@ -6,6 +6,7 @@ import { OpenWA } from './openwa.js';
 import { Store, hash } from './store.js';
 import { Sync } from './sync.js';
 import { Webhooks } from './webhooks.js';
+import { UserError } from './errors.js';
 
 const Session = z.object({
   id: z.string(),
@@ -158,25 +159,25 @@ export async function registerDesktop(
   server.post('/api/desktop/chats', async (request) => {
     const { ids } = z.object({ ids: z.array(z.string()).min(1).max(100) }).parse(request.body);
     const session = await currentSession();
-    if (!session || session.status !== 'ready') throw new Error('Connect WhatsApp first.');
+    if (!session || session.status !== 'ready') throw new UserError('Connect WhatsApp first.');
     const choices = await availableChats(session.id);
     if (
       new Set(ids).size !== ids.length ||
       ids.some((id) => !choices.some((chat) => chat.id === id))
     )
-      throw new Error('Choose conversations from the connected WhatsApp account.');
+      throw new UserError('Choose conversations from the connected WhatsApp account.');
     const selected: string[] = [];
     for (const id of ids) {
       const matching = store.settings().chats.filter((chat) => chat.chatId === id);
       if (matching.length > 1)
-        throw new Error('A conversation needs manual matching before it can be moved.');
+        throw new UserError('A conversation needs manual matching before it can be moved.');
       const existing = matching[0];
       if (existing) {
         store.relinkConversation(existing.id, session.id);
         selected.push(existing.id);
       } else {
         const choice = choices.find((chat) => chat.id === id);
-        if (!choice) throw new Error('Conversation not found');
+        if (!choice) throw new UserError('Conversation not found');
         const chatId = hash([session.id, id]);
         const settings = store.settings();
         store.saveSettings({
@@ -205,12 +206,12 @@ export async function registerDesktop(
   server.post('/api/desktop/finish', async () => {
     const selected = z.array(z.string()).min(1).parse(store.metaValue('desktop_selected_chats'));
     const session = await currentSession();
-    if (!session || session.status !== 'ready') throw new Error('Connect WhatsApp first.');
-    if (!(await codex.status()).signedIn) throw new Error('Sign in to Codex first.');
+    if (!session || session.status !== 'ready') throw new UserError('Connect WhatsApp first.');
+    if (!(await codex.status()).signedIn) throw new UserError('Sign in to Codex first.');
     await webhooks.connect([session.id]);
     const settings = store.settings();
     const profile = settings.profiles.find((item) => item.kind === 'codex');
-    if (!profile) throw new Error('Sign in to Codex first.');
+    if (!profile) throw new UserError('Sign in to Codex first.');
     store.saveSettings({
       settings: {
         ...settings,

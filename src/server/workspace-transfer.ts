@@ -19,13 +19,15 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip, createGzip } from 'node:zlib';
 import { extract, pack } from 'tar-stream';
 import { Store } from './store.js';
+import { UserError } from './errors.js';
 
 const magic = Buffer.from('C2T1');
 const headerSize = magic.length + 16 + 12;
 const tagSize = 16;
 
 function keyFor(passphrase: string, salt: Buffer) {
-  if (passphrase.length < 8) throw new Error('Use a passphrase with at least eight characters.');
+  if (passphrase.length < 8)
+    throw new UserError('Use a passphrase with at least eight characters.');
   return scryptSync(passphrase, salt, 32);
 }
 
@@ -94,7 +96,7 @@ export async function importWorkspace(source: string, destination: string, passp
       throw error;
     },
   );
-  if (exists) throw new Error('Choose an empty location for the imported workspace.');
+  if (exists) throw new UserError('Choose an empty location for the imported workspace.');
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   const staged = await mkdtemp(join(dirname(destination), '.chat2tasks-import-'));
   try {
@@ -102,7 +104,7 @@ export async function importWorkspace(source: string, destination: string, passp
     const size = (await file.stat()).size;
     if (size <= headerSize + tagSize) {
       await file.close();
-      throw new Error('The workspace transfer file is incomplete.');
+      throw new UserError('The workspace transfer file is incomplete.');
     }
     const header = Buffer.alloc(headerSize),
       tag = Buffer.alloc(tagSize);
@@ -110,7 +112,7 @@ export async function importWorkspace(source: string, destination: string, passp
     await file.read(tag, 0, tag.length, size - tagSize);
     await file.close();
     if (!header.subarray(0, magic.length).equals(magic))
-      throw new Error('This is not a Chat2Tasks workspace transfer.');
+      throw new UserError('This is not a Wawa workspace transfer.');
     const salt = header.subarray(magic.length, magic.length + 16);
     const iv = header.subarray(magic.length + 16);
     const decipher = createDecipheriv('aes-256-gcm', keyFor(passphrase, salt), iv);
@@ -150,12 +152,12 @@ export async function importWorkspace(source: string, destination: string, passp
       archive,
     );
     if (!found.has('tasks.sqlite') || !found.has('vault.key'))
-      throw new Error('The workspace transfer is missing required files.');
+      throw new UserError('The workspace transfer is missing required files.');
     const restored = new Store(staged);
     try {
       const integrity = restored.db.prepare('PRAGMA quick_check').get();
       if (!integrity || integrity.quick_check !== 'ok')
-        throw new Error('The workspace database is damaged.');
+        throw new UserError('The workspace database is damaged.');
       const settings = restored.settings();
       restored.saveSettings({
         settings: {

@@ -20,13 +20,11 @@ import {
   ExtensionIdSchema,
   PairRequestSchema,
 } from '../shared/companion.js';
+import { UserError } from './errors.js';
 
-export class CompanionError extends Error {
-  constructor(
-    readonly statusCode: number,
-    message: string,
-  ) {
-    super(message);
+export class CompanionError extends UserError {
+  constructor(statusCode: number, message: string) {
+    super(message, statusCode);
   }
 }
 const digest = (value: string) => hash(value);

@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
-import { Store, TaskTriageError } from './store.js';
+import { Store } from './store.js';
 import { LocalSearch } from './search.js';
 import { prepareSearchMedia } from './search-media.js';
 import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
@@ -25,9 +25,9 @@ import {
 import { seedDemo } from './demo.js';
 import { Webhooks } from './webhooks.js';
 import { decideTrigger } from './decisions.js';
-import { Companion, CompanionError, registerCompanion } from './companion.js';
+import { Companion, registerCompanion } from './companion.js';
 import { registerMcp } from './mcp.js';
-import { Threads, ThreadError } from './threads.js';
+import { Threads } from './threads.js';
 import { Threading } from './threading.js';
 import { registerThreadRoutes } from './thread-routes.js';
 import { seedDemoThreads } from './thread-demo.js';
@@ -40,6 +40,7 @@ import {
   desktopSignInPage,
   validDesktopSession,
 } from './desktop-session.js';
+import { UserError } from './errors.js';
 
 const port = z.coerce
   .number()
@@ -180,7 +181,7 @@ server.addHook('onRequest', async (request, reply) => {
       !validDesktopSession(request.headers.cookie ?? '', store.key, password)
     )
       return reply
-        .header('WWW-Authenticate', 'Basic realm="Chat2Tasks", charset="UTF-8"')
+        .header('WWW-Authenticate', 'Basic realm="Wawa", charset="UTF-8"')
         .code(401)
         .send({ error: 'Sign in to your workspace' });
   }
@@ -193,21 +194,11 @@ server.addHook('onRequest', async (request, reply) => {
     return reply.code(403).send({ error: 'Invalid request origin or content type' });
 });
 server.setErrorHandler((error, request, reply) => {
-  if (error instanceof ThreadError)
-    return reply.code(error.statusCode).send({ error: error.message });
-  if (error instanceof TaskTriageError)
-    return reply.code(error.statusCode).send({ error: error.message });
-  if (error instanceof CompanionError)
+  if (error instanceof UserError)
     return reply.code(error.statusCode).send({ error: error.message });
   if (error instanceof z.ZodError)
     return reply.code(400).send({ error: error.issues.map((x) => x.message).join('. ') });
   // Provider response bodies and supplied credentials never enter logs or API errors.
-  const safe =
-    error instanceof Error &&
-    /^(Task not found|Question already|Choose a task|Unknown credential|Completion|A task|Cannot update|Unknown task|Enter the webhook|Enter the remote WhatsApp|The callback|Add a conversation|OpenWA could not|OpenWA returned|Connect WhatsApp|Sign in to Codex|Choose conversations|Conversation not found|A conversation needs)/.test(
-      error.message,
-    );
-  if (safe) return reply.code(400).send({ error: error.message });
   request.log.error({ event: 'request_failed', route: request.routeOptions.url }, 'Request failed');
   return reply.code(503).send({
     error: 'The request could not be completed. Check your connection settings and retry.',
@@ -338,7 +329,7 @@ server.post('/api/settings', async (request) => {
       Boolean(update.secrets['remote-openwa']?.trim()) ||
       (!update.removeSecrets.includes('remote-openwa') && Boolean(store.secret('remote-openwa')));
     if (!update.settings.desktopGateway.remoteUrl || !hasKey)
-      throw new Error('Enter the remote WhatsApp server address and API key.');
+      throw new UserError('Enter the remote WhatsApp server address and API key.');
   }
   store.saveSettings(update);
   if (
@@ -396,7 +387,7 @@ server.post('/api/import', async (request) => {
   const valid = new Set(store.snapshot().tasks.map((t) => t.id));
   store.transaction(() => {
     for (const t of tasks) {
-      if (!valid.has(t.id)) throw new Error('Task not found');
+      if (!valid.has(t.id)) throw new UserError('Task not found');
       store.tick(t.id, t.done);
     }
   });
@@ -454,7 +445,7 @@ server.post('/api/models', async (request) => {
 server.post('/api/test-model', async (request) => {
   const { profileId } = z.object({ profileId: z.string() }).parse(request.body),
     profile = store.settings().profiles.find((p) => p.id === profileId);
-  if (!profile) throw new Error('Unknown model connection');
+  if (!profile) throw new UserError('Unknown model connection');
   if (profile.kind === 'decision') {
     await decideTrigger(store, profile, [], [], 0);
     return { ok: true };
@@ -477,11 +468,11 @@ server.post('/api/handoff', async (request, reply) => {
   const { id } = z.object({ id: z.string() }).parse(request.body);
   const snapshot = store.snapshot(),
     task = snapshot.tasks.find((t) => t.id === id);
-  if (!task) throw new Error('Task not found');
+  if (!task) throw new UserError('Task not found');
   if (handoffRunning) return reply.code(409).send({ error: 'A handoff is already being prepared' });
   const settings = store.settings(),
     profile = settings.profiles.find((p) => p.id === settings.activeProfileId);
-  if (!profile) throw new Error('Unknown model connection');
+  if (!profile) throw new UserError('Unknown model connection');
   handoffRunning = true;
   try {
     const sources = snapshot.messages.filter((m) => task.source_ids.includes(m.id));
@@ -502,8 +493,7 @@ server.post('/api/handoff', async (request, reply) => {
     handoffRunning = false;
   }
 });
-if (process.env.CHAT2TASKS_DESKTOP === 'true')
-  await registerDesktop(server, store, openwa, sync, webhooks);
+if (desktop) await registerDesktop(server, store, openwa, sync, webhooks);
 await server.register(staticFiles, { root: resolve('dist/client'), wildcard: false });
 const startupAbort = new AbortController();
 if (desktop) {
@@ -520,7 +510,7 @@ async function startBackground() {
       if (!startupAbort.signal.aborted)
         store.status({
           syncing: false,
-          error: 'WhatsApp could not start. Quit Chat2Tasks and try again.',
+          error: 'WhatsApp could not start. Quit Wawa and try again.',
         });
       return;
     }

@@ -34,6 +34,7 @@ import {
   type AttentionPreferences,
   type SoundPreferences,
 } from '../shared/schema.js';
+import { UserError } from './errors.js';
 
 export const now = () => Date.now() / 1000;
 export const hash = (value: unknown) =>
@@ -73,7 +74,7 @@ function nextOccurrence(recurrence: NonNullable<Gtd['recurrence']>) {
   const [year, month, day] = recurrence.next_date.split('-').map(Number);
   const [anchorYear, anchorMonth, anchorDay] = recurrence.anchor_date.split('-').map(Number);
   if (!year || !month || !day || !anchorYear || !anchorMonth || !anchorDay)
-    throw new Error('A recurring item needs valid dates');
+    throw new UserError('A recurring item needs valid dates');
   let date: Date;
   if (recurrence.frequency === 'daily' || recurrence.frequency === 'weekly')
     date = new Date(Date.UTC(year, month - 1, day + (recurrence.frequency === 'daily' ? 1 : 7)));
@@ -86,14 +87,7 @@ function nextOccurrence(recurrence: NonNullable<Gtd['recurrence']>) {
   return date.toISOString().slice(0, 10);
 }
 
-export class TaskTriageError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-  ) {
-    super(message);
-  }
-}
+export class TaskTriageError extends UserError {}
 
 export class Store {
   readonly db: DatabaseSync;
@@ -290,13 +284,13 @@ export class Store {
   relinkConversation(id: string, sessionId: string) {
     const settings = this.settings();
     const chat = settings.chats.find((item) => item.id === id);
-    if (!chat) throw new Error('Conversation not found');
+    if (!chat) throw new UserError('Conversation not found');
     if (
       settings.chats.some(
         (item) => item.id !== id && item.sessionId === sessionId && item.chatId === chat.chatId,
       )
     )
-      throw new Error('This conversation is already connected');
+      throw new UserError('This conversation is already connected');
     if (chat.sessionId === sessionId) return;
     const messages = this.messages().filter(
       (message) => message.sessionId === chat.sessionId && message.chatId === chat.chatId,
@@ -429,7 +423,7 @@ export class Store {
       ...update.settings.profiles.flatMap((p) => [p.id + ':key', p.id + ':gateway']),
     ]);
     if ([...Object.keys(update.secrets), ...update.removeSecrets].some((id) => !allowed.has(id)))
-      throw new Error('Unknown credential slot');
+      throw new UserError('Unknown credential slot');
     this.transaction(() => {
       this.db
         .prepare('INSERT OR REPLACE INTO app_settings VALUES(1,?)')
@@ -491,14 +485,14 @@ export class Store {
     waits: WaitChange[] = [],
   ) {
     const messages = new Map([...batch, ...context].map((m) => [m.id, m]));
-    if (changes.length > 40) throw new Error('Task batch is too large');
+    if (changes.length > 40) throw new UserError('Task batch is too large');
     return this.transaction(() => {
       let added = 0;
       for (const t of changes) {
         const sources = t.source_ids.map((id) => messages.get(id));
         const first = sources[0];
         if (!first || sources.some((m) => !m))
-          throw new Error('A task must cite evidence from one supplied conversation');
+          throw new UserError('A task must cite evidence from one supplied conversation');
         const requestedIdentity =
           t.id ??
           hash([
@@ -519,10 +513,10 @@ export class Store {
           !ownerLinked &&
           sources.some((m) => m?.chatId !== first.chatId || m?.sessionId !== first.sessionId)
         )
-          throw new Error('A task must cite evidence from one supplied conversation');
-        if (t.id && !existing) throw new Error('Unknown task ID');
+          throw new UserError('A task must cite evidence from one supplied conversation');
+        if (t.id && !existing) throw new UserError('Unknown task ID');
         if (existing && sources.some((m) => !m || !this.taskInChat(identity, m)))
-          throw new Error('Cannot update a task from another conversation');
+          throw new UserError('Cannot update a task from another conversation');
         if (redirect) {
           for (const id of t.source_ids)
             this.db.prepare('INSERT OR IGNORE INTO sources VALUES(?,?)').run(identity, id);
@@ -940,7 +934,7 @@ export class Store {
   tick(id: string, done: boolean) {
     this.assertNotMerged(id);
     if (!this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
-      throw new Error('Task not found');
+      throw new UserError('Task not found');
     if (done) {
       const row = this.db.prepare('SELECT payload FROM item_gtd WHERE task_id=?').get(id);
       if (row && GtdSchema.parse(JSON.parse(PayloadRow.parse(row).payload)).recurrence)
@@ -957,7 +951,7 @@ export class Store {
   remark(id: string, remark: string) {
     this.assertNotMerged(id);
     if (!this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id))
-      throw new Error('Task not found');
+      throw new UserError('Task not found');
     this.db.prepare('INSERT OR REPLACE INTO task_remarks VALUES(?,?,?)').run(id, remark, now());
   }
   filterNotTask(id: string, expectedRevision: string) {
@@ -1015,22 +1009,22 @@ export class Store {
       decisions.length !== batch.length ||
       new Set(decisions.map((d) => d.message_id)).size !== batch.length
     )
-      throw new Error('Decisions must cover every supplied reply exactly once');
+      throw new UserError('Decisions must cover every supplied reply exactly once');
     this.transaction(() => {
       for (const d of decisions) {
         const m = batch.find((m) => m.id === d.message_id);
         if (!m || m.direction !== 'outgoing')
-          throw new Error('Only your outgoing reply can complete a task');
+          throw new UserError('Only your outgoing reply can complete a task');
         if (
           new Set(d.task_ids).size !== d.task_ids.length ||
           d.task_ids.some((id) => !this.taskInChat(id, m))
         )
-          throw new Error('Completion cannot cross conversations');
+          throw new UserError('Completion cannot cross conversations');
         if (
           d.action === 'complete' &&
           (d.task_ids.length !== 1 || !d.evidence_quote || !m.body.includes(d.evidence_quote))
         )
-          throw new Error('Completion needs one task and exact evidence from your reply');
+          throw new UserError('Completion needs one task and exact evidence from your reply');
         if (
           d.action === 'complete' &&
           this.db
@@ -1039,7 +1033,7 @@ export class Store {
             )
             .get(d.task_ids[0] ?? '')
         )
-          throw new Error('Reminders require an owner action to dismiss');
+          throw new UserError('Reminders require an owner action to dismiss');
         if (d.action === 'complete' && d.task_ids[0]) {
           const gtd = this.db
             .prepare('SELECT payload FROM item_gtd WHERE task_id=?')
@@ -1047,7 +1041,7 @@ export class Store {
           if (gtd) {
             const value = GtdSchema.parse(JSON.parse(PayloadRow.parse(gtd).payload));
             if (value.recurrence || value.commitment === 'someday')
-              throw new Error('Recurring or someday items require an owner action to complete');
+              throw new UserError('Recurring or someday items require an owner action to complete');
           }
         }
         if (
@@ -1056,9 +1050,9 @@ export class Store {
             .prepare('SELECT task_id FROM item_kinds WHERE task_id=? AND suggestion IS NOT NULL')
             .get(d.task_ids[0] ?? '')
         )
-          throw new Error('The item category needs review before automatic completion');
+          throw new UserError('The item category needs review before automatic completion');
         if (d.action === 'ask' && !d.question?.trim())
-          throw new Error('Ambiguous completion needs a question');
+          throw new UserError('Ambiguous completion needs a question');
       }
       for (const d of decisions) {
         const m = batch.find((m) => m.id === d.message_id);
@@ -1127,12 +1121,12 @@ export class Store {
       const row = this.db
         .prepare("SELECT message_id FROM completion_questions WHERE id=? AND status='pending'")
         .get(id);
-      if (!row) throw new Error('Question already resolved');
+      if (!row) throw new UserError('Question already resolved');
       const mid = RefRow.parse(row).message_id,
         m = this.messages().find((m) => m.id === mid);
       if (taskId) {
         if (!m || !this.taskInChat(taskId, m))
-          throw new Error('Choose a task in this conversation');
+          throw new UserError('Choose a task in this conversation');
         this.completeFromReply(taskId, mid, 'confirmed', 'You confirmed the completion');
       }
       this.db.prepare("UPDATE completion_questions SET status='resolved' WHERE id=?").run(id);
