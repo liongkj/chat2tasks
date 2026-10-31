@@ -179,7 +179,7 @@ function App() {
       const granted = await chrome.permissions.request({
         origins: [`${parsedUrl.protocol}//${parsedUrl.hostname}/*`],
       });
-      if (!granted) throw new Error('Allow access to your Chat2Tasks server to pair this browser.');
+      if (!granted) throw new Error('Allow access to your Wawa server to pair this browser.');
       const result = await pair(url, code, name),
         next = { serverUrl: url, ...result };
       await chrome.storage.local.set({ connection: next, serverUrl: url });
@@ -367,7 +367,7 @@ function App() {
       <header>
         <span className="brand">
           <span>
-            chat2tasks<small>WhatsApp companion</small>
+            wawa<small>WhatsApp companion</small>
           </span>
         </span>
         {connection && (
@@ -395,7 +395,7 @@ function App() {
             <Link2 size={25} />
           </div>
           <h1>Connect your workspace</h1>
-          <p>Keep tasks beside WhatsApp Web. Connect this browser to your own Chat2Tasks server.</p>
+          <p>Keep tasks beside WhatsApp Web. Connect this browser to your own Wawa server.</p>
           <form onSubmit={(event) => void connect(event)}>
             <label>
               Server address
@@ -920,7 +920,7 @@ function App() {
               <h1>Capture a message</h1>
               <p>
                 Select text in WhatsApp Web, right-click, and choose{' '}
-                <strong>Capture selection in Chat2Tasks</strong>. Review it here before saving.
+                <strong>Capture selection in Wawa</strong>. Review it here before saving.
               </p>
               {draft ? (
                 <form

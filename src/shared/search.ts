@@ -31,6 +31,13 @@ export const SearchResponseSchema = z.object({
     z.object({ kind: z.literal('indexing'), indexed: z.number(), total: z.number() }),
     z.object({ kind: z.literal('unavailable') }),
   ]),
+  media: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('ready'), indexed: z.number(), total: z.number() }),
+      z.object({ kind: z.literal('indexing'), indexed: z.number(), total: z.number() }),
+      z.object({ kind: z.literal('unavailable'), indexed: z.number(), total: z.number() }),
+    ])
+    .optional(),
   results: z.array(
     z.object({
       kind: z.enum(['task', 'message']),

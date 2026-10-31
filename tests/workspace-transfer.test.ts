@@ -279,6 +279,10 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
     store.db
       .prepare("INSERT INTO search_embeddings VALUES('message','image',0,'old',?)")
       .run(Buffer.alloc(1024));
+    store.db.prepare("INSERT INTO search_media_index VALUES('image','old',0)").run();
+    store.db
+      .prepare("INSERT INTO search_media_embeddings VALUES('image',0,'old',?)")
+      .run(Buffer.alloc(1024));
     store.queueChat('c', 60, true, true);
     const file = join(root, 'workspace.c2t');
     await exportWorkspace(store, file, 'example passphrase');
@@ -305,6 +309,14 @@ test('an encrypted transfer preserves workspace evidence and pauses the old conn
       assert.deepEqual(restoredSearch.settings(), { kind: 'workspace' });
       assert.equal(
         restored.db.prepare('SELECT count(*) AS count FROM search_embeddings').get()?.count,
+        0,
+      );
+      assert.equal(
+        restored.db.prepare('SELECT count(*) AS count FROM search_media_index').get()?.count,
+        0,
+      );
+      assert.equal(
+        restored.db.prepare('SELECT count(*) AS count FROM search_media_embeddings').get()?.count,
         0,
       );
       const image = await new OpenWA(restored).media(result.messages[0]!);

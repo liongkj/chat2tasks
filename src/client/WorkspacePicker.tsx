@@ -75,7 +75,7 @@ export function WorkspacePicker() {
 
   return (
     <main className="workspace-picker">
-      <p className="workspace-picker-eyebrow">CHAT2TASKS WORKSPACE</p>
+      <p className="workspace-picker-eyebrow">WAWA WORKSPACE</p>
       <h1>Where should work happen?</h1>
       <p>Choose where your workspace runs. Other computers can connect to the same server.</p>
       <div className="workspace-picker-options" role="radiogroup" aria-label="Workspace location">
@@ -118,7 +118,7 @@ export function WorkspacePicker() {
       </div>
       {(kind === 'remote' || kind === 'move') && (
         <div className="workspace-picker-address">
-          <label htmlFor="workspace-server">Chat2Tasks server address</label>
+          <label htmlFor="workspace-server">Wawa server address</label>
           <input
             id="workspace-server"
             type="url"
@@ -128,8 +128,8 @@ export function WorkspacePicker() {
             onChange={(event) => setAddress(event.target.value)}
           />
           <small>
-            Use a private Tailscale HTTPS address or another secure address for your running
-            Chat2Tasks workspace.
+            Use a private Tailscale HTTPS address or another secure address for your running Wawa
+            workspace.
           </small>
         </div>
       )}
@@ -204,8 +204,8 @@ export function WorkspacePicker() {
       )}
       {moveResult === 'complete' && kind === 'move' && (
         <p role="status">
-          The move is complete. Restart Chat2Tasks on the old computer and point other computers to
-          this computer’s new address. Reconnect WhatsApp and Codex here.
+          The move is complete. Restart Wawa on the old computer and point other computers to this
+          computer’s new address. Reconnect WhatsApp and Codex here.
         </p>
       )}
       <div className="workspace-picker-actions">

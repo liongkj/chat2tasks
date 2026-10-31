@@ -1,6 +1,6 @@
 # One server, multiple computers
 
-Choose one Windows, macOS, or Linux computer to run the workspace. The other computers open the same workspace in a browser or a supported desktop preview. They do not need a separate Chat2Tasks server, database, WhatsApp connection, or model configuration.
+Choose one Windows, macOS, or Linux computer to run the workspace. The other computers open the same workspace in a browser or a supported desktop preview. They do not need a separate Wawa server, database, WhatsApp connection, or model configuration.
 
 The server computer must remain awake and connected while you want messages processed. This is a single-owner workspace: everyone who can sign in sees the same data. Selecting another server in a desktop app does not copy or synchronize data.
 
@@ -49,7 +49,7 @@ The server's Chrome companion can be downloaded and paired separately on each cl
 
 For a workspace hosted by the desktop preview, keep the old server running and reachable. On the destination computer, open **Switch Workspace → Move an existing workspace here**. Enter the old server's private address and password, then the destination's private HTTPS address, a free local port, and a new workspace password. Configure the private HTTPS route shown in the app before starting the move.
 
-The old server stops accepting work, finishes work already underway, and is fenced before the destination can activate. The destination retains any previous local workspace and connection data as backups. Reconnect WhatsApp and Codex on the destination. Once the move completes, restart Chat2Tasks on the old computer and update the address on the other clients. If interrupted, reopen the old server's app and retry from the destination with the same addresses and port. See [the move design](single-server-design.md) for recovery limits.
+The old server stops accepting work, finishes work already underway, and is fenced before the destination can activate. The destination retains any previous local workspace and connection data as backups. Reconnect WhatsApp and Codex on the destination. Once the move completes, restart Wawa on the old computer and update the address on the other clients. If interrupted, reopen the old server's app and retry from the destination with the same addresses and port. See [the move design](single-server-design.md) for recovery limits.
 
 This move is for desktop-hosted workspaces. A Docker-hosted workspace still requires the manual backup and restore procedure in [updating an existing stack](docker-stack.md#update-an-existing-stack).
 

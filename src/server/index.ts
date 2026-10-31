@@ -10,6 +10,7 @@ import { acquireLock } from '../../desktop/process-lock.mjs';
 import type { DesktopSharing } from '../shared/desktop-sharing.js';
 import { Store, TaskTriageError } from './store.js';
 import { LocalSearch } from './search.js';
+import { prepareSearchMedia } from './search-media.js';
 import { SearchRequestSchema, SearchSettingsSchema } from '../shared/search.js';
 import { OpenWA } from './openwa.js';
 import { Sync, prompt } from './sync.js';
@@ -73,7 +74,12 @@ if (ownership) {
   } else ownership.assertCanRun();
 }
 const store = new Store(dataDirectory);
-const localSearch = new LocalSearch(store.db, () => store.snapshot());
+const openwa = new OpenWA(store);
+const localSearch = new LocalSearch(store.db, () => store.snapshot(), undefined, undefined, {
+  workspaceUrl: process.env.LOCAL_SEARCH_MEDIA_OLLAMA_URL,
+  load: (message) => openwa.attachment(message),
+  prepare: prepareSearchMedia,
+});
 const configuredDesktopSharing: DesktopSharing = desktop
   ? store.desktopSharing()
   : { kind: 'disabled' };
@@ -94,8 +100,7 @@ if (desktop && !recoveryOnly) await configureDesktopGateway(store);
 const demo = process.env.DEMO === 'true';
 const syncEnabled = !demo && !recoveryOnly && process.env.SYNC_DISABLED !== 'true';
 if (demo) seedDemo(store);
-const openwa = new OpenWA(store),
-  sync = new Sync(store, openwa);
+const sync = new Sync(store, openwa);
 const threads = new Threads(store);
 if (demo) seedDemoThreads(threads);
 const organiser = new Threading(
@@ -482,11 +487,11 @@ server.get('/api/prompts', async () =>
 server.get('/api/media', async (request, reply) => {
   const { id } = z.object({ id: z.string() }).parse(request.query),
     message = store.messages().find((m) => m.id === id);
-  if (!message) return reply.code(404).send({ error: 'Image not found' });
-  const image = await openwa.media(message);
-  return image
-    ? reply.type(image.mime).send(image.bytes)
-    : reply.code(404).send({ error: 'OpenWA no longer serves this image' });
+  if (!message) return reply.code(404).send({ error: 'Attachment not found' });
+  const attachment = await openwa.attachment(message);
+  return attachment
+    ? reply.type(attachment.mime).send(attachment.bytes)
+    : reply.code(404).send({ error: 'OpenWA no longer serves this attachment' });
 });
 server.post('/api/discover', async (request) => {
   const { sessionId } = z.object({ sessionId: z.string().optional() }).parse(request.body);
@@ -606,7 +611,7 @@ if (moveGate && ownership) {
       sync.stop();
       const threadJob = organiser.stop();
       await Promise.all([moveGate.pause(), starting, threadJob]);
-      localSearch.stop();
+      await localSearch.stopAndWait();
       await sync.stopAndWait();
       if (!remoteGateway && !moveRecovery) await stopManagedGateway();
     },
@@ -676,7 +681,7 @@ async function shutdown() {
   await starting;
   await threadJob;
   await sync.stopAndWait();
-  localSearch.stop();
+  await localSearch.stopAndWait();
   store.close();
   workspaceLock?.close();
 }

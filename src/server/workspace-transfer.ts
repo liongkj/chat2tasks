@@ -196,7 +196,7 @@ async function restoreWorkspace(
       if (kind === 'move') restored.suspendMoveJobs();
       else restored.setMeta('move_pending_jobs', []);
       restored.db.exec(
-        'DELETE FROM chat_jobs; DROP TABLE IF EXISTS search_settings; DROP TABLE IF EXISTS search_embeddings',
+        'DELETE FROM chat_jobs; DROP TABLE IF EXISTS search_settings; DROP TABLE IF EXISTS search_embeddings; DROP TABLE IF EXISTS search_media_index; DROP TABLE IF EXISTS search_media_embeddings',
       );
       restored.setMeta('registered_webhook_url', '');
       restored.setMeta('managed_webhooks', {});

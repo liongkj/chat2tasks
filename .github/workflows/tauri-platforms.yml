@@ -72,7 +72,7 @@ jobs:
             trap "kill $app 2>/dev/null || true" EXIT
             for attempt in $(seq 1 90); do
               kill -0 "$app" || exit 1
-              if xdotool search --onlyvisible --name "Chat2Tasks Preview" >/dev/null 2>&1; then exit 0; fi
+              if xdotool search --onlyvisible --name "Wawa" >/dev/null 2>&1; then exit 0; fi
               sleep 1
             done
             echo "The installed preview window did not appear." >&2

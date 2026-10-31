@@ -71,7 +71,7 @@ export function Overview({
         : status.debouncing && !status.syncing
           ? 'New messages will be checked shortly.'
           : working
-            ? 'You can keep using Chat2Tasks while this runs.'
+            ? 'You can keep using Wawa while this runs.'
             : 'Updates appear here as conversations are checked.';
   const reviewCount =
     tasks.filter((task) => !task.done && task.kind_suggestion).length +
@@ -124,8 +124,8 @@ export function Overview({
             {followedConversations === null
               ? 'Your workspace is open. We’re checking your conversation settings.'
               : followedConversations
-                ? `You’re following ${followedConversations} ${followedConversations === 1 ? 'conversation' : 'conversations'}. Items appear here after Chat2Tasks receives and checks their messages.`
-                : 'Choose which WhatsApp conversations Chat2Tasks should follow.'}
+                ? `You’re following ${followedConversations} ${followedConversations === 1 ? 'conversation' : 'conversations'}. Items appear here after Wawa receives and checks their messages.`
+                : 'Choose which WhatsApp conversations Wawa should follow.'}
           </p>
           {followedConversations === 0 && (
             <button className="button secondary" onClick={onConnections}>
