@@ -496,6 +496,53 @@ test('a new clarification sounds once and existing questions stay quiet after re
   }
 });
 
+test('a clarification is only resolved after the owner confirms the chosen task', async () => {
+  const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
+  const task = snapshot.tasks.find((item) => item.source_ids.length > 0);
+  const message = snapshot.messages.find((item) => item.id === task?.source_ids[0]);
+  if (!task || !message) throw Error('The sample workspace needs a task with a source message');
+  const resolved: unknown[] = [];
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ httpCredentials: { username: 'admin', password } });
+  try {
+    const page = await context.newPage();
+    await page.route('**/api/state', async (route) => {
+      const response = await route.fetch();
+      const current = SnapshotSchema.parse(await response.json());
+      current.questions = [
+        {
+          id: 'pending-question',
+          message_id: message.id,
+          action: 'ask',
+          task_ids: [],
+          evidence_quote: message.body,
+          reason: 'Needs clarification',
+          question: 'Which task did this finish?',
+        },
+      ];
+      await route.fulfill({ response, json: current });
+    });
+    await page.route('**/api/resolve', async (route) => {
+      resolved.push(route.request().postDataJSON());
+      await route.fulfill({ json: { ok: true } });
+    });
+    await page.goto(base + '?view=tasks');
+    const card = page.locator('.question-card');
+    await expect(card.getByText('Which task did this finish?')).toBeVisible();
+    const resolve = card.getByRole('button', { name: 'Resolve' });
+    await expect(resolve).toBeDisabled();
+    await card.getByLabel('Choose the completed task').selectOption(task.id);
+    expect(resolved).toEqual([]);
+    await expect(resolve).toBeEnabled();
+    await resolve.click();
+    await expect(page.getByRole('status')).toContainText('Task marked as done');
+    expect(resolved).toEqual([{ id: 'pending-question', task_id: task.id }]);
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+});
+
 test('the last-item celebration waits for a confirmed completion', async () => {
   const snapshot = SnapshotSchema.parse(await (await owner('state')).json());
   const task = snapshot.tasks.find(

@@ -41,6 +41,7 @@ import { TaskQueue } from './TaskQueue.js';
 import { SearchView } from './SearchView.js';
 import { TaskFilters } from './TaskFilters.js';
 import { Overview } from './Overview.js';
+import { QuestionCard } from './QuestionCard.js';
 import { ReviewView } from './ReviewView.js';
 import { WaitingView } from './WaitingView.js';
 import { WorkspaceImport } from './WorkspaceImport.js';
@@ -796,65 +797,15 @@ export function App() {
       return chat && message?.chatId === chat.chatId && message.sessionId === chat.sessionId;
     })
     .map((question) => (
-      <div
-        className={`question-card ${newQuestions.has(question.id) ? 'question-arrived' : ''}`}
+      <QuestionCard
         key={question.id}
-      >
-        <h3>{question.question}</h3>
-        <p>{data.messages.find((message) => message.id === question.message_id)?.body}</p>
-        <div className="form-inline">
-          <select
-            aria-label="Choose the completed task"
-            defaultValue=""
-            onChange={async (event) => {
-              if (!event.target.value) return;
-              try {
-                await api('resolve', OkSchema, { id: question.id, task_id: event.target.value });
-                await refresh();
-              } catch (error) {
-                notify(errorMessage(error), 'error');
-              }
-            }}
-          >
-            <option value="" disabled>
-              Choose the completed task…
-            </option>
-            {data.tasks
-              .filter((task) => {
-                const message = data.messages.find((item) => item.id === question.message_id);
-                return (
-                  message &&
-                  task.source_ids.some((id) =>
-                    data.messages.some(
-                      (source) =>
-                        source.id === id &&
-                        source.chatId === message.chatId &&
-                        source.sessionId === message.sessionId,
-                    ),
-                  )
-                );
-              })
-              .map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.title}
-                </option>
-              ))}
-          </select>
-          <button
-            className="text-button"
-            onClick={async () => {
-              try {
-                await api('resolve', OkSchema, { id: question.id, task_id: null });
-                await refresh();
-              } catch (error) {
-                notify(errorMessage(error), 'error');
-              }
-            }}
-          >
-            Dismiss
-          </button>
-        </div>
-      </div>
+        question={question}
+        messages={data.messages}
+        tasks={data.tasks}
+        arrived={newQuestions.has(question.id)}
+        notify={notify}
+        refresh={refresh}
+      />
     ));
   return (
     <>
