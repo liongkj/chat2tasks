@@ -29,6 +29,28 @@ test('attention preferences persist without changing existing workspaces', () =>
   }
 });
 
+test('sound preferences start enabled and persist separately from attention preferences', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-sound-preferences-'));
+  try {
+    let store = new Store(dir);
+    assert.deepEqual(store.soundPreferences(), { completion: true, attention: true, volume: 0.3 });
+    const attention = store.preferences();
+    store.saveSoundPreferences({ completion: false, attention: true, volume: 0.15 });
+    store.close();
+
+    store = new Store(dir);
+    assert.deepEqual(store.soundPreferences(), {
+      completion: false,
+      attention: true,
+      volume: 0.15,
+    });
+    assert.deepEqual(store.preferences(), attention);
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a customer who wants to review replies keeps work open until confirming completion', () => {
   const dir = mkdtempSync(join(tmpdir(), 'chat2tasks-preferences-'));
   const store = new Store(dir);

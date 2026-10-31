@@ -117,7 +117,7 @@ export class CodexLogin {
     child.once('close', ended);
     try {
       await this.request('initialize', {
-        clientInfo: { name: 'chat2tasks', title: 'Chat2Tasks', version: '0.1.0' },
+        clientInfo: { name: 'chat2tasks', title: 'Wawa', version: '0.1.0' },
       });
       child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
       const result = z

@@ -99,8 +99,8 @@ export function WorkspacePicker() {
             onChange={() => setKind('remote')}
           />
           <span>
-            <strong>Another server</strong>
-            <small>Connect to a workspace that already runs on another computer.</small>
+            <strong>Another computer</strong>
+            <small>Keep working while this computer sleeps or is closed.</small>
           </span>
         </label>
         <label className={kind === 'move' ? 'selected' : ''}>
@@ -184,6 +184,19 @@ export function WorkspacePicker() {
           <small>
             If this computer is running a local workspace, switch it to the current server first.
           </small>
+          <p className="workspace-picker-help">
+            Need to set up another computer? This currently requires technical setup.{' '}
+            <button
+              className="text-button"
+              onClick={() =>
+                void invoke('open_external', {
+                  url: 'https://github.com/liongkj/chat2tasks/blob/main/docs/docker-stack.md',
+                }).catch(() => setError('Could not open the setup guide.'))
+              }
+            >
+              Open the setup guide
+            </button>
+          </p>
         </div>
       )}
       <p className="workspace-picker-note">
@@ -252,7 +265,7 @@ export function WorkspacePicker() {
                 : kind === 'move'
                   ? 'Move workspace here'
                   : kind === 'remote'
-                    ? 'Use server workspace'
+                    ? 'Use another computer'
                     : kind === 'local'
                       ? 'Use this computer'
                       : 'Choose a workspace'}

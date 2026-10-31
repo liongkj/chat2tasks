@@ -123,6 +123,7 @@ export class Companion {
       ]),
     );
     return {
+      sound: snapshot.sound,
       waiting_for: snapshot.waiting_for,
       tasks: snapshot.tasks.map((task) => ({
         ...task,
@@ -266,6 +267,9 @@ export async function registerCompanion(
       return companion.pair(input.code, input.name, id);
     });
     routes.get('/api/companion/state', () => companion.state());
+    routes.post('/api/companion/sound-preferences', (request) =>
+      companion.store.saveSoundPreferences(request.body),
+    );
     routes.get('/api/companion/tasks/:id', (request) =>
       companion.task(z.object({ id: z.string() }).parse(request.params).id),
     );

@@ -302,3 +302,36 @@
     align-items: flex-start;
   }
 }
+
+.onboarding-engines {
+  border: 0;
+  padding: 0;
+  margin: 18px 0;
+  display: grid;
+  gap: 8px;
+}
+.onboarding-engines legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.onboarding-engines label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.onboarding-engines input {
+  margin-top: 4px;
+}
+.onboarding-engines strong,
+.onboarding-engines small {
+  display: block;
+}
+.onboarding-engines small {
+  margin-top: 3px;
+  opacity: 0.75;
+  line-height: 1.45;
+}

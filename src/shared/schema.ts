@@ -8,6 +8,13 @@ export const AttentionPreferencesSchema = z.object({
   resolveReplies: z.enum(['automatically', 'review']).default('automatically'),
 });
 export type AttentionPreferences = z.infer<typeof AttentionPreferencesSchema>;
+export const SoundPreferencesSchema = z.object({
+  completion: z.boolean().default(true),
+  attention: z.boolean().default(true),
+  volume: z.number().min(0).max(1).default(0.3),
+});
+export type SoundPreferences = z.infer<typeof SoundPreferencesSchema>;
+export const defaultSoundPreferences = SoundPreferencesSchema.parse({});
 export const ChatSchema = z.object({
   id: text,
   name: text,
@@ -53,16 +60,22 @@ export const SettingsSchema = z
       .object({
         mode: z.enum(['local', 'remote']).default('local'),
         activeMode: z.enum(['local', 'remote']).default('local'),
+        engine: z.enum(['whatsapp-web.js', 'baileys']).default('whatsapp-web.js'),
+        activeEngine: z.enum(['whatsapp-web.js', 'baileys']).default('whatsapp-web.js'),
         remoteUrl: z.union([z.literal(''), endpoint]).default(''),
         localChats: z.array(ChatSchema).max(100).default([]),
         remoteChats: z.array(ChatSchema).max(100).default([]),
+        baileysChats: z.array(ChatSchema).max(100).default([]),
       })
       .default({
         mode: 'local',
         activeMode: 'local',
+        engine: 'whatsapp-web.js',
+        activeEngine: 'whatsapp-web.js',
         remoteUrl: '',
         localChats: [],
         remoteChats: [],
+        baileysChats: [],
       }),
     profiles: z.array(ProfileSchema).min(1).max(30),
     activeProfileId: text,
@@ -314,6 +327,7 @@ export const StatusSchema = z.object({
 });
 export const SnapshotSchema = z.object({
   demo: z.boolean().default(false),
+  sound: SoundPreferencesSchema.default(defaultSoundPreferences),
   tasks: z.array(TaskSchema),
   waiting_for: z.array(WaitSchema).default([]),
   messages: z.array(MessageSchema),

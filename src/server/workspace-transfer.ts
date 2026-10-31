@@ -183,9 +183,12 @@ async function restoreWorkspace(
           desktopGateway: {
             mode: 'local',
             activeMode: 'local',
+            engine: 'whatsapp-web.js',
+            activeEngine: 'whatsapp-web.js',
             remoteUrl: '',
             localChats: [],
             remoteChats: [],
+            baileysChats: [],
           },
           chats: settings.chats.map((chat) => ({ ...chat, enabled: false })),
         },

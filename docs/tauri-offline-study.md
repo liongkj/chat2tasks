@@ -5,7 +5,7 @@ existing Electron workspace or reuse its WhatsApp session. An encrypted workspac
 selected explicitly; the previous preview workspace is kept as a backup.
 
 The Tauri preview uses a bundled Bun runtime for its supervisor, app service, gateway and transfer
-process. The existing Electron build retains its Node runtime and separate data directory.
+process. The earlier Electron build used a separate data directory and is no longer maintained.
 
 On the target Mac, Windows, or Linux machine, install Node 24, Bun 1.4.4 or newer, Rust and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 Run `npm run tauri:stage` once to prepare the isolated runtime and browser, then run
@@ -56,10 +56,10 @@ connections blocked by macOS. The gateway reported `baileys` as its active engin
 OpenWA's existing offline inbound-message suite passed 13 cases, including text, images, edits and
 reactions; it uses the real Baileys parser but does not download media or contact WhatsApp.
 
-To repeat the synthetic parser workload on a Mac after `npm run mac:prepare`, run:
+To repeat the synthetic parser workload on a Mac after `npm run tauri:stage`, run:
 
 ```sh
-CHAT2TASKS_OPENWA_SOURCE="$PWD/work/openwa-source" \
+CHAT2TASKS_OPENWA_SOURCE="$PWD/work/tauri-openwa-source" \
   sandbox-exec -f scripts/baileys-offline.sb \
   node --import ./scripts/baileys-offline-workload.mjs -e 'console.log("Offline workload complete")'
 ```

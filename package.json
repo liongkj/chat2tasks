@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "desktop/main.cjs",
   "engines": {
     "node": ">=24.13.0"
   },
@@ -17,8 +16,6 @@
     "format": "prettier --write src extension/src tests e2e *.config.ts scripts/*.mjs",
     "build:extension": "vite build --config vite.extension.config.ts && node scripts/package-extension.mjs",
     "test:extension": "playwright test",
-    "mac:prepare": "node scripts/prepare-macos.mjs",
-    "mac:package": "npm run build && npm run mac:prepare && electron-builder --config desktop/electron-builder.json --mac dir --publish never",
     "tauri:stage": "node scripts/prepare-tauri-deps.mjs",
     "tauri:prepare": "npm run build && bun scripts/prepare-tauri.mjs",
     "tauri:build": "npm run tauri:prepare && tauri build"
@@ -48,8 +45,6 @@
     "@types/react-dom": "^19.2.0",
     "@types/tar-stream": "3.1.3",
     "@vitejs/plugin-react": "^5.1.0",
-    "electron": "41.7.0",
-    "electron-builder": "26.15.7",
     "esbuild": "^0.25.0",
     "fflate": "^0.8.3",
     "prettier": "^3.9.10",

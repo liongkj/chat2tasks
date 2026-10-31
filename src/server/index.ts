@@ -401,6 +401,7 @@ server.post('/api/waiting/confirm', (request) => {
 server.get('/api/settings', () => store.publicSettings());
 server.get('/api/preferences', () => store.preferences());
 server.post('/api/preferences', (request) => store.savePreferences(request.body));
+server.post('/api/sound-preferences', (request) => store.saveSoundPreferences(request.body));
 server.post('/api/webhooks/connect', async () => webhooks.connect());
 server.post('/api/settings', async (request) => {
   const update = SettingsUpdateSchema.parse(request.body);

@@ -8,6 +8,7 @@ import { DesktopSharingSchema, DesktopSharingUpdateSchema } from '../shared/desk
 import {
   MessageSchema,
   AttentionPreferencesSchema,
+  SoundPreferencesSchema,
   ItemKindSchema,
   GtdSchema,
   WaitInputSchema,
@@ -32,6 +33,7 @@ import {
   type Status,
   type Settings,
   type AttentionPreferences,
+  type SoundPreferences,
 } from '../shared/schema.js';
 
 export const now = () => Date.now() / 1000;
@@ -197,9 +199,12 @@ export class Store {
           desktopGateway: {
             mode: 'local',
             activeMode: 'local',
+            engine: 'whatsapp-web.js',
+            activeEngine: 'whatsapp-web.js',
             remoteUrl: '',
             localChats: [],
             remoteChats: [],
+            baileysChats: [],
           },
           chats:
             legacy.session_id && legacy.chat_id
@@ -283,6 +288,14 @@ export class Store {
     this.setMeta('attention_preferences', preferences);
     return preferences;
   }
+  soundPreferences(): SoundPreferences {
+    return SoundPreferencesSchema.parse(this.metaValue('sound_preferences') ?? {});
+  }
+  saveSoundPreferences(value: unknown) {
+    const preferences = SoundPreferencesSchema.parse(value);
+    this.setMeta('sound_preferences', preferences);
+    return preferences;
+  }
   relinkConversation(id: string, sessionId: string) {
     const settings = this.settings();
     const chat = settings.chats.find((item) => item.id === id);
@@ -352,6 +365,8 @@ export class Store {
         .filter((id) => id !== 'webhook-signing' && id !== 'desktop-sharing-password'),
       desktopGatewayRestartRequired:
         this.settings().desktopGateway.mode !== this.settings().desktopGateway.activeMode ||
+        (this.settings().desktopGateway.mode === 'local' &&
+          this.settings().desktopGateway.engine !== this.settings().desktopGateway.activeEngine) ||
         this.metaValue('desktop_gateway_restart_required') === true,
       webhook: {
         registeredSessions:
@@ -1294,6 +1309,7 @@ export class Store {
       );
     return {
       demo: this.metaValue('demo') === true,
+      sound: this.soundPreferences(),
       tasks,
       waiting_for,
       messages,
