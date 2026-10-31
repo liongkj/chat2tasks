@@ -87,7 +87,7 @@ async fn choose_import(
     let selected = app
         .dialog()
         .file()
-        .add_filter("Chat2Tasks workspace", &["c2t"])
+        .add_filter("Wawa workspace", &["c2t"])
         .blocking_pick_file()
         .and_then(|file| file.into_path().ok());
     let chosen = selected.is_some();
@@ -128,8 +128,9 @@ async fn import_workspace(
 #[tauri::command]
 fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let parsed = tauri::Url::parse(&url).map_err(|_| "Unexpected sign-in address.")?;
+    let setup_guide = url == "https://github.com/liongkj/chat2tasks/blob/main/docs/docker-stack.md";
     if parsed.scheme() != "https"
-        || !matches!(parsed.host_str(), Some("auth.openai.com" | "chatgpt.com"))
+        || !(matches!(parsed.host_str(), Some("auth.openai.com" | "chatgpt.com")) || setup_guide)
     {
         return Err("Unexpected sign-in address.".into());
     }
@@ -164,6 +165,11 @@ fn show_workspace_picker(app: &tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn open_workspace_picker(app: tauri::AppHandle) -> Result<(), String> {
     show_workspace_picker(&app)
+}
+
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.request_restart();
 }
 
 #[tauri::command]
@@ -228,13 +234,13 @@ fn show_remote_workspace(app: &tauri::AppHandle, address: &str) -> Result<(), St
     let origin = url.origin();
     let loaded_origin = origin.clone();
     let hostname = url.host_str().unwrap_or("server").to_string();
-    let title = format!("Chat2Tasks · {hostname}");
+    let title = format!("Wawa · {hostname}");
     let connecting = WebviewWindowBuilder::new(
         app,
         "connection",
         WebviewUrl::App("index.html?desktop=connecting".into()),
     )
-    .title("Chat2Tasks · Connecting to server…")
+    .title("Wawa · Connecting to server…")
     .inner_size(1140.0, 800.0)
     .min_inner_size(680.0, 580.0)
     .build()
@@ -249,7 +255,7 @@ fn show_remote_workspace(app: &tauri::AppHandle, address: &str) -> Result<(), St
 
     let external = app.clone();
     let window = WebviewWindowBuilder::new(app, "remote", WebviewUrl::External(url))
-        .title("Chat2Tasks · Connecting to server…")
+        .title("Wawa · Connecting to server…")
         .inner_size(1140.0, 800.0)
         .min_inner_size(680.0, 580.0)
         .visible(false)
@@ -290,7 +296,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
+        .invoke_handler(tauri::generate_handler![choose_import, import_workspace, open_external, open_workspace_picker, restart_app, retry_remote_workspace, get_workspace_target, set_workspace_target, close_workspace_picker])
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
             "settings" => {
@@ -310,7 +316,7 @@ fn main() {
             let settings = MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
             let workspaces = MenuItem::with_id(app, "workspaces", "Switch Workspace…", true, None::<&str>)?;
             let quit = PredefinedMenuItem::quit(app, None)?;
-            let app_menu = Submenu::with_items(app, "Chat2Tasks Preview", true, &[&settings, &workspaces, &quit])?;
+            let app_menu = Submenu::with_items(app, "Wawa", true, &[&settings, &workspaces, &quit])?;
             let edit_menu = Submenu::with_items(app, "Edit", true, &[
                 &PredefinedMenuItem::undo(app, None)?, &PredefinedMenuItem::redo(app, None)?,
                 &PredefinedMenuItem::separator(app)?, &PredefinedMenuItem::cut(app, None)?,
@@ -318,11 +324,11 @@ fn main() {
                 &PredefinedMenuItem::select_all(app, None)?,
             ])?;
             app.set_menu(Menu::with_items(app, &[&app_menu, &edit_menu])?)?;
-            let show = MenuItem::with_id(app, "open", "Open Chat2Tasks Preview", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "open", "Open Wawa", true, None::<&str>)?;
             let tray_workspaces = MenuItem::with_id(app, "workspaces", "Switch Workspace…", true, None::<&str>)?;
-            let tray_quit = MenuItem::with_id(app, "quit-preview", "Quit Chat2Tasks Preview", true, None::<&str>)?;
+            let tray_quit = MenuItem::with_id(app, "quit-preview", "Quit Wawa", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&show, &tray_workspaces, &tray_quit])?;
-            let mut tray = TrayIconBuilder::new().menu(&tray_menu).tooltip("Chat2Tasks Preview");
+            let mut tray = TrayIconBuilder::new().menu(&tray_menu).tooltip("Wawa");
             if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
             tray.build(app)?;
 
@@ -358,7 +364,7 @@ fn main() {
             app.manage(Host { runtime: Some(runtime.clone()), selected_import: Mutex::new(None) });
 
             WebviewWindowBuilder::new(app, "startup", WebviewUrl::App("tauri-startup.html".into()))
-                .title("Chat2Tasks Preview").inner_size(1140.0, 800.0).min_inner_size(680.0, 580.0).build()?;
+                .title("Wawa").inner_size(1140.0, 800.0).min_inner_size(680.0, 580.0).build()?;
 
             let handle = app.handle().clone();
             thread::spawn(move || {
@@ -373,7 +379,7 @@ fn main() {
                 let initialization = format!("window.chat2tasksTauri = Object.freeze({config});");
                 let external = handle.clone();
                 let main = WebviewWindowBuilder::new(&handle, "main", WebviewUrl::App("index.html".into()))
-                    .title("Chat2Tasks Preview").inner_size(1140.0, 800.0).min_inner_size(680.0, 580.0)
+                    .title("Wawa").inner_size(1140.0, 800.0).min_inner_size(680.0, 580.0)
                     .initialization_script(initialization)
                     .on_navigation(|url| url.scheme() == "tauri" && url.host_str() == Some("localhost")
                         || matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
@@ -397,7 +403,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("Could not start Chat2Tasks Preview");
+        .expect("Could not start Wawa");
     app.run(|app, event| {
         if let RunEvent::Exit = event {
             if let Some(host) = app.try_state::<Host>() {

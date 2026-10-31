@@ -188,9 +188,12 @@ export class Store {
           desktopGateway: {
             mode: 'local',
             activeMode: 'local',
+            engine: 'whatsapp-web.js',
+            activeEngine: 'whatsapp-web.js',
             remoteUrl: '',
             localChats: [],
             remoteChats: [],
+            baileysChats: [],
           },
           chats:
             legacy.session_id && legacy.chat_id
@@ -343,6 +346,8 @@ export class Store {
         .filter((id) => id !== 'webhook-signing'),
       desktopGatewayRestartRequired:
         this.settings().desktopGateway.mode !== this.settings().desktopGateway.activeMode ||
+        (this.settings().desktopGateway.mode === 'local' &&
+          this.settings().desktopGateway.engine !== this.settings().desktopGateway.activeEngine) ||
         this.metaValue('desktop_gateway_restart_required') === true,
       webhook: {
         registeredSessions:

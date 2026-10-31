@@ -35,7 +35,7 @@ export function WorkspacePicker() {
 
   return (
     <main className="workspace-picker">
-      <p className="workspace-picker-eyebrow">CHAT2TASKS WORKSPACE</p>
+      <p className="workspace-picker-eyebrow">WAWA WORKSPACE</p>
       <h1>Where should work happen?</h1>
       <p>Choose the workspace you want to use. You can switch again at any time.</p>
       <div className="workspace-picker-options" role="radiogroup" aria-label="Workspace location">
@@ -59,14 +59,14 @@ export function WorkspacePicker() {
             onChange={() => setKind('remote')}
           />
           <span>
-            <strong>Always-on server</strong>
-            <small>Work can continue while this computer sleeps or is closed.</small>
+            <strong>Another computer</strong>
+            <small>Keep working while this computer sleeps or is closed.</small>
           </span>
         </label>
       </div>
       {kind === 'remote' && (
         <div className="workspace-picker-address">
-          <label htmlFor="workspace-server">Chat2Tasks server address</label>
+          <label htmlFor="workspace-server">Address of your other computer</label>
           <input
             id="workspace-server"
             type="url"
@@ -76,9 +76,21 @@ export function WorkspacePicker() {
             onChange={(event) => setAddress(event.target.value)}
           />
           <small>
-            Use a private Tailscale HTTPS address or another secure address for your running
-            Chat2Tasks workspace.
+            Enter the secure address of a Wawa workspace already running on that computer.
           </small>
+          <p className="workspace-picker-help">
+            Need to set up another computer? This currently requires technical setup.{' '}
+            <button
+              className="text-button"
+              onClick={() =>
+                void invoke('open_external', {
+                  url: 'https://github.com/liongkj/chat2tasks/blob/main/docs/docker-stack.md',
+                }).catch(() => setError('Could not open the setup guide.'))
+              }
+            >
+              Open the setup guide
+            </button>
+          </p>
         </div>
       )}
       <p className="workspace-picker-note">
@@ -106,7 +118,7 @@ export function WorkspacePicker() {
           {saving
             ? 'Opening workspace…'
             : kind === 'remote'
-              ? 'Use server workspace'
+              ? 'Use another computer'
               : 'Use this computer'}
         </button>
       </div>

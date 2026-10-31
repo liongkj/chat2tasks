@@ -12,7 +12,7 @@ export function desktopSignInPage(failed = false) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in to Chat2Tasks</title>
+  <title>Sign in to Wawa</title>
   <style>
     body { font: 16px -apple-system, BlinkMacSystemFont, sans-serif; background: #fafafa; color: #202522; margin: 0; display: grid; place-items: center; min-height: 100vh; }
     main { background: white; border: 1px solid #e1e5e2; border-radius: 14px; padding: 32px; width: min(380px, calc(100vw - 80px)); }
@@ -26,7 +26,7 @@ export function desktopSignInPage(failed = false) {
 </head>
 <body><main>
   <h1>Sign in to your workspace</h1>
-  <p>Enter the password for this Chat2Tasks server.</p>
+  <p>Enter the password for this Wawa server.</p>
   ${failed ? '<p class="error" role="alert">That password did not match. Try again.</p>' : ''}
   <form method="post" action="/desktop-sign-in">
     <label for="password">Workspace password</label>

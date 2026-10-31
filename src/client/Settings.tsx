@@ -45,6 +45,7 @@ type Props = {
   onImportWorkspace?: () => void;
 };
 type DiscoveredEntry = { id: string; name: string };
+const WhatsappStatus = z.object({ status: z.string(), qr: z.string().nullable() });
 const sectionCopy: Record<SettingsSection, { title: string; description: string }> = {
   conversations: {
     title: 'WhatsApp & chats',
@@ -53,7 +54,7 @@ const sectionCopy: Record<SettingsSection, { title: string; description: string 
   models: { title: 'AI models', description: 'Choose and manage your AI connections.' },
   automation: {
     title: 'Automation',
-    description: 'Choose when Chat2Tasks reviews new messages.',
+    description: 'Choose when Wawa reviews new messages.',
   },
   attention: {
     title: 'Attention',
@@ -80,6 +81,8 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
     id: string;
     action: 'pausing' | 'resuming';
   } | null>(null);
+  const [whatsapp, setWhatsapp] = useState<z.infer<typeof WhatsappStatus> | null>(null);
+  const [linkingWhatsapp, setLinkingWhatsapp] = useState(false);
   const [saving, setSaving] = useState(false),
     [addingChat, setAddingChat] = useState(false),
     [addingModel, setAddingModel] = useState(false);
@@ -225,10 +228,39 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
     desktop &&
     (config.desktopGatewayRestartRequired ||
       draft.desktopGateway.mode !== config.settings.desktopGateway.activeMode ||
+      (draft.desktopGateway.mode === 'local' &&
+        draft.desktopGateway.engine !== config.settings.desktopGateway.activeEngine) ||
       (config.settings.desktopGateway.activeMode === 'remote' &&
         (draft.desktopGateway.remoteUrl !== config.settings.desktopGateway.remoteUrl ||
           Boolean(secrets['remote-openwa']?.trim()) ||
           remove.includes('remote-openwa'))));
+  useEffect(() => {
+    if (
+      section !== 'conversations' ||
+      !desktop ||
+      gatewayPending ||
+      config.settings.desktopGateway.activeMode !== 'local'
+    )
+      return;
+    const refresh = () =>
+      void api('desktop/whatsapp/status', WhatsappStatus)
+        .then((next) => {
+          setWhatsapp(next);
+          if (['ready', 'failed', 'disconnected', 'action_required'].includes(next.status))
+            setLinkingWhatsapp(false);
+        })
+        .catch(() => undefined);
+    refresh();
+    if (!linkingWhatsapp) return;
+    const timer = setInterval(refresh, 2000);
+    return () => clearInterval(timer);
+  }, [
+    section,
+    desktop,
+    gatewayPending,
+    config.settings.desktopGateway.activeMode,
+    linkingWhatsapp,
+  ]);
   const savesSettings = ['conversations', 'models', 'automation'].includes(section);
   const hasChanges =
     JSON.stringify(draft) !== JSON.stringify(config.settings) ||
@@ -279,7 +311,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                 <div className="gateway-options">
                   {(
                     [
-                      ['local', 'This computer', 'Chat2Tasks runs its own WhatsApp server here.'],
+                      ['local', 'This computer', 'Wawa runs its own WhatsApp server here.'],
                       [
                         'remote',
                         'Another server',
@@ -307,6 +339,41 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                     </label>
                   ))}
                 </div>
+                {draft.desktopGateway.mode === 'local' && (
+                  <div className="gateway-options" aria-label="WhatsApp connection type">
+                    {(
+                      [
+                        ['whatsapp-web.js', 'Standard', 'Uses a browser in the background.'],
+                        [
+                          'baileys',
+                          'Lightweight · experimental',
+                          'No browser; tested offline only. Account restriction risk may be higher.',
+                        ],
+                      ] as const
+                    ).map(([engine, label, description]) => (
+                      <label
+                        className={`gateway-option ${draft.desktopGateway.engine === engine ? 'selected' : ''}`}
+                        key={engine}
+                      >
+                        <input
+                          type="radio"
+                          name="gateway-engine"
+                          checked={draft.desktopGateway.engine === engine}
+                          onChange={() =>
+                            setDraft({
+                              ...draft,
+                              desktopGateway: { ...draft.desktopGateway, engine },
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>{label}</strong>
+                          <small>{description}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
                 {draft.desktopGateway.mode === 'remote' && (
                   <div className="form-grid gateway-details">
                     <div className="field">
@@ -328,8 +395,9 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                   </div>
                 )}
                 <p className="gateway-note">
-                  Your tasks stay here. Each server keeps its own WhatsApp session and followed
-                  chats; switching does not move or sign out a session.
+                  Your tasks stay here. Each connection keeps its own WhatsApp session and followed
+                  chats; switching does not move or sign out a session. Unofficial connections can
+                  lead to account restrictions.
                 </p>
                 {draft.desktopGateway.mode === 'remote' && (
                   <p className="gateway-note">
@@ -340,8 +408,18 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                 {gatewayPending && (
                   <p className="gateway-restart" role="status">
                     {config.desktopGatewayRestartRequired && !hasChanges
-                      ? 'Quit and reopen Chat2Tasks to use the saved server.'
-                      : 'Save your changes, then quit and reopen Chat2Tasks to use this server.'}
+                      ? 'Restart Wawa to use the saved connection.'
+                      : 'Save your changes, then restart Wawa to use this connection.'}
+                    {config.desktopGatewayRestartRequired &&
+                      !hasChanges &&
+                      window.chat2tasksDesktop && (
+                        <button
+                          className="text-button"
+                          onClick={() => void window.chat2tasksDesktop?.restart()}
+                        >
+                          Restart Wawa
+                        </button>
+                      )}
                   </p>
                 )}
               </>
@@ -357,11 +435,28 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                   />
                   <small>
                     {window.chat2tasksDesktop || window.chat2tasksTauri
-                      ? 'This local address is managed by Chat2Tasks.'
+                      ? 'This local address is managed by Wawa.'
                       : 'Use the address reachable from this Docker container.'}
                   </small>
                 </div>
                 {credential('openwa', 'OpenWA API key')}
+              </div>
+            )}
+            {desktop &&
+              !gatewayPending &&
+              whatsapp &&
+              ['failed', 'disconnected', 'action_required'].includes(whatsapp.status) && (
+                <p className="gateway-note" role="status">
+                  WhatsApp is not connected. Try linking it again.
+                </p>
+              )}
+            {desktop && !gatewayPending && whatsapp?.qr && (
+              <div className="onboarding-qr">
+                <img src={whatsapp.qr} alt="WhatsApp pairing QR code" />
+                <p>
+                  On your phone, open WhatsApp → Linked devices → Link a device, then scan this
+                  code.
+                </p>
               </div>
             )}
             <div className="card-footer">
@@ -369,6 +464,27 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
                 <ShieldCheck size={13} />{' '}
                 {desktop ? 'Keys stay on this computer.' : 'Keys stay on your server.'}
               </span>
+              {desktop &&
+                !gatewayPending &&
+                config.settings.desktopGateway.activeMode === 'local' &&
+                whatsapp?.status !== 'ready' && (
+                  <button
+                    className="button secondary"
+                    disabled={linkingWhatsapp}
+                    onClick={() => {
+                      setLinkingWhatsapp(true);
+                      void api('desktop/whatsapp/start', z.object({ status: z.string() }), {})
+                        .then(() => api('desktop/whatsapp/status', WhatsappStatus))
+                        .then(setWhatsapp)
+                        .catch((error) => {
+                          setLinkingWhatsapp(false);
+                          notify(errorMessage(error));
+                        });
+                    }}
+                  >
+                    {linkingWhatsapp ? 'Preparing connection…' : 'Link WhatsApp'}
+                  </button>
+                )}
               <button
                 className="button secondary"
                 disabled={Boolean(discovering) || !draft.openwaUrl || gatewayPending}
@@ -597,7 +713,7 @@ export function SettingsPanel({ section, config, onSave, notify, onImportWorkspa
             <ShieldCheck size={18} />
             <p>
               Pausing a chat stops new AI processing. Existing tasks, ticks, notes, and cached
-              messages stay available. Chat2Tasks never sends a reply to WhatsApp.
+              messages stay available. Wawa never sends a reply to WhatsApp.
             </p>
           </div>
           <ChatDialog
@@ -1141,7 +1257,7 @@ function ProfileCard({
             <div className="connection-route full-width">
               <ShieldCheck size={14} />
               <span>
-                Chat2Tasks <ChevronRight size={12} /> Cloudflare Gateway <ChevronRight size={12} />{' '}
+                Wawa <ChevronRight size={12} /> Cloudflare Gateway <ChevronRight size={12} />{' '}
                 {profile.route === 'proxy' ? 'OpenAI' : 'Your selected model'}
               </span>
             </div>
@@ -1171,7 +1287,7 @@ function ProfileCard({
               ? 'https://developers.cloudflare.com/ai-gateway/usage/rest-api/'
               : profile.kind === 'codex'
                 ? 'https://developers.openai.com/codex/cli/'
-                : 'https://github.com/liongkj/chat2tasks#model-connections'
+                : 'https://github.com/liongkj/chat2tasks/blob/main/docs/technical-reference.md#model-connections'
           }
           target="_blank"
           rel="noreferrer"

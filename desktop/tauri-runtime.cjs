@@ -1,6 +1,6 @@
 const { spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
-const { access, mkdir, readFile } = require('node:fs/promises');
+const { access, mkdir, readFile, writeFile } = require('node:fs/promises');
 const { createServer } = require('node:net');
 const { join } = require('node:path');
 const { createInterface } = require('node:readline');
@@ -16,7 +16,7 @@ if (!resources || !data) throw new Error('The preview runtime is not configured.
 const runtime = join(resources, 'runtime');
 const gatewayRuntime = join(resources, 'gateway');
 const workspace = join(data, demo ? 'sample-workspace' : 'workspace');
-const gatewayData = join(data, 'gateway');
+let gatewayData = join(data, 'gateway');
 const codexHome = join(data, 'codex');
 const token = randomBytes(32).toString('hex');
 const tauriOrigin = process.platform === 'win32' ? 'http://tauri.localhost' : 'tauri://localhost';
@@ -38,6 +38,8 @@ let gateway,
   gatewayPort,
   serverPort,
   gatewayMode = 'local',
+  gatewayEngine = 'whatsapp-web.js',
+  runningGatewayEngine,
   resumeSessions = false;
 let stopping = false;
 
@@ -56,17 +58,32 @@ function cleanEnv() {
 function report(value) {
   process.stdout.write(JSON.stringify(value) + '\n');
 }
-function freePort() {
+function freePort(preferred = 0) {
   return new Promise((resolve, reject) => {
     const socket = createServer();
     socket.once('error', reject);
-    socket.listen(0, '127.0.0.1', () => {
+    socket.listen(preferred, '127.0.0.1', () => {
       const address = socket.address();
       if (!address || typeof address === 'string')
         return reject(new Error('Could not choose a local port.'));
       socket.close(() => resolve(address.port));
     });
   });
+}
+async function workspacePort() {
+  await mkdir(data, { recursive: true, mode: 0o700 });
+  const path = join(data, demo ? 'sample-port' : 'workspace-port');
+  const stored = Number(await readFile(path, 'utf8').catch(() => ''));
+  const preferred = Number.isInteger(stored) && stored >= 1024 && stored <= 65535 ? stored : 0;
+  let port;
+  try {
+    port = await freePort(preferred);
+  } catch (error) {
+    if (error.code !== 'EADDRINUSE') throw error;
+    port = await freePort();
+  }
+  await writeFile(path, String(port), { mode: 0o600 });
+  return port;
 }
 async function ready(port, child, name) {
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -97,11 +114,14 @@ async function stop(child) {
 }
 async function startGateway() {
   await mkdir(gatewayData, { recursive: true, mode: 0o700 });
-  const browser = join(
-    gatewayRuntime,
-    (await readFile(join(gatewayRuntime, 'browser-path.txt'), 'utf8')).trim(),
-  );
-  await access(browser);
+  let browser;
+  if (gatewayEngine === 'whatsapp-web.js') {
+    browser = join(
+      gatewayRuntime,
+      (await readFile(join(gatewayRuntime, 'browser-path.txt'), 'utf8')).trim(),
+    );
+    await access(browser);
+  }
   gateway = spawn(process.execPath, [join(gatewayRuntime, 'dist', 'main.js')], {
     cwd: gatewayData,
     stdio: testDiagnostics ? ['ignore', 2, 2] : 'ignore',
@@ -113,12 +133,12 @@ async function startGateway() {
       LOG_LEVEL: testDiagnostics ? 'info' : 'error',
       UPDATE_CHECK_ENABLED: 'false',
       AUTO_START_SESSIONS: resumeSessions ? 'true' : 'false',
-      ENGINE_TYPE: 'whatsapp-web.js',
+      ENGINE_TYPE: gatewayEngine,
       SSRF_ALLOWED_HOSTS: '127.0.0.1',
-      PUPPETEER_EXECUTABLE_PATH: browser,
-      PUPPETEER_ARGS: '--disable-gpu',
+      ...(browser ? { PUPPETEER_EXECUTABLE_PATH: browser, PUPPETEER_ARGS: '--disable-gpu' } : {}),
     },
   });
+  runningGatewayEngine = gatewayEngine;
   await ready(gatewayPort, gateway, 'The WhatsApp gateway');
   await access(join(gatewayData, 'data', '.api-key'));
 }
@@ -126,11 +146,20 @@ async function startServer() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
   if (!demo) {
-    ({ mode: gatewayMode, resumeSessions } = workspaceGatewayLaunch(workspace));
-    if (gatewayMode === 'remote') {
+    ({
+      mode: gatewayMode,
+      engine: gatewayEngine,
+      resumeSessions,
+    } = workspaceGatewayLaunch(workspace));
+    if (gatewayMode === 'remote' || (gateway && runningGatewayEngine !== gatewayEngine)) {
       await stop(gateway);
       gateway = undefined;
-    } else if (!gateway || gateway.exitCode !== null || gateway.signalCode !== null) {
+    }
+    gatewayData = join(data, gatewayEngine === 'baileys' ? 'gateway-baileys' : 'gateway');
+    if (
+      gatewayMode === 'local' &&
+      (!gateway || gateway.exitCode !== null || gateway.signalCode !== null)
+    ) {
       const existingKey = await access(join(gatewayData, 'data', '.api-key')).then(
         () => true,
         () => false,
@@ -166,6 +195,7 @@ async function startServer() {
       DESKTOP_OPENWA_URL: `http://127.0.0.1:${gatewayPort}`,
       DESKTOP_OPENWA_KEY_FILE: join(gatewayData, 'data', '.api-key'),
       DESKTOP_GATEWAY_MODE: gatewayMode,
+      DESKTOP_GATEWAY_ENGINE: gatewayEngine,
       CHAT2TASKS_TAURI_ORIGIN: tauriOrigin,
       CHAT2TASKS_TAURI_TOKEN: token,
     },
@@ -196,10 +226,10 @@ async function shutdown() {
   process.exit(0);
 }
 async function main() {
-  gatewayPort = await freePort();
+  serverPort = await workspacePort();
   do {
-    serverPort = await freePort();
-  } while (serverPort === gatewayPort);
+    gatewayPort = await freePort();
+  } while (gatewayPort === serverPort);
   await startServer();
   report({
     type: 'ready',
@@ -207,7 +237,13 @@ async function main() {
     token,
     demo,
     ...(testDiagnostics
-      ? { gatewayMode, localGatewayRunning: Boolean(gateway), resumeSessions }
+      ? {
+          gatewayMode,
+          gatewayEngine,
+          gatewayPort,
+          localGatewayRunning: Boolean(gateway),
+          resumeSessions,
+        }
       : {}),
   });
 }

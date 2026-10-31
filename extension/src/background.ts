@@ -24,7 +24,7 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU,
-      title: 'Capture selection in Chat2Tasks',
+      title: 'Capture selection in Wawa',
       contexts: ['selection'],
       documentUrlPatterns: ['https://web.whatsapp.com/*'],
     });

@@ -9,6 +9,7 @@ export function installTauriBridge() {
   if (!window.chat2tasksTauri || window.chat2tasksTauri.demo) return;
   window.chat2tasksDesktop = {
     chooseImport: () => invoke<boolean>('choose_import'),
+    restart: () => invoke<void>('restart_app'),
     importWorkspace: (passphrase) =>
       invoke<{ ok: boolean; error?: string }>('import_workspace', { passphrase }),
     openExternal: (url) => invoke<void>('open_external', { url }),

@@ -1,8 +1,10 @@
-# Docker stack deployment
+# Wawa server setup
 
-The application and downloadable Chrome companion are built together. A Docker Compose stack is sufficient; Docker Swarm is not required. OpenWA remains a separate service. Keep an existing installation’s selected image name, data mounts, Codex session volume, and network when updating it.
+The always-on server holds the active workspace and runs its configured model connection while your computer is asleep. You maintain the server, its access, updates and backups. There is no one-command machine installer yet. The application and downloadable Chrome companion are built together. A Docker Compose stack is sufficient; Docker Swarm is not required. OpenWA remains a separate service: this Compose file does not install or start it. Keep an existing installation’s selected image name, data mounts, Codex session volume, and network when updating it.
 
 ## New stack
+
+Before starting, install Docker and Compose on an always-on machine. Set up an OpenWA gateway separately and keep its address and API key available. The commands below start only the Wawa workspace. After they complete, configure the gateway under **Settings → WhatsApp & chats**, sign in to Codex or configure a model in Settings, and choose your conversations. Then follow the HTTPS or Tailscale instructions below before connecting from another device. Back up the persistent data and Codex volumes, and keep both services updated.
 
 ```sh
 git clone https://github.com/liongkj/chat2tasks.git
@@ -41,7 +43,7 @@ The existing Tailscale configuration may already use that port; choose another r
 
 ## MCP access
 
-Set a separate random `MCP_TOKEN` of at least 32 characters in your private `.env`, then recreate the service. The Compose file passes it to Chat2Tasks; without it, `/mcp` returns 404. Connect a Streamable HTTP MCP client to your HTTPS workspace origin followed by `/mcp`, with `Authorization: Bearer YOUR_MCP_TOKEN`. See [MCP issue triage](../README.md#mcp-issue-triage) for the tools and write boundaries.
+Set a separate random `MCP_TOKEN` of at least 32 characters in your private `.env`, then recreate the service. The Compose file passes it to Chat2Tasks; without it, `/mcp` returns 404. Connect a Streamable HTTP MCP client to your HTTPS workspace origin followed by `/mcp`, with `Authorization: Bearer YOUR_MCP_TOKEN`. See [MCP issue triage](technical-reference.md#mcp-issue-triage) for the tools and write boundaries.
 
 Preserve the original `Host` and bearer `Authorization` header. The app authenticates `/mcp` independently of its web Basic login. If the proxy adds authentication, give `/mcp` a route that preserves MCP bearer access while keeping the web workspace protected. Do not replace the MCP bearer header with a web Basic credential. There is no OAuth flow or long-lived SSE stream to configure. Origin-less model clients are accepted; unexpected browser origins are rejected. Changing the token revokes previous MCP clients after service recreation.
 
